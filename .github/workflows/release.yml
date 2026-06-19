@@ -1,0 +1,79 @@
+name: Release
+
+# On a version tag (e.g. v1.0.0): build the per-OS installer + portable image (UNSIGNED), generate the
+# CycloneDX SBOM, compute SHA-256 checksums, and attach everything to a DRAFT GitHub Release. Free for
+# public repos; no signing secrets or paid infrastructure. Review the draft, then publish it.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create/append the GitHub Release
+
+jobs:
+  package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false        # one OS's packaging tooling failing must not block the others
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Linux packaging tools (deb + rpm)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm
+        shell: bash
+
+      - name: Package installer + portable image
+        # :app:packageAll builds the current-OS installer(s) AND the portable app-image zip, each
+        # bundling the Temurin 8 + 17 client runtimes (fetched + checksum-verified at build time).
+        run: ./gradlew :app:packageAll --no-daemon --stacktrace
+        shell: bash
+
+      - name: Generate SBOM (once, on Linux)
+        if: runner.os == 'Linux'
+        run: ./gradlew cyclonedxBom --no-daemon
+        shell: bash
+
+      - name: Stage artifacts + checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Installers (whatever formats the build is configured to emit) ...
+          find app/build/compose/binaries -type f \
+            \( -iname '*.msi' -o -iname '*.exe' -o -iname '*.dmg' -o -iname '*.pkg' \
+               -o -iname '*.deb' -o -iname '*.rpm' \) -exec cp -f {} dist/ \; 2>/dev/null || true
+          # ... and the portable zip(s).
+          find app/build/distributions -type f -iname '*.zip' -exec cp -f {} dist/ \; 2>/dev/null || true
+          # SBOM (present only on the Linux job).
+          find . -type f \( -iname 'bom.json' -o -iname 'bom.xml' \) -exec cp -f {} dist/ \; 2>/dev/null || true
+          echo "Staged artifacts:"; ls -1 dist/ || true
+          # Checksums (written outside dist first so the file can't hash itself).
+          ( cd dist && { command -v sha256sum >/dev/null 2>&1 && sha256sum -- * || shasum -a 256 -- *; } ) > SHA256SUMS
+          mv SHA256SUMS dist/
+
+      - name: Attach to draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          fail_on_unmatched_files: false
+          files: dist/*
+          body: |
+            Unsigned community build of the Open Integration Engine Launcher.
+
+            Verify your download against `SHA256SUMS` and review the attached CycloneDX SBOM.
+            First-run notes (SmartScreen / Gatekeeper) are in the README.

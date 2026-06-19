@@ -1,0 +1,48 @@
+[versions]
+kotlin = "2.4.0"
+compose = "1.9.3"
+bouncycastle = "1.78.1"
+junitJupiter = "5.10.2"
+junitPlatform = "1.10.2"
+# Phase 2 — launch path / security core
+httpclient5 = "5.4.1"
+log4j = "2.24.3"
+jna = "5.16.0"
+kotlinxSerialization = "1.7.3"
+# Supply-chain tooling
+cyclonedx = "1.10.0"
+owaspDepCheck = "11.1.1"
+
+[libraries]
+# BouncyCastle: CMS / PKCS#7 parsing, PKIX, RFC-3161 timestamp tokens, cert conversion.
+bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
+bcpkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
+bcutil = { module = "org.bouncycastle:bcutil-jdk18on", version.ref = "bouncycastle" }
+
+# Apache HttpClient 5 ONLY (no HttpClient 4 anywhere). All https — including any OCSP/CRL fetch —
+# goes through clients built by this dependency, with hostname verification always on.
+httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5", version.ref = "httpclient5" }
+
+# log4j2 — current. Carries the dedicated AUDIT logger.
+log4j-api = { module = "org.apache.logging.log4j:log4j-api", version.ref = "log4j" }
+log4j-core = { module = "org.apache.logging.log4j:log4j-core", version.ref = "log4j" }
+
+# JNA — Windows DPAPI (Crypt32) for the Windows CredentialStore.
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+
+# Non-secret connection persistence (connections.json).
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junitJupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junitPlatform" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+compose = { id = "org.jetbrains.compose", version.ref = "compose" }
+# CycloneDX SBOM as a build artifact.
+cyclonedx = { id = "org.cyclonedx.bom", version.ref = "cyclonedx" }
+# OWASP dependency-check (CI gating on high severity; needs an NVD API key to run).
+owasp-depcheck = { id = "org.owasp.dependencycheck", version.ref = "owaspDepCheck" }

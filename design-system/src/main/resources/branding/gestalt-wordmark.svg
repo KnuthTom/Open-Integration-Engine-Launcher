@@ -1,0 +1,9 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Gestalt brand mark: an H&E-staining motif — hematoxylin indigo tile with eosin magenta/gold cells.
+       Placeholder header asset; replace with the production wordmark via Branding.logo (PNG or SVG). -->
+  <rect x="1.5" y="1.5" width="45" height="45" rx="10" fill="#2E3178"/>
+  <circle cx="19" cy="21" r="9.5" fill="#9E3F91" fill-opacity="0.95"/>
+  <circle cx="30" cy="28" r="7" fill="#EDDD63" fill-opacity="0.95"/>
+  <circle cx="19" cy="21" r="3.2" fill="#2E3178"/>
+  <circle cx="30" cy="28" r="2.4" fill="#2E3178"/>
+</svg>

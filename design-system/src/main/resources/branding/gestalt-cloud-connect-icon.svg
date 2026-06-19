@@ -1,0 +1,11 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Gestalt Cloud Connect app mark ("GD mark"): the brand's H&E-staining motif as an app icon —
+       a hematoxylin-indigo rounded tile carrying an eosin-magenta cell and a gold cell, each with an
+       indigo nucleus. DESIGN SOURCE: the shipped raster icons (.ico/.icns/.png) are generated from
+       this geometry by buildSrc gestalt.AppIconGenerator; keep the two in sync. -->
+  <rect x="9" y="9" width="238" height="238" rx="56" fill="#2E3178"/>
+  <circle cx="102.4" cy="107.5" r="57.6" fill="#9E3F91"/>
+  <circle cx="102.4" cy="107.5" r="19.2" fill="#2E3178"/>
+  <circle cx="162.6" cy="160" r="42.24" fill="#EDDD63"/>
+  <circle cx="162.6" cy="160" r="14.08" fill="#2E3178"/>
+</svg>

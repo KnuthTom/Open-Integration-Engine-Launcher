@@ -1,0 +1,13 @@
+# Normalize line endings; keep platform-specific scripts correct.
+* text=auto eol=lf
+
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+gradlew text eol=lf
+*.sh    text eol=lf
+
+# Binary artifacts
+*.jar  binary
+*.p12  binary
+*.png  binary
+*.ico  binary

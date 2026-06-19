@@ -1,0 +1,52 @@
+name: CI
+
+# Build + test on all three OSes, validate the Gradle wrapper, and run a secret scan.
+# Free for public repositories (GitHub-hosted runners). No secrets required.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # scan full history, not just the tip
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        # Free for public repos. Reads .gitleaks.toml (synthetic test values are allowlisted there).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Build + test
+        run: ./gradlew build --no-daemon --stacktrace
+        shell: bash

@@ -1,0 +1,21 @@
+# Dependabot — CVE alerts and version bumps for the Gradle dependency graph.
+# Covers the version catalog (gradle/libs.versions.toml), module build scripts, and the wrapper.
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+    # Security-only would be `open-pull-requests-limit: 0` + relying on security updates;
+    # we keep version-update PRs on so BouncyCastle / log4j / HttpClient stay current.
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"

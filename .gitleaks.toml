@@ -1,0 +1,34 @@
+# gitleaks configuration for the Open Integration Engine Launcher.
+#
+# This repo ships NO real secrets (the scrub before the public release confirmed it: no private keys,
+# keystores, or tokens in the working tree or git history). The entries below allowlist a handful of
+# SYNTHETIC test values and documented local-dev defaults so an automated scan stays signal — they are
+# not real credentials and grant access to nothing.
+#
+# Run locally:  gitleaks detect --source . --config .gitleaks.toml
+# CI runs the same scan on every push / PR (see .github/workflows/).
+
+title = "Open Integration Engine Launcher — gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic test fixtures and documented local-dev defaults — not real secrets."
+
+# Files that intentionally contain fake credential-shaped strings.
+paths = [
+  # The legacy-import fixture carries obviously-fake username/password pairs whose whole purpose is to
+  # prove the importer NEVER persists them (see ConnectionImportTest.neverImportsSecrets).
+  '''launcher-core/src/test/resources/fixtures/legacy-connections.json''',
+]
+
+# Specific synthetic / dev-default literals that appear in source, tests, and docs.
+regexes = [
+  '''S3cr3t-do-not-import!''',         # synthetic fixture password (import-rejection marker)
+  '''another-plaintext-secret''',      # synthetic fixture password (import-rejection marker)
+  '''gestalt-truststore''',            # non-secret password for a public-cert-only PKCS12 truststore
+  '''gestalt-dev''',                   # documented local-dev default in tools/gen-win-codesign-cert.ps1
+  '''dev-pfx-pw''',                    # sample value in docs/SIGNING.md
+  '''audit-secret-xyz''',              # synthetic value asserted to NEVER reach the audit log (a test)
+]

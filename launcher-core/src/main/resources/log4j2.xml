@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Audit-first logging config.
+
+  The `AUDIT` logger is the security trail: it goes ONLY to logs/audit.log (additivity="false"),
+  rolls by size and day, and keeps a bounded number of compressed archives. The file location is
+  resolved from the system property gestalt.log.dir, which AuditLog sets to the per-user log dir
+  before the logger is first used (defaulting to ./logs if unset).
+-->
+<Configuration status="WARN">
+  <Properties>
+    <Property name="logDir">${sys:gestalt.log.dir:-logs}</Property>
+  </Properties>
+
+  <Appenders>
+    <RollingFile name="AuditFile"
+                 fileName="${logDir}/audit.log"
+                 filePattern="${logDir}/audit-%d{yyyy-MM-dd}-%i.log.gz">
+      <!-- timestamp + the structured key=value message; no thread/level noise in the audit trail -->
+      <PatternLayout pattern="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %msg%n"/>
+      <Policies>
+        <TimeBasedTriggeringPolicy/>
+        <SizeBasedTriggeringPolicy size="10 MB"/>
+      </Policies>
+      <DefaultRolloverStrategy max="14"/>
+    </RollingFile>
+
+    <Console name="Console" target="SYSTEM_ERR">
+      <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+    </Console>
+  </Appenders>
+
+  <Loggers>
+    <Logger name="AUDIT" level="info" additivity="false">
+      <AppenderRef ref="AuditFile"/>
+    </Logger>
+    <Root level="warn">
+      <AppenderRef ref="Console"/>
+    </Root>
+  </Loggers>
+</Configuration>

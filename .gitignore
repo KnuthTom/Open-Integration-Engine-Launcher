@@ -1,0 +1,44 @@
+# --- Gradle / build output ---
+.gradle/
+build/
+**/build/
+# Kotlin 2.x per-project build cache / daemon state.
+.kotlin/
+
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+out/
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+
+# --- Signing identity & generated secrets: NEVER commit ---
+# The code-signing keystore and exported cert are produced by tools/gen-signing-cert.*
+/tools/out/
+# Belt-and-suspenders: never track signing material or local env files anywhere in the tree.
+*.pfx
+*.p12
+*.jks
+*.keystore
+.env
+.env.*
+
+# --- Test fixtures are dropped in by the developer (large / proprietary binaries) ---
+# See core-trust/src/test/resources/fixtures/README.md
+core-trust/src/test/resources/fixtures/*.jar
+core-trust/src/test/resources/fixtures/anchors/*.pem
+
+# --- Local, machine-specific ---
+local.properties
+
+# --- Claude Code local session settings ---
+.claude/settings.local.json
+
+# JVM hard-crash dumps
+hs_err_pid*.log
+replay_pid*.log

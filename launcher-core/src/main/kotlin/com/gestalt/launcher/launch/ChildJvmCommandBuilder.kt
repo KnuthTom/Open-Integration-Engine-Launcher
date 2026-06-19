@@ -1,0 +1,234 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+package com.gestalt.launcher.launch
+
+import com.gestalt.launcher.gate.AdmittedJar
+import com.gestalt.launcher.model.Connection
+import com.gestalt.launcher.model.JavaHomeMode
+import com.gestalt.launcher.net.LocalhostResolver
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+
+/**
+ * Builds the child-JVM command line that launches the verified client.
+ *
+ * Default-secure by construction:
+ *  - **TLS is modern only** (1.2/1.3) for the child JVM, unless the connection explicitly overrides the
+ *    protocol list (an advanced, opt-in per-connection setting).
+ *  - The `-Djdk.tls.ephemeralDHKeySize=legacy` downgrade and any custom cipher list are OFF by default;
+ *    they are opt-in **per connection**.
+ *  - The classpath is assembled ONLY from [AdmittedJar]s — jars that passed the gate. There is no
+ *    overload that accepts raw paths.
+ *  - Server-provided JVM args from the JNLP are NOT honored wholesale (they could inject `-javaagent` or
+ *    TLS-weakening `-D` system properties). The ONE curated exception is the module-encapsulation flags
+ *    the modern Mirth client needs to run on Java 9+ — `--add-opens` / `--add-exports` / `--add-modules` /
+ *    `--add-reads` — which [curateModuleArgs] whitelists and everything else is dropped. Those flags only
+ *    relax module access for the already-verified client; they cannot set properties, load agents, or
+ *    weaken TLS, and are applied only on a Java 9+ target (they are invalid on Java 8). Application
+ *    arguments are passed through as before.
+ *
+ * Per-connection runtime settings (Phase 3b) are applied here from the connection's own (trusted, local)
+ * config — never from the untrusted server: the selected Java runtime ([Connection.javaHome]), max heap
+ * ([Connection.heapSize]), the show-console choice ([Connection.showJavaConsole] → `java` vs `javaw` on
+ * Windows), and optional SSL protocol/cipher overrides. A connection left at defaults produces exactly
+ * the original default-secure command.
+ */
+class ChildJvmCommandBuilder(
+    private val javaExe: String = defaultJavaExe(),
+) {
+    fun build(
+        connection: Connection,
+        mainClass: String,
+        classpath: List<AdmittedJar>,
+        appArgs: List<String> = emptyList(),
+        extraSystemProperties: Map<String, String> = emptyMap(),
+        serverJvmArgs: List<String> = emptyList(),
+    ): List<String> {
+        require(classpath.isNotEmpty()) { "refusing to launch with an empty (unverified) classpath" }
+        require(mainClass.isNotBlank()) { "refusing to launch without a main class" }
+
+        val javaHome = resolveJavaHome(connection)
+        val cmd = mutableListOf(javaExeIn(javaHome, connection))
+
+        // Max heap (-Xmx) — only a well-formed size is honored, as a guard against argument injection.
+        connection.heapSize?.trim()?.takeIf { it.matches(HEAP_PATTERN) }?.let { cmd += "-Xmx$it" }
+
+        // For a localhost/SSM-forward connection (IPv4-only), force the launched client onto the IPv4 stack
+        // so its own TLS connection to the server doesn't get stranded on a refused IPv6 ::1. Only for
+        // loopback — a genuine remote host (which may be IPv6-only) is left on its default dual stack.
+        if (isLoopbackConnection(connection)) cmd += "-Djava.net.preferIPv4Stack=true"
+
+        // Modern TLS by default; an explicit per-connection protocol list overrides it.
+        val protocols = connection.sslProtocols.takeIf { it.custom && it.value.isNotBlank() }?.value?.trim()
+            ?: "TLSv1.2,TLSv1.3"
+        cmd += "-Dhttps.protocols=$protocols"
+        cmd += "-Djdk.tls.client.protocols=$protocols"
+
+        // Cipher suites — only when the connection explicitly customizes them.
+        connection.sslCipherSuites.takeIf { it.custom && it.value.isNotBlank() }?.value?.trim()?.let { ciphers ->
+            cmd += "-Dhttps.cipherSuites=$ciphers"
+            cmd += "-Djdk.tls.client.cipherSuites=$ciphers"
+        }
+
+        // Legacy DH key downgrade — opt-in per connection only.
+        if (connection.legacyTlsCompatibility) {
+            cmd += "-Djdk.tls.ephemeralDHKeySize=legacy"
+        }
+
+        extraSystemProperties.forEach { (k, v) -> cmd += "-D$k=$v" }
+
+        // The modern Mirth client needs JPMS module-encapsulation flags to run on Java 9+. Pass ONLY the
+        // curated allowlist from the server's JNLP (never -D/-javaagent/-X), and only on a Java 9+ target
+        // where the flags are valid — on Java 8 they'd abort the JVM. See [curateModuleArgs] for why safe.
+        if (targetMajor(connection, javaHome) >= 9) {
+            cmd += curateModuleArgs(serverJvmArgs)
+        }
+
+        cmd += "-cp"
+        cmd += classpath.joinToString(File.pathSeparator) { it.file.toAbsolutePath().toString() }
+        cmd += mainClass
+        cmd += appArgs
+        return cmd
+    }
+
+    /** True when [connection] targets the loopback interface (localhost / 127.0.0.1 / ::1). */
+    private fun isLoopbackConnection(connection: Connection): Boolean =
+        LocalhostResolver.isLoopbackHost(runCatching { connection.baseUri().host }.getOrNull())
+
+    /**
+     * The effective Java home for [connection]: the requested runtime (Default = the launcher's own JVM;
+     * Custom = the configured path; Bundled = a shipped runtime if locatable), falling back to the
+     * launcher's own JVM when the requested one isn't a usable directory.
+     */
+    private fun resolveJavaHome(connection: Connection): Path? {
+        val defaultHome = Path.of(javaExe).parent?.parent // <home>/bin/java(.exe) -> <home>
+        val requestedHome: Path? = when (connection.javaHome.mode) {
+            JavaHomeMode.Default -> defaultHome
+            JavaHomeMode.Custom -> connection.javaHome.customPath?.takeIf { it.isNotBlank() }?.let { Path.of(it) }
+            JavaHomeMode.Bundled -> resolveBundledHome(connection.javaHome.bundledVersion)
+        }
+        return requestedHome?.takeIf { runCatching { Files.isDirectory(it) }.getOrDefault(false) } ?: defaultHome
+    }
+
+    /**
+     * The java binary inside [home] — on Windows `java.exe` when the console is requested, otherwise the
+     * windowless `javaw.exe`; on other platforms `java`. Falls back to the launcher's own [javaExe].
+     */
+    private fun javaExeIn(home: Path?, connection: Connection): String {
+        val windows = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+        val binary = when {
+            windows && connection.showJavaConsole -> "java.exe"
+            windows -> "javaw.exe"
+            else -> "java"
+        }
+        return home?.resolve("bin")?.resolve(binary)?.toString() ?: javaExe
+    }
+
+    /**
+     * Major version of the JVM that will actually run the client — read from the target home's `release`
+     * file, falling back to the connection's declared runtime intent when that can't be read. Used only to
+     * gate the Java 9+ module flags (which abort a Java 8 launch).
+     */
+    private fun targetMajor(connection: Connection, home: Path?): Int {
+        home?.let { majorVersionOf(it) }?.let { return it }
+        return when (connection.javaHome.mode) {
+            JavaHomeMode.Bundled -> connection.javaHome.bundledVersion.filter { it.isDigit() }.toIntOrNull() ?: 17
+            JavaHomeMode.Custom -> 17 // unknown custom path; assume a modern JVM
+            JavaHomeMode.Default -> parseMajor(System.getProperty("java.specification.version")) ?: 17
+        }
+    }
+
+    private fun majorVersionOf(home: Path): Int? {
+        val release = home.resolve("release")
+        val line = runCatching { Files.readAllLines(release) }.getOrDefault(emptyList())
+            .firstOrNull { it.startsWith("JAVA_VERSION=") } ?: return null
+        return parseMajor(line.substringAfter('='))
+    }
+
+    /**
+     * Locate a bundled runtime for [version] ("8"/"17").
+     *
+     *  1. An explicit override — `-Dgestalt.java.<version>.home` / `GESTALT_JAVA_<version>_HOME` —
+     *     wins (used for dev/testing without a packaged build).
+     *  2. Otherwise the Phase-4 packaged location: `runtimes/jre<version>` under the app resources
+     *     directory. Compose/jpackage sets `compose.application.resources.dir` to that directory at
+     *     runtime, tracking the launcher's own location — so this resolves correctly both for an
+     *     installed app and for the portable app-image that has been moved/unzipped anywhere.
+     *
+     * Returns null when neither is present, so the caller falls back to the default JVM.
+     */
+    private fun resolveBundledHome(version: String): Path? =
+        bundledRuntimeHome(
+            version = version,
+            override = System.getProperty("gestalt.java.$version.home")
+                ?: System.getenv("GESTALT_JAVA_${version}_HOME"),
+            resourcesDir = System.getProperty("compose.application.resources.dir"),
+        )
+
+    companion object {
+        private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
+        private const val MAX_MODULE_ARGS = 256
+
+        /** The only JVM-arg flags the launcher will accept from a (untrusted) server JNLP. */
+        private val ALLOWED_MODULE_FLAGS = setOf("--add-opens", "--add-exports", "--add-modules", "--add-reads")
+
+        /**
+         * Filter server-provided JVM args down to the SAFE module-encapsulation flags the modern client
+         * needs — [ALLOWED_MODULE_FLAGS], in either `--flag=value` or `--flag value` form. Everything else
+         * (`-D…`, `-javaagent…`, `-X…`, `-cp`, bare values, …) is dropped. These flags only relax module
+         * access for the already-verified client we chose to run; they cannot set system properties, load
+         * agents, or alter TLS — so a malicious server gains nothing through them. Bounded to a sane count
+         * as a guard against a pathological JNLP.
+         */
+        internal fun curateModuleArgs(tokens: List<String>): List<String> {
+            val out = mutableListOf<String>()
+            var i = 0
+            while (i < tokens.size && out.size < MAX_MODULE_ARGS) {
+                val t = tokens[i].trim()
+                when {
+                    t.contains('=') && t.substringBefore('=') in ALLOWED_MODULE_FLAGS -> { out += t; i++ }
+                    t in ALLOWED_MODULE_FLAGS -> {
+                        val value = tokens.getOrNull(i + 1)
+                        if (value != null && !value.startsWith("-")) { out += t; out += value; i += 2 } else i++
+                    }
+                    else -> i++
+                }
+            }
+            return out
+        }
+
+        /** Major Java version from a version string ("1.8.0_412" -> 8, "17.0.11" -> 17). Null if unparseable. */
+        internal fun parseMajor(version: String?): Int? {
+            val cleaned = version?.trim()?.trim('"')?.ifBlank { null } ?: return null
+            val parts = cleaned.split('.', '_', '-', '+')
+            val first = parts.getOrNull(0)?.toIntOrNull() ?: return null
+            return if (first == 1) parts.getOrNull(1)?.toIntOrNull() ?: 8 else first
+        }
+
+        fun defaultJavaExe(): String {
+            val home = System.getProperty("java.home")
+            val exe = if (System.getProperty("os.name").orEmpty().lowercase().contains("win")) "java.exe" else "java"
+            return Path.of(home, "bin", exe).toString()
+        }
+
+        /**
+         * Pure bundled-runtime resolution (extracted for testing). An explicit [override] path wins
+         * unconditionally (the caller still validates it is a directory). Otherwise, if [resourcesDir]
+         * is set (the Compose/jpackage app-resources dir), a `runtimes/jre<version>` directory inside
+         * it is used when present. Null means "no bundled runtime — fall back to the default JVM".
+         */
+        internal fun bundledRuntimeHome(version: String, override: String?, resourcesDir: String?): Path? {
+            override?.takeIf { it.isNotBlank() }?.let { return Path.of(it) }
+            resourcesDir?.takeIf { it.isNotBlank() }?.let {
+                val candidate = Path.of(it, "runtimes", "jre$version")
+                if (runCatching { Files.isDirectory(candidate) }.getOrDefault(false)) return candidate
+            }
+            return null
+        }
+    }
+}

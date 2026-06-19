@@ -1,0 +1,41 @@
+Open Integration Engine Launcher
+================================
+
+Licensed under the Mozilla Public License, Version 2.0 (MPL-2.0).
+See the LICENSE file for the full text.
+
+Origin and independence
+------------------------
+This is an INDEPENDENT, community-maintained desktop launcher for the
+Open Integration Engine (OIE) / Mirth Connect Administrator client.
+
+It is a clean-room implementation. It contains NO decompiled, copied, or
+derived source from Mirth Connect or NextGen Healthcare, and it bundles no
+proprietary client binaries. At launch it verifies and runs the Administrator
+client that the user's OWN server provides over the network; it does not
+contain or redistribute that client.
+
+This launcher was originally built by Gestalt Diagnostics and released to the
+community.
+
+Not affiliated / trademarks
+---------------------------
+This project is not affiliated with, endorsed by, or sponsored by the Open
+Integration Engine project, NextGen Healthcare, or Mirth Connect.
+
+"Mirth" and "NextGen" are trademarks of NextGen Healthcare, Inc. "Open
+Integration Engine" is the name of a separate open-source project. These names
+are used only descriptively, to identify the software this launcher
+interoperates with.
+
+Third-party assets and dependencies
+-----------------------------------
+Bundled icon sets and client runtimes are documented in THIRD_PARTY_LICENSES.md.
+Third-party code dependencies are enumerated in the CycloneDX SBOM produced by
+`./gradlew cyclonedxBom` (also attached to each GitHub Release).
+
+No warranty / unsigned builds
+-----------------------------
+This is community-maintained software provided "as is", WITHOUT WARRANTY OF ANY
+KIND. The published release binaries are UNSIGNED; see the README for how to run
+them on Windows (SmartScreen) and macOS (Gatekeeper), or build from source.
