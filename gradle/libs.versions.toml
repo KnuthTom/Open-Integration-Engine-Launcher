@@ -8,7 +8,7 @@ junitPlatform = "1.10.2"
 httpclient5 = "5.4.1"
 log4j = "2.24.3"
 jna = "5.16.0"
-kotlinxSerialization = "1.7.3"
+kotlinxSerialization = "1.11.0"
 # Supply-chain tooling
 cyclonedx = "1.10.0"
 owaspDepCheck = "11.1.1"
