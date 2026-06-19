@@ -6,7 +6,7 @@ junitJupiter = "5.10.2"
 junitPlatform = "1.10.2"
 # Phase 2 — launch path / security core
 httpclient5 = "5.4.1"
-log4j = "2.24.3"
+log4j = "2.26.0"
 jna = "5.16.0"
 kotlinxSerialization = "1.7.3"
 # Supply-chain tooling
