@@ -2,7 +2,7 @@
 kotlin = "2.4.0"
 compose = "1.9.3"
 bouncycastle = "1.78.1"
-junitJupiter = "5.10.2"
+junitJupiter = "6.1.0"
 junitPlatform = "1.10.2"
 # Phase 2 — launch path / security core
 httpclient5 = "5.4.1"
