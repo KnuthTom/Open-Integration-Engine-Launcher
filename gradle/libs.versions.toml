@@ -1,6 +1,6 @@
 [versions]
 kotlin = "2.4.0"
-compose = "1.9.3"
+compose = "1.11.1"
 bouncycastle = "1.78.1"
 junitJupiter = "5.10.2"
 junitPlatform = "1.10.2"
