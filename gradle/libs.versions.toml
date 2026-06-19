@@ -1,7 +1,7 @@
 [versions]
 kotlin = "2.4.0"
 compose = "1.9.3"
-bouncycastle = "1.78.1"
+bouncycastle = "1.84"
 junitJupiter = "5.10.2"
 junitPlatform = "1.10.2"
 # Phase 2 — launch path / security core
