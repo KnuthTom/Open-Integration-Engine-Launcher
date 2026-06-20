@@ -12,13 +12,13 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
-/** Pins the Gestalt Cloud Connect rename so a regression to the old "Gestalt Command" name fails CI. */
+/** Pins the vendor-neutral data-dir name + the publisher pin so a branding regression fails CI. */
 class RenameTest {
 
     @Test
-    @DisplayName("per-user data dir is named GestaltCloudConnect")
+    @DisplayName("per-user data dir is the vendor-neutral OpenIntegrationEngineLauncher")
     fun dataDirRenamed() {
-        assertEquals("GestaltCloudConnect", AppPaths.APP_DIR_NAME)
+        assertEquals("OpenIntegrationEngineLauncher", AppPaths.APP_DIR_NAME)
     }
 
     @Test

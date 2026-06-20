@@ -25,9 +25,14 @@ import java.util.Locale
  *  3. **Per-user** (default) — the conventional per-user app-data location for the platform.
  */
 object AppPaths {
-    const val APP_DIR_NAME = "GestaltCloudConnect"
+    const val APP_DIR_NAME = "OpenIntegrationEngineLauncher"
 
-    /** Pre-rename data-dir name; best-effort migrated to [APP_DIR_NAME] on first resolve. */
+    /**
+     * A much older pre-rename data-dir name, still best-effort migrated to [APP_DIR_NAME]. NOTE: the
+     * interim "GestaltCloudConnect" dir is deliberately NOT migrated — the vendor-neutral build starts
+     * with a clean, empty data dir (no inherited connection profiles); any prior data is left in place,
+     * untouched, for the user to import manually if they want it.
+     */
     private const val LEGACY_APP_DIR_NAME = "GestaltCommand"
 
     /** Marker file (next to the executable) that switches a copy into portable mode. */

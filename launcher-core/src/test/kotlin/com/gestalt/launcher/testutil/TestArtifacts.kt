@@ -97,6 +97,27 @@ object TestArtifacts {
         return Leaf(kp, listOf(cert, issuer.cert))
     }
 
+    /**
+     * A code-signing leaf with an explicit validity window. Used by the Phase-5 cert-rotation drill to
+     * prove the gate fails **closed** on an expired signing certificate (a jar signed by it, with no
+     * RFC-3161 timestamp, must be rejected). The complementary "timestamp rescues an expired cert" path
+     * is covered by the genuine timestamped OIE fixture in core-trust's `JarSignatureVerifierTest`.
+     */
+    fun codeSigningLeaf(subjectDn: String, issuer: Ca, notBefore: Date, notAfter: Date): Leaf {
+        val kp = rsaKeyPair()
+        val issuerName = JcaX509CertificateHolder(issuer.cert).subject
+        val cert = buildCert(
+            subject = X500Name(subjectDn), issuer = issuerName,
+            subjectKey = kp, signerKey = issuer.keyPair.private,
+            notBefore = notBefore, notAfter = notAfter,
+        ) { b ->
+            b.addExtension(Extension.basicConstraints, true, BasicConstraints(false))
+            b.addExtension(Extension.keyUsage, true, KeyUsage(KeyUsage.digitalSignature))
+            b.addExtension(Extension.extendedKeyUsage, false, ExtendedKeyUsage(KeyPurposeId.id_kp_codeSigning))
+        }
+        return Leaf(kp, listOf(cert, issuer.cert))
+    }
+
     /** A self-signed TLS server certificate with a SAN dNSName of [sanDns]. */
     fun serverCert(commonName: String, sanDns: String): Pair<KeyPair, X509Certificate> {
         val kp = rsaKeyPair()
@@ -180,11 +201,10 @@ object TestArtifacts {
         issuer: X500Name,
         subjectKey: KeyPair,
         signerKey: PrivateKey,
+        notBefore: Date = Date(System.currentTimeMillis() - 86_400_000L),
+        notAfter: Date = Date(System.currentTimeMillis() + 3650L * 86_400_000L),
         addExtensions: (JcaX509v3CertificateBuilder) -> Unit,
     ): X509Certificate {
-        val now = System.currentTimeMillis()
-        val notBefore = Date(now - 86_400_000L)
-        val notAfter = Date(now + 3650L * 86_400_000L)
         val builder = JcaX509v3CertificateBuilder(
             issuer, BigInteger.valueOf(serials.incrementAndGet()), notBefore, notAfter, subject, subjectKey.public,
         )
