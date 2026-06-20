@@ -1,0 +1,107 @@
+# CLAUDE.md — project guide & context handoff
+
+Context for any AI assistant (or human) working on this repo. It's self-contained: a fresh session can
+read this and be productive without prior chat history. Contains **no real data or secrets** (synthetic
+values only) and is safe to keep in a public repo.
+
+## What this is
+An independent, open-source **desktop launcher for the Open Integration Engine (OIE) / Mirth Connect
+Administrator** client — a community replacement for NextGen's discontinued *Mirth Connect Administrator
+Launcher (MCAL)*. It verifies (fail-closed) and launches the Administrator the user's own server
+publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary client. Licensed **MPL-2.0**.
+
+> Not affiliated with / endorsed by the OIE project, NextGen Healthcare, or Mirth Connect. Those names
+> are used descriptively. Originally built by **Gestalt Diagnostics**, released to the community.
+
+## Status (2026-06-19)
+- **Repo (source of truth):** `github.com/KnuthTom/Open-Integration-Engine-Launcher`, branch `main` —
+  currently **PRIVATE** (flip to public when ready).
+- Default branding is **vendor-neutral** (`Branding.Default`); the original Gestalt identity is an
+  **optional** pack (`Branding.Gestalt`). Final product name is the maintainer's call — see the
+  `TODO(maintainer)` in `Branding.Default`.
+- Release binaries are **UNSIGNED** (community). A **v1.0.1** Windows MSI exists; publishing it as a
+  GitHub Release (web upload or the tag-driven CI workflow) is in progress.
+- **268 tests pass** (`./gradlew build`).
+
+## Stack & modules
+Kotlin 2.4 · Compose Multiplatform 1.9.3 · Gradle 8.14.5 (wrapper) · JDK 17.
+
+| module | responsibility |
+|---|---|
+| `:core-trust` | Pure jar-signature verification (CMS/PKIX/EKU/RFC-3161). No UI/network. |
+| `:launcher-core` | The fail-closed launch path: verification gate, JNLP parse, TLS + pinning, connection model/store/import, credentials, audit, self-update. |
+| `:design-system` | Token-driven Compose theming, components, icon + branding shells. |
+| `:app` | Compose Desktop product UI (list / form / import-export / launch); `--gallery`, `--cli`, `--test`. |
+
+Full architecture + trust pipeline: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Threat model:
+[`SECURITY.md`](SECURITY.md).
+
+## Build / run / test / package
+```bash
+./gradlew build                          # compile + run ALL tests (needs JDK 17)
+./gradlew :app:run                       # product UI
+./gradlew :app:run --args="--gallery"    # design-system component gallery
+./gradlew :app:run --args="--test https://host:8443"   # headless connection diagnostic
+./gradlew :app:packageMsi                # Windows installer -> app/build/compose/binaries/main/msi/
+./gradlew :app:packageAll                # current-OS installer(s) + portable zip
+./gradlew cyclonedxBom                   # SBOM -> build/reports/bom.{json,xml}
+```
+Packaging bundles Temurin **JRE 8 + 17** (the *client* runtimes), fetched from Adoptium at build time.
+
+## House rules (do not break these)
+1. **Clean-room** — never add decompiled/copied/derived Mirth/NextGen source or a vendored client jar.
+2. **No real connection data** anywhere (code/tests/fixtures/docs/screenshots) — synthetic only:
+   `localhost`, `127.0.0.1`, `*.example.com/.org`, `*.example.internal`, fake orgs ("Example Lab").
+3. **No secrets** — no keystores/keys/`.pfx`/`.p12`/tokens/`.env`. `.gitignore` + a CI gitleaks scan
+   (`.gitleaks.toml` allowlists the synthetic fixture passwords) guard this.
+4. Every source file carries the standard **MPL-2.0 header**; new files too.
+
+## Trust model (the important part)
+Fail-closed pipeline (`LauncherCore.prepareLaunch` builds the plan; `launch` spawns it — the only spawn
+point): pin check → fetch+parse JNLP (untrusted, XXE-hardened) → digests → download → **single gate**
+(`CodebaseVerifier`: digest → signature → publisher pin) → only an `AdmittedJar` reaches the classpath →
+default-secure child-JVM command. `PIN_KNOWN_SIGNERS` pins NextGen/Mirth + BrightCode/OIE by DN
+(renewal-safe). TLS: full chain+hostname for public CAs; exact-leaf **pinning** (TOFU + re-pin) for
+self-signed engines / SSH-SSM tunnels. Credentials live only in the OS keychain; the store is
+secret-scanned on save. The `Gestalt Cloud Connect Code Signing` pin DN is a kept, functional anchor.
+
+## Connections & data
+- App ships with **no connections** — starts empty; users add their own. Profiles are deletable in the
+  UI (row ⋮ → Delete; multi-select → Delete) with full per-connection cleanup.
+- Per-user data dir is the vendor-neutral **`OpenIntegrationEngineLauncher`** (under %LOCALAPPDATA% /
+  ~/Library / XDG). The older `GestaltCloudConnect` dir is **not** migrated — clean slate; prior data is
+  left untouched for manual import.
+- The legacy-import test fixture (`launcher-core/.../fixtures/legacy-connections.json`) is **synthetic**
+  (the importer test asserts its fake credentials are never persisted).
+
+## CI / releases
+- `.github/workflows/ci.yml` — gitleaks + Gradle wrapper validation + build/test on ubuntu/windows/macos.
+- `.github/workflows/release.yml` — push a `v*` tag → builds per-OS installers + portable + SBOM +
+  `SHA256SUMS` → **draft** Release. Free for public repos; no signing secrets.
+
+## Dev environment gotchas
+- Gradle isn't on PATH → always use `./gradlew`.
+- Tests redirect the data dir via `-Dgestalt.home=<build dir>` so they never touch a real profile.
+- Packaging needs network (Adoptium) and grows `app/build` to ~1 GB — run `./gradlew clean` after. The
+  dev box runs tight on disk.
+- `git http.sslVerify` should stay **true** (a prior `false` global setting was removed).
+
+## Phase lineage (how it got here)
+1–2 trust + fail-closed launch cores · 3 product UI + design system · 4 packaging + signing + self-update
+· bug-fix/hardening passes · **5 validation** (matrix harness + cert-rotation drill + soak;
+`launcher-core/.../matrix/`) · **OSS release**: IP/data scrub, clean history re-init, MPL relicense,
+vendor-neutral rebrand, free CI/Releases.
+
+## Open follow-ups
+- Add `CODE_OF_CONDUCT.md` + issue/PR templates (via GitHub UI — intentionally not authored here).
+- Publish the **v1.0.1** Release (web upload of the local MSI, or push a `v1.0.1` tag for CI).
+- Decide the final product **name** (`Branding.Default`) and whether to switch the commit author email
+  from `tomknuth1@gmail.com` to the GitHub no-reply before going public.
+- Minor cleanups: the portable-mode sentinel is still `gestalt-portable.txt`; the three Phase 5 test
+  files print "Gestalt Cloud Connect 1.0 — Phase 5 …" in their generated report headers (gitignored
+  output, cosmetic) — neutralize when convenient.
+- Flip the repo to **public** when ready.
+
+## Pointers
+- A copy of a similar snapshot lives at `C:\dev\OIE-Launcher-project-snapshot.md` on the originator's
+  machine (outside the repo). This `CLAUDE.md` is the in-repo, durable version.
