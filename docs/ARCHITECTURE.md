@@ -65,7 +65,12 @@ runs headlessly in tests without real networking or spawning a process.
   SSH/SSM tunnels). A rotated server cert fails closed with a re-pin prompt.
 - **Credentials** live only in the OS keychain (Windows DPAPI / macOS Keychain / Linux libsecret). The
   connection store is secret-scanned on save, so a password can never land in `connections.json`; the
-  importer likewise never imports credentials.
+  importer likewise never imports credentials. At launch, a saved password is read from the keychain and
+  handed to the Administrator as its 3rd and 4th program arguments (`[serverUrl, version, username,
+  password]`) — the auto-login the client itself defines and MCAL used. The launch plan stays
+  secret-free; the credentials join the command only at the spawn, only for the stock two-argument
+  descriptor, the array is zeroed afterwards, and the audit log records the event, never the value.
+  The inherited caveat: a program argument is visible to other processes of the same user.
 - **Audit** — security-relevant events are appended to `logs/audit.log`, never including a secret.
 
 ## Connections, storage, import

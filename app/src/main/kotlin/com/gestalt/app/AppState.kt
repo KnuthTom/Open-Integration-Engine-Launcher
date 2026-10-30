@@ -32,6 +32,7 @@ import com.gestalt.launcher.gate.TrustedSignerStore
 import com.gestalt.launcher.icon.CustomIcon
 import com.gestalt.launcher.icon.CustomIconStore
 import com.gestalt.launcher.importer.ConnectionImport
+import com.gestalt.launcher.launch.AutoLogin
 import com.gestalt.launcher.launch.LaunchPhase
 import com.gestalt.launcher.launch.LauncherCore
 import com.gestalt.launcher.model.CloseAfterLaunch
@@ -155,6 +156,9 @@ sealed interface AppDialog {
         val connectionId: String?,
         val report: ConnectionTestReport,
     ) : AppDialog
+
+    /** A plain message the user needs to see — something that happened outside a launch (a keychain refusing a password, say). */
+    data class Notice(val title: String, val message: String) : AppDialog
 }
 
 /**
@@ -505,18 +509,40 @@ class AppState(
         onRequestClose()
     }
 
-    /** Insert or update a connection; if [password] is non-empty it is stored in the keychain only. */
+    /**
+     * Insert or update a connection; if [password] is non-empty it is stored in the keychain only (keyed
+     * by connection id + username, so a renamed user leaves no orphaned entry behind). A keychain that
+     * refuses the password does not undo the save — the connection is kept and the user is told, since
+     * the alternative is a silent "why didn't it log me in?".
+     */
     fun upsert(connection: Connection, password: CharArray? = null): String {
-        val isNew = store.get(connection.id) == null
-        val saved = if (isNew) store.add(connection, persist = false) else store.update(connection, persist = false)
+        val previous = store.get(connection.id)
+        val saved = if (previous == null) store.add(connection, persist = false) else store.update(connection, persist = false)
+        val previousUser = previous?.username?.takeIf { it.isNotBlank() }
+        if (previousUser != null && previousUser != connection.username) {
+            runCatching { credentials.delete(saved.id, previousUser) }
+                .onFailure { AuditLog.event("credential.error", "connection" to saved.id, "action" to "delete", "error" to it.describe()) }
+        }
         if (password != null && password.isNotEmpty() && !connection.username.isNullOrBlank()) {
-            runCatching { credentials.store(saved.id, connection.username!!, password) }
-            password.fill(' ')
+            try {
+                credentials.store(saved.id, connection.username!!, password)
+            } catch (e: Exception) {
+                AuditLog.event("credential.error", "connection" to saved.id, "action" to "store", "error" to e.describe())
+                dialog = AppDialog.Notice(
+                    "Password not saved",
+                    "The connection was saved, but the password could not be stored in the OS keychain (${e.describe()}). " +
+                        "The Administrator will ask for it at its login screen.",
+                )
+            } finally {
+                password.fill('\u0000')
+            }
         }
         reload()
         schedulePersist()
         return saved.id
     }
+
+    private fun Throwable.describe(): String = message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
 
     fun delete(id: String) {
         val conn = store.get(id)
@@ -735,7 +761,9 @@ class AppState(
                 // runInterruptible: a cancel() interrupts this thread, and LauncherCore checks the flag
                 // between fetches, so the download stops at the next boundary and nothing is spawned.
                 val process = runInterruptible {
-                    launcher.launch(conn) { phase -> if (phase != LaunchPhase.Running) launches[id] = LaunchView(phase) }
+                    // The saved credential (if any) rides along as the Administrator's auto-login; the
+                    // launcher zeroes it after the spawn. Read here, on the IO thread, not on the UI thread.
+                    launcher.launch(conn, { phase -> if (phase != LaunchPhase.Running) launches[id] = LaunchView(phase) }, autoLoginFor(conn))
                 }
                 trackRunning(id, process)
                 // Close on the UI thread via the composition scope. (Dispatchers.Main isn't installed on
@@ -757,6 +785,21 @@ class AppState(
             }
         }
         launchJobs[id] = job
+    }
+
+    /**
+     * The Administrator auto-login for [conn]: its username plus the password the keychain holds for it,
+     * or null when there is no username, no saved password, or the keychain can't be read. A keychain
+     * error is audited and the launch goes ahead to the login screen — a password problem is never a
+     * reason to refuse a verified launch.
+     */
+    internal fun autoLoginFor(conn: Connection): AutoLogin? {
+        val user = conn.username?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val password = runCatching { credentials.retrieve(conn.id, user) }
+            .onFailure { AuditLog.event("credential.error", "connection" to conn.id, "action" to "retrieve", "error" to it.describe()) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() } ?: return null
+        return AutoLogin(user, password)
     }
 
     /** Cancel a launch that is still being prepared (download / verify). No-op once the child is running. */

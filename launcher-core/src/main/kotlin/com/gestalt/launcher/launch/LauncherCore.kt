@@ -73,6 +73,16 @@ data class LaunchPlan(
 )
 
 /**
+ * Credentials for the Administrator's auto-login. Mirth's client takes them as its 3rd and 4th program
+ * arguments after `[serverUrl, version]`; given both it signs in on its own, given neither it shows the
+ * login screen. [password] is the caller's array — [LauncherCore.launch] zeroes it once the child is
+ * spawned (or the launch has failed), so a caller hands it over and does not reuse it.
+ */
+class AutoLogin(val username: String, val password: CharArray) {
+    override fun toString() = "AutoLogin(username=$username, password=***)"
+}
+
+/**
  * One jar the plan will download and gate. [artifactName] is the jar's path relative to the server root
  * (`webstart/extensions/libs/foo/common.jar`), NOT its basename: two Mirth extensions routinely ship a
  * jar with the same basename, and keying the cache slot and the digest lookup by basename would make
@@ -253,13 +263,39 @@ open class LauncherCore(
      * running it under `runInterruptible` makes a coroutine cancel take effect at the next fetch boundary
      * (a blocking socket read in progress completes first). A cancelled launch spawns nothing.
      */
-    open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}): Process {
-        val plan = prepareLaunch(connection, onPhase)
-        checkNotCancelled()
-        onPhase(LaunchPhase.Launching)
-        val process = ProcessBuilder(plan.command).inheritIO().start()
-        onPhase(LaunchPhase.Running)
-        return process
+    open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}, autoLogin: AutoLogin? = null): Process {
+        try {
+            val plan = prepareLaunch(connection, onPhase)
+            checkNotCancelled()
+            onPhase(LaunchPhase.Launching)
+            val process = ProcessBuilder(commandWithLogin(plan, autoLogin)).inheritIO().start()
+            onPhase(LaunchPhase.Running)
+            return process
+        } finally {
+            autoLogin?.password?.fill('\u0000')
+        }
+    }
+
+    /**
+     * The command to spawn: the plan's, plus — when [autoLogin] is supplied — the username and password
+     * as the Administrator's 3rd and 4th program arguments. The credentials are appended only when the
+     * descriptor had the stock two arguments (`[serverUrl, version]`); with any other shape the positions
+     * would be wrong, so the launch goes ahead without them and the login screen asks. Either way is
+     * audited (the event only — never the values). The plan itself stays free of secrets.
+     *
+     * The caveat is the Administrator's, not ours: a program argument is visible to other processes of
+     * the same user, and the JVM holds it as a String until collected. This is the one auto-login the
+     * client offers, and exactly what the discontinued MCAL did.
+     */
+    internal fun commandWithLogin(plan: LaunchPlan, autoLogin: AutoLogin?): List<String> {
+        if (autoLogin == null) return plan.command
+        if (autoLogin.username.isBlank() || autoLogin.password.isEmpty()) return plan.command
+        if (plan.appArgs.size != 2) {
+            AuditLog.event("child.autologin", "connection" to plan.connection.id, "result" to "SKIPPED", "reason" to "descriptor has ${plan.appArgs.size} arguments, expected 2")
+            return plan.command
+        }
+        AuditLog.event("child.autologin", "connection" to plan.connection.id, "result" to "SUPPLIED")
+        return plan.command + autoLogin.username + String(autoLogin.password)
     }
 
     /** Honour a cancel requested through thread interruption (see [launch]). */

@@ -118,7 +118,8 @@ reports a clean DNS/refused/timeout, never a TLS error or stack trace.
    - `-Djdk.tls.ephemeralDHKeySize` is **NOT** on the child command line (check the spawned process
      args) unless the connection opted into legacy TLS.
    - the saved credential is read from the keychain (an `event=credential.access action=retrieve` line
-     appears; the value never does).
+     appears; the value never does) and the Administrator signs in on its own
+     (`event=child.autologin result=SUPPLIED`); without a saved password it shows its login screen.
    - `logs/audit.log` shows the full sequence: `codebase.download`, one `jar.verify … result=ADMITTED`
      per jar, `signature.enforce … result=ACCEPT`, and `child.launch`.
 

@@ -31,4 +31,5 @@ regexes = [
   '''gestalt-dev''',                   # documented local-dev default in tools/gen-win-codesign-cert.ps1
   '''dev-pfx-pw''',                    # sample value in docs/SIGNING.md
   '''audit-secret-xyz''',              # synthetic value asserted to NEVER reach the audit log (a test)
+  '''synthetic-pw''',                  # synthetic auto-login password in AutoLoginArgsTest / AutoLoginWiringTest
 ]

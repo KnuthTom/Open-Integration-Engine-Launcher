@@ -35,7 +35,8 @@ trust path — without you hand-managing Java Web Start, keystores, or JVM flags
 - **Bundled client runtimes** — launches the Administrator on a bundled Temurin **JRE 8 or 17**
   per connection, so you don't need a system Java.
 - **Credentials stay in the OS keychain** (Windows DPAPI / macOS Keychain / Linux libsecret) —
-  never written to `connections.json` or any log.
+  never written to `connections.json` or any log. A saved password signs you in to the Administrator
+  automatically, the way MCAL did.
 
 Architecture and the trust model are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [SECURITY.md](SECURITY.md).

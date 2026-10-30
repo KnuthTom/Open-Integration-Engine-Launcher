@@ -7,6 +7,7 @@
 package com.gestalt.app
 
 import com.gestalt.launcher.credential.InMemoryCredentialStore
+import com.gestalt.launcher.launch.AutoLogin
 import com.gestalt.launcher.launch.LaunchPhase
 import com.gestalt.launcher.launch.LauncherCore
 import com.gestalt.launcher.model.Connection
@@ -52,7 +53,7 @@ class LaunchTrackingTest {
 
     /** A launcher that skips the pipeline and hands back a controllable process. */
     private class FakeLauncher(private val spawned: MutableList<FakeProcess>, private val pids: AtomicInteger) : LauncherCore() {
-        override fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit): Process {
+        override fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit, autoLogin: AutoLogin?): Process {
             onPhase(LaunchPhase.Verifying)
             onPhase(LaunchPhase.Launching)
             return FakeProcess(pids.incrementAndGet().toLong()).also { spawned += it }

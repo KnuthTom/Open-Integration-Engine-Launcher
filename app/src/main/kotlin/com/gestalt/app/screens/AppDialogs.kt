@@ -36,6 +36,18 @@ fun AppDialogs(appState: AppState) {
         is AppDialog.TrustPin -> TrustPinDialog(appState, d)
         is AppDialog.CertView -> CertViewDialog(appState, d)
         is AppDialog.TestResult -> TestResultDialog(appState, d)
+        is AppDialog.Notice -> NoticeDialog(appState, d)
+    }
+}
+
+@Composable
+private fun NoticeDialog(appState: AppState, d: AppDialog.Notice) {
+    ModalOverlay(
+        title = d.title,
+        onDismiss = appState::dismissDialog,
+        actions = { GestaltButton("OK", onClick = appState::dismissDialog) },
+    ) {
+        GestaltText(d.message, role = TextRole.Body)
     }
 }
 
