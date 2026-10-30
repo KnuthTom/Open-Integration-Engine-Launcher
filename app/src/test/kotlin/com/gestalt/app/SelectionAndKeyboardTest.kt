@@ -184,12 +184,13 @@ class SelectionAndKeyboardTest {
     fun launchIdempotentWhileInFlight(@TempDir dir: Path) {
         val state = newState(dir)
         seed(state)
-        // Simulate an in-flight (running) launch; a second launch must NOT restart it or kick off work.
-        state.launches["A"] = LaunchView(LaunchPhase.Running)
+        // Simulate a launch still being prepared; a second launch must NOT restart it or kick off work.
+        // (A RUNNING connection is different: it may be launched again — see LaunchTrackingTest.)
+        state.launches["A"] = LaunchView(LaunchPhase.Verifying)
 
         state.launch("A")
 
-        assertEquals(LaunchPhase.Running, state.launches["A"]?.phase) { "the in-flight launch is left untouched" }
+        assertEquals(LaunchPhase.Verifying, state.launches["A"]?.phase) { "the in-flight launch is left untouched" }
         assertNull(state.dialog) { "no relaunch was started (so no failure dialog could open)" }
     }
 

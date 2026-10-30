@@ -8,12 +8,15 @@ package com.gestalt.launcher.tls
 
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.net.LocalhostResolver
+import org.apache.hc.client5.http.config.ConnectionConfig
+import org.apache.hc.client5.http.config.RequestConfig
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient
 import org.apache.hc.client5.http.impl.classic.HttpClients
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder
 import org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy
 import org.apache.hc.client5.http.ssl.DefaultHostnameVerifier
 import org.apache.hc.client5.http.ssl.HostnameVerificationPolicy
+import org.apache.hc.core5.util.Timeout
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -100,6 +103,14 @@ object HttpClientFactory {
 
     private val MODERN_TLS = arrayOf("TLSv1.3", "TLSv1.2")
 
+    /**
+     * Bounded waits so a server that accepts the connection and then stalls can't hang a launch (or the
+     * diagnostic) forever: the HttpClient defaults are a 3-minute connect timeout and NO socket timeout.
+     * A jar download over a slow tunnel keeps flowing, so a per-read socket timeout of a minute is safe.
+     */
+    private val CONNECT_TIMEOUT: Timeout = Timeout.ofSeconds(15)
+    private val SOCKET_TIMEOUT: Timeout = Timeout.ofSeconds(60)
+
     private fun build(
         sslContext: SSLContext,
         policy: HostnameVerificationPolicy,
@@ -122,9 +133,21 @@ object HttpClientFactory {
             // IPv4-first for localhost (with fall-back across all resolved addresses); identical to the
             // platform default for every non-loopback host. Applies to the JNLP, digest and jar fetches.
             .setDnsResolver(LocalhostResolver.dnsResolver)
+            .setDefaultConnectionConfig(
+                ConnectionConfig.custom()
+                    .setConnectTimeout(CONNECT_TIMEOUT)
+                    .setSocketTimeout(SOCKET_TIMEOUT)
+                    .build(),
+            )
             .build()
         return HttpClients.custom()
             .setConnectionManager(connectionManager)
+            .setDefaultRequestConfig(
+                RequestConfig.custom()
+                    .setConnectionRequestTimeout(CONNECT_TIMEOUT)
+                    .setResponseTimeout(SOCKET_TIMEOUT)
+                    .build(),
+            )
             .build()
     }
 }

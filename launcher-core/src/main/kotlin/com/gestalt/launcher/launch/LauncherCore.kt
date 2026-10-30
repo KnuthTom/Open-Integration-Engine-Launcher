@@ -72,7 +72,7 @@ internal data class PlannedJar(val artifactName: String, val uri: URI, val sha25
  * be https (no http downgrade). Any gate rejection raises [LaunchAbortedException] — there is no
  * partial or degraded launch, and no click-through bypass.
  */
-class LauncherCore(
+open class LauncherCore(
     private val trustStore: TrustStore = GestaltTrust.productionTrustStore(),
     private val signerPins: List<SignerPin> = GestaltTrust.OFFICIAL_SIGNER_PINS,
     private val gateMode: TrustMode = TrustMode.PIN_KNOWN_SIGNERS,
@@ -137,6 +137,7 @@ class LauncherCore(
             val gate = CodebaseVerifier(trustStore, signerPins, gateMode, connection.id)
             val admitted = ArrayList<AdmittedJar>(jars.size)
             for (jar in jars) {
+                checkNotCancelled()
                 val name = jar.artifactName
                 val file = cacheFile(connection.id, version, name)
 
@@ -197,13 +198,27 @@ class LauncherCore(
         }
     }
 
-    /** Verify and then actually spawn the child JVM. */
-    fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}): Process {
+    /**
+     * Verify and then actually spawn the child JVM. Returns the child [Process] so the caller can track
+     * it (watch for exit, count running instances) — a launcher that drops it has no way to know the
+     * Administrator closed. `open` so a UI test can substitute a fake process without a real spawn.
+     *
+     * Cancellation: the pipeline checks the calling thread's interrupt flag between network fetches, so
+     * running it under `runInterruptible` makes a coroutine cancel take effect at the next fetch boundary
+     * (a blocking socket read in progress completes first). A cancelled launch spawns nothing.
+     */
+    open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}): Process {
         val plan = prepareLaunch(connection, onPhase)
+        checkNotCancelled()
         onPhase(LaunchPhase.Launching)
         val process = ProcessBuilder(plan.command).inheritIO().start()
         onPhase(LaunchPhase.Running)
         return process
+    }
+
+    /** Honour a cancel requested through thread interruption (see [launch]). */
+    private fun checkNotCancelled() {
+        if (Thread.interrupted()) throw InterruptedException("launch cancelled")
     }
 
     // --- helpers ----------------------------------------------------------------------------------
@@ -314,6 +329,7 @@ class LauncherCore(
             if (visited.size > MAX_EXTENSION_DESCRIPTORS) {
                 throw LaunchAbortedException("more than $MAX_EXTENSION_DESCRIPTORS extension descriptors")
             }
+            checkNotCancelled()
             val ext = JnlpParser.parse(withConnectRetry(connection) { fetcher.fetchText(uri) })
             addJars(ext)
             ext.extensions.forEach { queue.addLast(it to depth + 1) }

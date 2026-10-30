@@ -450,9 +450,8 @@ private fun ConnectionRow(appState: AppState, conn: Connection, dragHandle: (@Co
     val selected by remember(conn.id) { derivedStateOf { conn.id in appState.selection } }
     val focused by remember(conn.id) { derivedStateOf { appState.focusedId == conn.id } }
     // Reading this row's launch entry (a per-key SnapshotStateMap read) recomposes only this row on change.
-    val phase = appState.launches[conn.id]?.phase
-    val launching = phase == LaunchPhase.Downloading || phase == LaunchPhase.Verifying ||
-        phase == LaunchPhase.Launching || phase == LaunchPhase.Running
+    // Launch is disabled only while a launch is being PREPARED; a running connection may be launched again.
+    val launching = appState.launches[conn.id]?.inFlight == true
     val ringShape = RoundedCornerShape(GestaltTheme.shapes.md + 2.dp)
     // The focus-ring space is ALWAYS reserved (transparent when unfocused), so landing the cursor on a row
     // only changes the ring colour — never its geometry — keeping a constant row height and no layout jump.
@@ -560,20 +559,35 @@ private fun OverflowItem(label: String, icon: ChromeIcon, danger: Boolean = fals
 private fun RowStatus(appState: AppState, conn: Connection) {
     val launch: LaunchView? = appState.launches[conn.id]
     when (launch?.phase) {
-        LaunchPhase.Downloading -> GestaltText("Verifying…", role = TextRole.Label, color = GestaltTheme.colors.primary)
-        LaunchPhase.Verifying -> GestaltText("Verifying…", role = TextRole.Label, color = GestaltTheme.colors.primary)
-        LaunchPhase.Launching -> GestaltText("Launching…", role = TextRole.Label, color = GestaltTheme.colors.primary)
-        LaunchPhase.Running -> {
+        LaunchPhase.Downloading, LaunchPhase.Verifying, LaunchPhase.Launching -> {
+            // In flight: click to cancel (takes effect at the next download boundary; nothing is spawned).
+            val label = when (launch?.phase) {
+                LaunchPhase.Downloading -> "Downloading…"
+                LaunchPhase.Verifying -> "Verifying…"
+                else -> "Launching…"
+            }
             val interaction = remember { MutableInteractionSource() }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(GestaltTheme.spacing.paddingSmall),
                 modifier = Modifier
                     .clip(androidx.compose.foundation.shape.RoundedCornerShape(GestaltTheme.shapes.sm))
-                    .clickable(interactionSource = interaction, indication = null) { appState.clearLaunch(conn.id) },
+                    .clickable(interactionSource = interaction, indication = null) { appState.cancelLaunch(conn.id) },
+            ) {
+                GestaltText(label, role = TextRole.Label, color = GestaltTheme.colors.primary)
+                GestaltText("(cancel)", role = TextRole.Label, color = GestaltTheme.colors.textMuted)
+            }
+        }
+        LaunchPhase.Running -> {
+            // A fact, not a sticky label: the row returns to idle by itself when the Administrator exits.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(GestaltTheme.spacing.paddingSmall),
             ) {
                 GestaltStatusDot(StatusLevel.Success)
-                GestaltText("Running (dismiss)", role = TextRole.Label, color = GestaltTheme.colors.success)
+                val instances = launch?.instances ?: 0
+                val text = if (instances > 1) "Running ×$instances" else "Running"
+                GestaltText(text, role = TextRole.Label, color = GestaltTheme.colors.success)
             }
         }
         LaunchPhase.Failed -> {

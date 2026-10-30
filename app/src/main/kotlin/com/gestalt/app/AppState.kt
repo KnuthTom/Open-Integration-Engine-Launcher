@@ -44,12 +44,14 @@ import com.gestalt.launcher.update.UpdateOutcome
 import com.gestalt.launcher.update.UpdateService
 import com.gestalt.trust.TrustMode
 import com.gestalt.trust.TrustStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -72,8 +74,20 @@ sealed interface Route {
 /** List sort order. Manual is the drag-reorder order ([Connection.sortOrder]). */
 enum class SortMode { Manual, Name, Group, Status }
 
-/** Coarse launch state for one connection, surfaced in its row. Carries a [Diagnosis] once it fails. */
-data class LaunchView(val phase: LaunchPhase, val error: String? = null, val diagnosis: Diagnosis? = null)
+/**
+ * Coarse launch state for one connection, surfaced in its row. Carries a [Diagnosis] once it fails.
+ * While [LaunchPhase.Running], [instances] is the number of Administrator processes this launcher
+ * started for the connection that are still alive (a connection may be opened more than once).
+ */
+data class LaunchView(
+    val phase: LaunchPhase,
+    val error: String? = null,
+    val diagnosis: Diagnosis? = null,
+    val instances: Int = 0,
+) {
+    /** True while a launch is being prepared (download / verify / spawn) and can still be cancelled. */
+    val inFlight: Boolean get() = phase == LaunchPhase.Downloading || phase == LaunchPhase.Verifying || phase == LaunchPhase.Launching
+}
 
 /** Best-effort environment hint inferred from a connection's name/group. */
 enum class EnvCue { Prod, Staging, Test, Dev }
@@ -685,34 +699,84 @@ class AppState(
         return LauncherConfig(trustPosture, pins, trustStore)
     }
 
+    // The in-flight launch job per connection (cancellable) and the Administrator processes this launcher
+    // started per connection that are still alive. Both are touched from IO threads and process-exit
+    // callbacks, hence concurrent collections; the Compose-visible state is `launches`.
+    private val launchJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private val runningProcesses = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<Process>>()
+
+    /** Live Administrator processes started for [id] (for tests and a future "running instances" view). */
+    fun runningProcesses(id: String): List<Process> = runningProcesses[id]?.toList() ?: emptyList()
+
     fun launch(id: String) {
         val conn = store.get(id) ?: return
-        // Idempotency: ignore a launch while one for this connection is already in flight (or running), so
-        // held / auto-repeated Enter, a fast double-click, or repeated Play clicks can't spawn duplicate
-        // downloads or child JVMs. A failed/cleared launch can be retried normally.
-        when (launches[id]?.phase) {
-            LaunchPhase.Downloading, LaunchPhase.Verifying, LaunchPhase.Launching, LaunchPhase.Running -> return
-            else -> {}
-        }
+        // Idempotency: ignore a launch while one for this connection is still being PREPARED, so held /
+        // auto-repeated Enter, a fast double-click, or repeated Play clicks can't spawn duplicate downloads.
+        // A connection that is already RUNNING may be launched again — opening the same server twice is a
+        // normal thing to do — and a failed/cleared launch can be retried normally.
+        if (launches[id]?.inFlight == true) return
         launches[id] = LaunchView(LaunchPhase.Downloading)
         val launcher = launcherFactory(currentLauncherConfig())
-        scope.launch(Dispatchers.IO) {
+        val job = scope.launch(Dispatchers.IO) {
             try {
-                launcher.launch(conn) { phase -> launches[id] = LaunchView(phase) }
+                // runInterruptible: a cancel() interrupts this thread, and LauncherCore checks the flag
+                // between fetches, so the download stops at the next boundary and nothing is spawned.
+                val process = runInterruptible {
+                    launcher.launch(conn) { phase -> if (phase != LaunchPhase.Running) launches[id] = LaunchView(phase) }
+                }
+                trackRunning(id, process)
                 // Close on the UI thread via the composition scope. (Dispatchers.Main isn't installed on
                 // this desktop target — kotlinx-coroutines-swing isn't a dependency — so using it here threw
                 // and was swallowed by the catch below as a "launch failure", which is why close-after-launch
                 // silently did nothing.) The per-connection override resolves the global setting; either way
                 // this runs ONLY on the success path — a failed launch falls into the catch and never closes.
                 if (resolveCloseAfterLaunch(conn)) scope.launch { requestClose() }
+            } catch (e: CancellationException) {
+                // User cancelled: back to idle, no diagnosis, no dialog. (Nothing was spawned.)
+                if (launches[id]?.inFlight == true) launches.remove(id)
+                throw e
             } catch (t: Throwable) {
                 val diagnosis = FailureDiagnosis.classify(t, conn)
                 launches[id] = LaunchView(LaunchPhase.Failed, t.message ?: t.javaClass.simpleName, diagnosis)
                 dialog = AppDialog.Diagnose(id, diagnosis)
+            } finally {
+                launchJobs.remove(id)
             }
+        }
+        launchJobs[id] = job
+    }
+
+    /** Cancel a launch that is still being prepared (download / verify). No-op once the child is running. */
+    fun cancelLaunch(id: String) {
+        launchJobs[id]?.cancel()
+    }
+
+    /**
+     * Record a freshly spawned Administrator and watch it: when it exits the row goes back to idle (or
+     * shows the remaining instance count), so "Running" is a fact, not a sticky label. The watcher is a
+     * process-exit callback, independent of the (cancellable) launch job and of the window's scope.
+     */
+    private fun trackRunning(id: String, process: Process) {
+        val list = runningProcesses.getOrPut(id) { java.util.concurrent.CopyOnWriteArrayList() }
+        list.add(process)
+        launches[id] = LaunchView(LaunchPhase.Running, instances = list.size)
+        process.onExit().thenRun { onChildExited(id, process) }
+    }
+
+    private fun onChildExited(id: String, process: Process) {
+        val list = runningProcesses[id] ?: return
+        list.remove(process)
+        if (list.isEmpty()) {
+            runningProcesses.remove(id, list)
+            // Clear only a Running view: a newer launch already being prepared for this connection, or a
+            // failure recorded meanwhile, must not be clobbered by an old child's exit.
+            if (launches[id]?.phase == LaunchPhase.Running) launches.remove(id)
+        } else if (launches[id]?.phase == LaunchPhase.Running) {
+            launches[id] = LaunchView(LaunchPhase.Running, instances = list.size)
         }
     }
 
+    /** Drop a Failed (or stale) row state so the row returns to idle. */
     fun clearLaunch(id: String) { launches.remove(id) }
 
     /** Re-open the diagnosis for a previously failed launch (e.g. from its row). */
