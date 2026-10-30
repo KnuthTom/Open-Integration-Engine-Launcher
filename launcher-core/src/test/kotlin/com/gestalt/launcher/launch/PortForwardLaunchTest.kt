@@ -31,10 +31,14 @@ import java.security.cert.X509Certificate
 /**
  * Port-forward (loopback) launch behavior. An SSM tunnel often refuses the launcher's rapid burst of
  * connections though a single one succeeds, and reports its own (un-forwarded) URL in the JNLP. For a
- * LOOPBACK connection — keyed on the host, NOT the stored connection mode — the launcher (a) retries
- * transient connect failures and (b) rewrites the client's server-URL argument to the forwarded address.
- * A remote connection gets neither. (Gating on the host, not the mode, is deliberate: a real-world
- * loopback appliance connection may be stored as Standard mode yet still needs the forward handling.)
+ * LOOPBACK connection — keyed on the host, NOT the stored connection mode — the launcher retries
+ * transient connect failures; a remote connection fails fast. (Gating on the host, not the mode, is
+ * deliberate: a real-world loopback appliance connection may be stored as Standard mode yet still needs
+ * the retry handling.)
+ *
+ * The client's server-URL argument is rewritten to the connection's own address for EVERY connection:
+ * whatever the user typed (scheme, host and port) is what the Administrator connects to and shows on its
+ * login screen, never the server's self-reported URL.
  */
 class PortForwardLaunchTest {
 
@@ -114,8 +118,8 @@ class PortForwardLaunchTest {
     }
 
     @Test
-    @DisplayName("remote connection: the client URL is left as the JNLP declares it (no rewrite)")
-    fun remoteNoRewrite(@TempDir dir: Path) {
+    @DisplayName("remote connection: the client URL is ALSO rewritten to the address the user typed")
+    fun remoteRewrittenToConnectionAddress(@TempDir dir: Path) {
         val base = "https://mirth.example:8443/"
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val jarBytes = signedCoreJar(dir, ca)
@@ -124,7 +128,41 @@ class PortForwardLaunchTest {
 
         val plan = launcher(dir, ca, fetcher, leaf = null).prepareLaunch(conn)
 
-        assertEquals(listOf("https://localhost:8443", "1.0.0"), plan.appArgs) { "a remote connection is untouched" }
+        assertEquals(listOf("https://mirth.example:8443", "1.0.0"), plan.appArgs) {
+            "the JNLP's self-reported https://localhost:8443 must be replaced by the connection's own address"
+        }
+    }
+
+    @Test
+    @DisplayName("plain-http forwarded port: scheme AND port the user typed reach the client (http://localhost:9912)")
+    fun plainHttpForwardKeepsSchemeAndPort(@TempDir dir: Path) {
+        val base = "http://localhost:9912/"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca)
+        val fetcher = FlakyFetcher(responses(base, jarBytes), failFirst = 0)
+        val conn = Connection(id = "http-fwd", name = "Appliance", serverUrl = base, connectionMode = ConnectionMode.LocalhostPortForward)
+
+        val plan = launcher(dir, ca, fetcher, leaf = null).prepareLaunch(conn)
+
+        assertEquals(listOf("http://localhost:9912", "1.0.0"), plan.appArgs) {
+            "http and the forwarded port must survive; the JNLP said https://localhost:8443"
+        }
+    }
+
+    @Test
+    @DisplayName("port-less connection URL: the argument keeps its own port rather than dropping to 443")
+    fun portlessConnectionKeepsArgumentPort(@TempDir dir: Path) {
+        val base = "https://mirth.example/"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca)
+        val fetcher = FlakyFetcher(responses(base, jarBytes), failFirst = 0)
+        val conn = Connection(id = "np", name = "No port", serverUrl = base, connectionMode = ConnectionMode.Custom)
+
+        val plan = launcher(dir, ca, fetcher, leaf = null).prepareLaunch(conn)
+
+        assertEquals(listOf("https://mirth.example:8443", "1.0.0"), plan.appArgs) {
+            "host from the connection, port from the JNLP argument when the connection names none"
+        }
     }
 
     @Test

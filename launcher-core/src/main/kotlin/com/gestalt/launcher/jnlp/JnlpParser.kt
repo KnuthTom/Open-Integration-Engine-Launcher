@@ -56,6 +56,13 @@ object JnlpParser {
             }
         }
 
+        // Component descriptors (`<extension href="webstart/extensions/foo.jnlp"/>`): one per installed
+        // Mirth extension. Only the href is read; the launcher resolves it against the CONNECTION's base
+        // (never the JNLP codebase), fetches it with the same transport, and parses it with this parser.
+        val extensions = elementsNamed(root, "extension")
+            .map { it.getAttribute("href").trim() }
+            .filter { it.isNotEmpty() }
+
         val appDesc = elementsNamed(root, "application-desc").firstOrNull()
         val mainClass = appDesc?.getAttribute("main-class")?.ifBlank { null }
         val arguments = appDesc?.let { elementsNamed(it, "argument").map { a -> a.textContent.trim() } }
@@ -85,6 +92,7 @@ object JnlpParser {
             arguments = arguments,
             untrustedJvmArgs = untrustedJvmArgs,
             ignoredDirectives = ignored,
+            extensions = extensions,
         )
     }
 

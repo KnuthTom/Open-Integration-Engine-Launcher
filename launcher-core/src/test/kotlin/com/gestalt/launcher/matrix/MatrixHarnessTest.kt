@@ -164,7 +164,8 @@ class MatrixHarnessTest {
             // scheme: modern TLS is set for the child (harmless on http); never downgraded
             check(plan.command.contains("-Dhttps.protocols=TLSv1.2,TLSv1.3"), "modern TLS protocols must be set")
 
-            // topology: a loopback port-forward rewrites the client server-URL to the forwarded port; others don't
+            // topology: the client server-URL is always the connection's own address — for a port-forward
+            // that means the forwarded port replaces the server's self-reported one; elsewhere host/port match
             when (cell.topology) {
                 Topology.PORT_FORWARD -> {
                     check(plan.appArgs.any { it.contains(":31065") }, "port-forward must rewrite to the forwarded port")

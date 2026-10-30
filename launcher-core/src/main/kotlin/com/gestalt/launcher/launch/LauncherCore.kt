@@ -52,10 +52,19 @@ data class LaunchPlan(
 )
 
 /**
+ * One jar the plan will download and gate. [artifactName] is the jar's path relative to the server root
+ * (`webstart/extensions/libs/foo/common.jar`), NOT its basename: two Mirth extensions routinely ship a
+ * jar with the same basename, and keying the cache slot and the digest lookup by basename would make
+ * them overwrite each other and put one path on the classpath twice.
+ */
+internal data class PlannedJar(val artifactName: String, val uri: URI, val sha256: String?)
+
+/**
  * Orchestrates the fail-closed launch pipeline:
  *
- *   fetch /webstart (JNLP) → parse (untrusted) → take per-jar digests from the JNLP's inline `sha256`
- *   (falling back to an external /digest/{version} manifest only if absent) → download each jar →
+ *   fetch /webstart (JNLP) → parse (untrusted) → follow its `<extension>` component descriptors (same
+ *   host, same parser, bounded) → take per-jar digests from the inline `sha256` attributes (falling
+ *   back to an external /digest/{version} manifest only if absent) → download each jar →
  *   [CodebaseVerifier] gate (digest then signature) → assemble classpath from [AdmittedJar]s only →
  *   build the default-secure child-JVM command.
  *
@@ -99,29 +108,36 @@ class LauncherCore(
             //    hand to the launched Administrator (which opens its OWN TLS connection to the server).
             val pinnedLeaf = capturePinnedLeaf(connection)
 
-            // 1. JNLP (untrusted): only jars / main-class / args / version are read from it.
+            // 1. JNLP (untrusted): only jars / extensions / main-class / args / version are read from it.
             val jnlpUri = requireSupportedScheme(connection.webstartUri())
             val jnlp = JnlpParser.parse(withConnectRetry(connection) { fetcher.fetchText(jnlpUri) })
-            val version = jnlp.version ?: "current"
-            AuditLog.codebaseDownloaded(connection.id, version, jnlp.jars.size)
+            // The server version is the Administrator's second application argument (Mirth and OIE both
+            // pass `<server-url> <version>`); the `<jnlp version>` attribute is a fallback no stock server
+            // sets. It keys the on-disk cache, so a server upgrade lands in a fresh directory.
+            val version = serverVersionOf(jnlp)
 
             val mainClass = jnlp.mainClass
                 ?: throw LaunchAbortedException("JNLP did not specify a main-class")
-            if (jnlp.jars.isEmpty()) throw LaunchAbortedException("JNLP listed no jars")
+
+            // 1b. Follow the `<extension>` component descriptors (one per installed Mirth extension) and
+            //     flatten everything into one jar list keyed by server-relative path.
+            val jars = collectJars(connection, fetcher, jnlp)
+            if (jars.isEmpty()) throw LaunchAbortedException("JNLP listed no jars")
+            AuditLog.codebaseDownloaded(connection.id, version, jars.size)
 
             // 2. Integrity digests. A real OIE/Mirth server publishes a per-jar SHA-256 inline in the JNLP,
             //    so prefer those; fall back to the optional external /digest/{version} manifest only when the
             //    JNLP carried none. Either way every jar is digest-checked at the gate below — fail closed if
             //    neither source covers it.
-            val manifest = inlineDigestManifest(jnlp)
+            val manifest = inlineDigestManifest(jars)
                 ?: DigestManifest.parse(withConnectRetry(connection) { fetcher.fetchText(requireSupportedScheme(connection.digestUri(version))) })
 
             onPhase(LaunchPhase.Verifying)
             // 3-4. Download each jar and run it through the single gate. Fail closed on any miss.
             val gate = CodebaseVerifier(trustStore, signerPins, gateMode, connection.id)
-            val admitted = ArrayList<AdmittedJar>(jnlp.jars.size)
-            for (jar in jnlp.jars) {
-                val name = basename(jar.href)
+            val admitted = ArrayList<AdmittedJar>(jars.size)
+            for (jar in jars) {
+                val name = jar.artifactName
                 val file = cacheFile(connection.id, version, name)
 
                 // Reuse an already-downloaded jar whose bytes still match the digest the server published
@@ -130,8 +146,7 @@ class LauncherCore(
                 // is still digest + signature verified at the gate below either way, so a stale or tampered
                 // cache file simply misses the digest match here (or is rejected at the gate) and re-downloads.
                 if (!cachedJarMatches(file, manifest, name)) {
-                    val jarUri = requireSupportedScheme(resolveJarUri(connection, jar.href))
-                    val bytes = withConnectRetry(connection) { fetcher.fetchBytes(jarUri) }
+                    val bytes = withConnectRetry(connection) { fetcher.fetchBytes(jar.uri) }
                     Files.write(file, bytes)
                 }
 
@@ -162,18 +177,14 @@ class LauncherCore(
                 )
             } ?: emptyMap()
 
-            // The Mirth client connects back to the server URL passed as its first application argument.
-            // A server reached through a port-forward reports its OWN configured URL in the JNLP (e.g.
-            // https://localhost:8443), not the forwarded address the user actually reaches it at
-            // (https://localhost:31065). For a LOOPBACK connection (any localhost / 127.x / ::1, regardless
-            // of stored connection mode), point the client at the connection's URL — the same address the
-            // launcher fetched from and wrote the pinned truststore for — so it connects (and stays) on the
-            // forwarded port. A no-op when the JNLP URL already matches; remote connections are untouched.
-            val appArgs = if (isLoopbackConnection(connection)) {
-                rewriteServerUrlArg(connection.serverUrl, jnlp.arguments)
-            } else {
-                jnlp.arguments
-            }
+            // The Mirth client connects back to — and shows on its login screen — the server URL passed as
+            // its first application argument. The JNLP carries the server's OWN idea of that URL, which is
+            // wrong whenever the user reaches the server by any other address: a port-forward / SSM tunnel
+            // (https://localhost:31065 vs the server's https://localhost:8443), a reverse proxy, a VPN name,
+            // or just a different port. The address the user typed is, by definition, the one the launcher
+            // just fetched everything from, so it is ALWAYS what the client gets — scheme, host and port.
+            // A no-op when the JNLP URL already matches.
+            val appArgs = rewriteServerUrlArg(connection.serverUrl, jnlp.arguments)
             val command = commandBuilder.build(
                 connection, mainClass, admitted, appArgs,
                 extraSystemProperties = tlsProps,
@@ -261,35 +272,106 @@ class LauncherCore(
     }
 
     /**
-     * Resolve a jar href against the **connection's** base URL — deliberately NOT the JNLP's own
-     * `codebase`, which is server-controlled and untrusted. A href that resolves to a different host than
-     * the configured connection is rejected (SSRF / artifact substitution), and an https connection is
-     * never downgraded to an http jar by a crafted absolute href. The gate would still reject a foreign or
-     * tampered jar, but we fail even earlier and closed.
+     * Flatten the root JNLP plus every `<extension>` component descriptor it (transitively) references
+     * into one ordered jar list: root jars first (so the `main="true"` client jar leads the classpath),
+     * then each extension's jars in descriptor order. Bounded in depth, descriptor count and jar count so
+     * a hostile or looping server can't make the launcher walk forever; a descriptor seen twice is
+     * skipped; the same artifact listed twice with DIFFERENT digests aborts (the server contradicts
+     * itself — nothing to trust).
+     *
+     * Every href — descriptor or jar — resolves against the CONNECTION's base, never a JNLP `codebase`:
+     * Mirth sets the codebase of every descriptor it emits to the server root, which is exactly what the
+     * connection points at, and ignoring the server-supplied value keeps the same-host / no-downgrade
+     * rules authoritative.
      */
-    private fun resolveJarUri(connection: Connection, href: String): URI {
+    private fun collectJars(connection: Connection, fetcher: ArtifactFetcher, root: JnlpDescriptor): List<PlannedJar> {
+        val planned = LinkedHashMap<String, PlannedJar>()
+        fun addJars(desc: JnlpDescriptor) {
+            for (jar in desc.jars) {
+                val uri = requireSupportedScheme(resolveArtifactUri(connection, jar.href))
+                val name = artifactNameFor(connection, uri)
+                val existing = planned[name]
+                if (existing == null) {
+                    planned[name] = PlannedJar(name, uri, jar.sha256)
+                } else if (!existing.sha256.isNullOrBlank() && !jar.sha256.isNullOrBlank() && existing.sha256 != jar.sha256) {
+                    throw LaunchAbortedException("descriptors list '$name' twice with different digests")
+                }
+                if (planned.size > MAX_JARS) throw LaunchAbortedException("descriptors list more than $MAX_JARS jars")
+            }
+        }
+        addJars(root)
+
+        val visited = HashSet<URI>()
+        val queue = ArrayDeque<Pair<String, Int>>()
+        root.extensions.forEach { queue.addLast(it to 1) }
+        while (queue.isNotEmpty()) {
+            val (href, depth) = queue.removeFirst()
+            val uri = requireSupportedScheme(resolveArtifactUri(connection, href))
+            if (!visited.add(uri)) continue // already walked (a cycle or a shared dependency) — never re-fetched
+            if (depth > MAX_EXTENSION_DEPTH) {
+                throw LaunchAbortedException("extension descriptors nest deeper than $MAX_EXTENSION_DEPTH: $href")
+            }
+            if (visited.size > MAX_EXTENSION_DESCRIPTORS) {
+                throw LaunchAbortedException("more than $MAX_EXTENSION_DESCRIPTORS extension descriptors")
+            }
+            val ext = JnlpParser.parse(withConnectRetry(connection) { fetcher.fetchText(uri) })
+            addJars(ext)
+            ext.extensions.forEach { queue.addLast(it to depth + 1) }
+        }
+        return planned.values.toList()
+    }
+
+    /**
+     * Resolve a jar / descriptor href against the **connection's** base URL — deliberately NOT the JNLP's
+     * own `codebase`, which is server-controlled and untrusted. A href that resolves to a different host
+     * than the configured connection is rejected (SSRF / artifact substitution), and an https connection
+     * is never downgraded to an http artifact by a crafted absolute href. The gate would still reject a
+     * foreign or tampered jar, but we fail even earlier and closed.
+     */
+    private fun resolveArtifactUri(connection: Connection, href: String): URI {
         val base = baseForRelativeResolution(connection.baseUri())
         val resolved = base.resolve(href)
         val baseHost = base.host?.lowercase()
         val resolvedHost = resolved.host?.lowercase()
         if (baseHost != null && resolvedHost != null && baseHost != resolvedHost) {
-            throw LaunchAbortedException("jar URL host '$resolvedHost' differs from the connection host '$baseHost'")
+            throw LaunchAbortedException("artifact URL host '$resolvedHost' differs from the connection host '$baseHost'")
         }
         if (base.scheme.equals("https", ignoreCase = true) && resolved.scheme.equals("http", ignoreCase = true)) {
-            throw LaunchAbortedException("refusing to downgrade jar transport from https to http: $resolved")
+            throw LaunchAbortedException("refusing to downgrade artifact transport from https to http: $resolved")
         }
         return resolved
     }
 
     /**
-     * A base suitable for resolving a *relative* jar href. A host-only connection URL (`http://host:8080`,
-     * empty path) must resolve `webstart/lib/x.jar` to `http://host:8080/webstart/lib/x.jar` — but
-     * [URI.resolve] against an empty path yields the malformed `http://host:8080webstart/...`. Giving the
-     * base a "/" path fixes that; a base that already has a path is left untouched, and an absolute href
-     * ignores the base entirely (so the host/downgrade checks below still apply).
+     * The artifact's name for the cache slot, the digest lookup and the audit trail: its path relative to
+     * the connection base (`webstart/client-lib/mirth-client.jar`), never just the basename. Any `.`/`..`
+     * segment is refused so a hostile href can't escape the cache directory.
+     */
+    private fun artifactNameFor(connection: Connection, uri: URI): String {
+        val basePath = baseForRelativeResolution(connection.baseUri()).path.orEmpty()
+        val path = uri.path.orEmpty()
+        val relative = if (basePath.isNotEmpty() && path.startsWith(basePath)) path.substring(basePath.length) else path
+        val segments = relative.split('/').filter { it.isNotEmpty() }
+        if (segments.isEmpty() || segments.any { it == "." || it == ".." }) {
+            throw LaunchAbortedException("refusing artifact path '$path'")
+        }
+        return segments.joinToString("/")
+    }
+
+    /**
+     * The connection base as a *directory*, for resolving relative hrefs. [URI.resolve] treats the last
+     * path segment of the base as a file: against `http://host:8080` (empty path) it yields the malformed
+     * `http://host:8080webstart/...`, and against `https://host/mirth` it drops `/mirth`. A trailing "/"
+     * fixes both — `webstart/x.jar` becomes `http://host:8080/webstart/x.jar` and
+     * `https://host/mirth/webstart/x.jar`. An absolute href ignores the base entirely (so the host and
+     * downgrade checks still apply to it).
      */
     private fun baseForRelativeResolution(base: URI): URI =
-        if (base.rawPath.isNullOrEmpty()) URI.create(base.toString().trimEnd('/') + "/") else base
+        if (base.rawPath.isNullOrEmpty() || !base.rawPath.endsWith("/")) {
+            URI.create(base.toString().substringBefore('?').substringBefore('#').trimEnd('/') + "/")
+        } else {
+            base
+        }
 
     /**
      * True when [file] already holds bytes whose SHA-256 matches the digest [manifest] expects for [name] —
@@ -303,32 +385,54 @@ class LauncherCore(
             .getOrDefault(false)
     }
 
-    private fun cacheFile(connectionId: String, version: String, name: String): Path {
-        val dir = cacheDir.resolve(sanitize(connectionId)).resolve(sanitize(version))
+    /**
+     * The cache slot for [artifactName] under `<cache>/<connection>/<version>/`, mirroring the artifact's
+     * server-relative directories (each segment sanitized) so same-basename jars from different extensions
+     * get distinct slots. [artifactNameFor] has already refused `.`/`..` segments.
+     */
+    private fun cacheFile(connectionId: String, version: String, artifactName: String): Path {
+        var dir = cacheDir.resolve(sanitize(connectionId)).resolve(sanitize(version))
+        val segments = artifactName.split('/')
+        segments.dropLast(1).forEach { dir = dir.resolve(sanitize(it)) }
         Files.createDirectories(dir)
-        return dir.resolve(sanitize(name))
+        return dir.resolve(sanitize(segments.last()))
     }
 
     private fun sanitize(s: String): String = s.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
-    private fun basename(href: String): String =
-        href.substringAfterLast('/').substringAfterLast('\\').ifBlank { href }
-
     /**
-     * The digest manifest the JNLP carries inline — one SHA-256 per `<jar>`, keyed by the same basename
-     * the gate verifies under. Null unless EVERY jar declares a digest, so a server that omits them (or
-     * declares only some) falls back to the external `/digest` manifest rather than silently leaving jars
-     * uncovered. (An uncovered jar would still be rejected at the gate; this just keeps the fallback clean.)
+     * The digest manifest the descriptors carry inline — one SHA-256 per `<jar>`, keyed by the same
+     * server-relative artifact name the gate verifies under. Null unless EVERY jar declares a digest, so a
+     * server that omits them (or declares only some) falls back to the external `/digest` manifest rather
+     * than silently leaving jars uncovered. (An uncovered jar would still be rejected at the gate; this
+     * just keeps the fallback clean.)
      */
-    private fun inlineDigestManifest(jnlp: JnlpDescriptor): DigestManifest? {
-        if (jnlp.jars.isEmpty() || jnlp.jars.any { it.sha256.isNullOrBlank() }) return null
-        val entries = jnlp.jars.associate { basename(it.href) to it.sha256!! }
-        return DigestManifest.fromInlineDigests(entries)
+    private fun inlineDigestManifest(jars: List<PlannedJar>): DigestManifest? {
+        if (jars.isEmpty() || jars.any { it.sha256.isNullOrBlank() }) return null
+        return DigestManifest.fromInlineDigests(jars.associate { it.artifactName to it.sha256!! })
     }
 
     companion object {
         /** Connect attempts for a port-forward connection (1 = no retry for every other mode). */
         private const val PORT_FORWARD_CONNECT_ATTEMPTS = 5
+
+        /** Bounds on the extension-descriptor walk (a stock Mirth server has ~40 extensions, 1 level deep). */
+        private const val MAX_EXTENSION_DEPTH = 3
+        private const val MAX_EXTENSION_DESCRIPTORS = 256
+        private const val MAX_JARS = 4096
+
+        /** Shape of the Administrator's version argument (`4.4.2`, `4.5.2`, `3.12.0-SNAPSHOT`). */
+        private val VERSION_ARG = Regex("^\\d+(\\.\\d+){1,3}([.-][A-Za-z0-9]+)*$")
+
+        /**
+         * The server version a launch runs against: the Administrator's second application argument when it
+         * looks like a version (what Mirth and OIE both pass), else the `<jnlp version>` attribute / a
+         * version property if the server set one, else `current`. Keys the on-disk jar cache.
+         */
+        internal fun serverVersionOf(jnlp: JnlpDescriptor): String =
+            jnlp.arguments.getOrNull(1)?.trim()?.takeIf { VERSION_ARG.matches(it) }
+                ?: jnlp.version?.trim()?.takeIf { it.isNotEmpty() }
+                ?: "current"
 
         /**
          * Delete a connection's entire cached-jar directory (every version) — called when the connection
@@ -385,12 +489,13 @@ class LauncherCore(
         /**
          * Rewrite the **first** http(s)-URL application argument so its scheme + host + port become those
          * of [serverUrl] (the connection's own address), preserving any path/query/fragment. If [serverUrl]
-         * carries no explicit port, the argument's own port is kept (never dropped to the default). This makes the
-         * launched client connect back through the same address the user reaches the server at — which for a
-         * port-forward connection differs from the server's self-reported URL in the JNLP. Non-URL arguments
-         * (e.g. the version) are passed through untouched, and only the first URL argument is rewritten so a
-         * later URL argument (should one ever appear) is left alone. A no-op when [serverUrl] is unparseable
-         * or the argument already matches.
+         * carries no explicit port, the argument's own port is kept (never dropped to the default). This makes
+         * the launched client connect back through — and show on its login screen — the same address the
+         * user typed, rather than the server's self-reported URL in the JNLP (which differs behind a
+         * port-forward, a reverse proxy, a VPN name, or simply another port). Applied to every connection.
+         * Non-URL arguments (e.g. the version) are passed through untouched, and only the first URL argument
+         * is rewritten so a later URL argument (should one ever appear) is left alone. A no-op when
+         * [serverUrl] is unparseable or the argument already matches.
          */
         internal fun rewriteServerUrlArg(serverUrl: String, args: List<String>): List<String> {
             val base = runCatching { URI(serverUrl) }.getOrNull()?.takeIf { it.host != null } ?: return args

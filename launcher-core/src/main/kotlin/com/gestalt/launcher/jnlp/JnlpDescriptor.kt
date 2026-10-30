@@ -26,6 +26,12 @@ data class JnlpJar(val href: String, val main: Boolean, val sha256: String? = nu
  * @property untrustedJvmArgs JVM args the server *requested*. They are recorded for transparency but
  *   the launcher does NOT pass them to the child JVM (a server must not be able to inject
  *   `-javaagent`, TLS-weakening system properties, etc.). See `ChildJvmCommandBuilder`.
+ * @property extensions hrefs of the `<extension href="…"/>` component descriptors this JNLP pulls in.
+ *   A stock Mirth Connect `webstart.jnlp` lists the core `client-lib` jars inline and then one
+ *   extension descriptor per installed connector / data type / plugin; each of those is a JNLP of its
+ *   own whose `<jar>`s are that extension's client classes. The launcher follows them (same host, same
+ *   hardened parser, bounded depth) — without them the Administrator starts with no extension code.
+ *   (OIE folds the extension jars into the main JNLP instead, so this list is simply empty there.)
  */
 data class JnlpDescriptor(
     val codebase: String?,
@@ -35,6 +41,7 @@ data class JnlpDescriptor(
     val arguments: List<String>,
     val untrustedJvmArgs: List<String>,
     val ignoredDirectives: List<String>,
+    val extensions: List<String> = emptyList(),
 ) {
     val mainJar: JnlpJar? get() = jars.firstOrNull { it.main }
 }

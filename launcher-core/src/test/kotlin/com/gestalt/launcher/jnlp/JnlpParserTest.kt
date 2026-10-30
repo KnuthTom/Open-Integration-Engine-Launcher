@@ -97,6 +97,53 @@ class JnlpParserTest {
     }
 
     @Test
+    @DisplayName("parses <extension href> component descriptors (one per installed Mirth extension)")
+    fun parsesExtensionDescriptors() {
+        // The shape a stock Mirth Connect server emits: core jars inline, then one <extension> per plugin.
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <jnlp spec="1.0+" codebase="https://localhost:8443" href="webstart.jnlp">
+              <resources>
+                <j2se version="1.9+" java-vm-args="--add-modules=java.sql.rowset"/>
+                <jar href="webstart/client-lib/mirth-client.jar" main="true" download="eager" sha256="Bpv4LHN1+aRsffHWwl6ZiJ4H2YlWfeFm4ewBDK82MfA="/>
+                <extension href="webstart/extensions/datatypes.jnlp"/>
+                <extension href="webstart/extensions/mllpconnector.jnlp"/>
+                <extension href=""/>
+              </resources>
+              <application-desc main-class="com.mirth.connect.client.ui.Mirth">
+                <argument>https://localhost:8443</argument>
+                <argument>4.4.2</argument>
+              </application-desc>
+            </jnlp>
+        """.trimIndent()
+        val d = JnlpParser.parse(xml)
+        assertEquals(listOf("webstart/extensions/datatypes.jnlp", "webstart/extensions/mllpconnector.jnlp"), d.extensions) {
+            "every non-blank extension href, in document order"
+        }
+        assertEquals(1, d.jars.size) { "the extension elements themselves are not jars" }
+        assertEquals(listOf("https://localhost:8443", "4.4.2"), d.arguments)
+    }
+
+    @Test
+    @DisplayName("a component descriptor (extension JNLP) parses with jars but no main-class or arguments")
+    fun parsesComponentDescriptor() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <jnlp spec="1.0+" codebase="https://localhost:8443" href="webstart/extensions/datatypes.jnlp">
+              <resources>
+                <jar href="webstart/extensions/libs/datatypes/datatypes-client.jar" sha256="Bpv4LHN1+aRsffHWwl6ZiJ4H2YlWfeFm4ewBDK82MfA="/>
+              </resources>
+              <component-desc/>
+            </jnlp>
+        """.trimIndent()
+        val d = JnlpParser.parse(xml)
+        assertEquals(listOf("webstart/extensions/libs/datatypes/datatypes-client.jar"), d.jars.map { it.href })
+        assertEquals(null, d.mainClass)
+        assertTrue(d.arguments.isEmpty())
+        assertTrue(d.extensions.isEmpty())
+    }
+
+    @Test
     @DisplayName("XXE-hardened: a JNLP with a DOCTYPE/entity is rejected (no external entity expansion)")
     fun rejectsDoctypeXxe() {
         val xxe = """
