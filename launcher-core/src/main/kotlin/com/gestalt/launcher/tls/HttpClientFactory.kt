@@ -38,23 +38,18 @@ object HttpClientFactory {
      * per-connection pin, if one hasn't been migrated yet, counts as trusted). For a plain-http
      * connection no TLS handshake happens at all (HttpClient 5 chooses transport by URI scheme).
      */
-    fun forConnection(connection: Connection, trustedCerts: TrustedCertStore = TrustedCertStore.shared): CloseableHttpClient {
+    /**
+     * The client for a connection. [singleConnection]: one pooled keep-alive connection at a time — for a
+     * port-forward whose plugin runs in basic (non-multiplexing) mode, which services a single connection
+     * and leaves the rest in the listener's backlog until it closes (see `TunnelManager.isBasicForward`).
+     */
+    fun forConnection(connection: Connection, trustedCerts: TrustedCertStore = TrustedCertStore.shared, singleConnection: Boolean = false): CloseableHttpClient {
         val trusted = trustedCerts.trustedFingerprints() + listOfNotNull(connection.normalizedPin)
         return trustAwareClient(
             trusted, trustedCerts.rejectedFingerprints(), resolveProtocols(connection), resolveCiphers(connection),
-            singleConnection = singleConnection(connection),
+            singleConnection = singleConnection,
         )
     }
-
-    /**
-     * True when the launcher must talk to [connection] over ONE TCP connection at a time: a loopback
-     * address or a connection with a tunnel command, i.e. a port-forward. An SSM port-forward without TCP
-     * multiplexing (the plugin's basic mode) services a single connection and leaves the rest sitting in
-     * the listener's backlog until it closes — parallel fetches there don't run in parallel, they time
-     * out and retry. One pooled keep-alive connection is the fast path through such a tunnel.
-     */
-    internal fun singleConnection(connection: Connection): Boolean =
-        connection.hasTunnel || LocalhostResolver.isLoopbackHost(runCatching { connection.baseUri().host }.getOrNull())
 
     /**
      * The product policy: rejected fingerprints fail, trusted fingerprints pass by exact match (hostname

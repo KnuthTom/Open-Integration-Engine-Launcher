@@ -79,6 +79,11 @@ runs headlessly in tests without real networking or spawning a process.
 - **Client output** — the spawned Administrator's stdout/stderr go to `logs/client/<connection>-<stamp>.log`
   (newest 20 kept; header without the command line), so a login that fails inside the client is
   diagnosable from a windowless launcher.
+- **Admission cache** — `AdmissionCache` (`cache/admissions.json`) remembers which jar *bytes* the gate
+  admitted and under which policy fingerprint (mode, pins, anchors, every publisher decision). On a
+  relaunch the gate still hashes every jar and compares it to the digest the server publishes *this*
+  launch; only when the bytes are exactly the ones verified before, under the same policy, is the CMS /
+  PKIX / timestamp check skipped (audited `CACHED_ADMISSION`). Any policy change misses every entry.
 - **The Administrator is a process tree** — `ProcessTree.track` wraps the spawned JVM so `isAlive` /
   `onExit` answer for the whole tree: the client relaunches itself with its preferred heap and exits
   within a second, and its Java children (seen while it lived, or found by the launch's command-line

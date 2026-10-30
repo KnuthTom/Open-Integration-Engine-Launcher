@@ -93,6 +93,10 @@ class TunnelManager(
     /** A tunnel the launcher runs. The process is replaced in place when a dead forward is reopened, so leases stay valid. */
     internal class Live(@Volatile var process: Process, @Volatile var log: Path?) {
         var users = 0
+        /** Set before the launcher itself takes the process down, so its exit is not taken for a crash. */
+        @Volatile var closing = false
+        /** Unexpected exits reopened recently (bounded; see [REOPEN_LIMIT]). */
+        val reopens = ArrayDeque<Long>()
     }
 
     private class Endpoint(val command: String, val host: String, val port: Int)
@@ -184,7 +188,63 @@ class TunnelManager(
                 "tunnel.open", "connection" to connection.id, "port" to port,
                 "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
             )
+            watch(connection, endpoint, entry, process)
             return Lease(this, connection.id, managed = true, entry = entry)
+        }
+    }
+
+    /**
+     * True when the forward the launcher runs for [connectionId] is an SSM session in **basic** mode — the
+     * plugin's own output says so (`Connection accepted for session <id>.`; multiplexing mode prints the
+     * id in brackets). Basic mode services one connection at a time, so the launcher fetches one thing at
+     * a time through it. False for a multiplexing forward, a hand-started tunnel, or no tunnel.
+     */
+    fun isBasicForward(connectionId: String): Boolean {
+        val log = live[connectionId]?.log ?: return false
+        return runCatching {
+            Files.readAllLines(log, Charset.defaultCharset()).any { BASIC_MODE_LINE.matches(it.trim()) }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * When the forward dies on its own while Administrators still depend on it (an SSM session timing
+     * out, a dropped network), reopen it so the client can reconnect — a bounded number of times, off the
+     * exit-notification thread. An exit the launcher caused ([Live.closing]) is left alone.
+     */
+    private fun watch(connection: Connection, endpoint: Endpoint, entry: Live, process: Process) {
+        process.onExit().thenRun {
+            if (entry.closing || live[connection.id] !== entry || entry.process !== process) return@thenRun
+            Thread({ reopenAfterCrash(connection, endpoint, entry, process) }, "tunnel-reopen").apply { isDaemon = true }.start()
+        }
+    }
+
+    private fun reopenAfterCrash(connection: Connection, endpoint: Endpoint, entry: Live, died: Process) {
+        synchronized(lockFor(connection.id)) {
+            if (entry.closing || live[connection.id] !== entry || entry.process !== died || entry.users <= 0) return
+            val now = clock()
+            while (entry.reopens.isNotEmpty() && now - entry.reopens.first() > REOPEN_WINDOW_MS) entry.reopens.removeFirst()
+            if (entry.reopens.size >= REOPEN_LIMIT) {
+                AuditLog.event("tunnel.exited", "connection" to connection.id, "code" to runCatching { died.exitValue() }.getOrNull(), "result" to "GIVEN_UP")
+                live.remove(connection.id)
+                notifyIfIdle()
+                return
+            }
+            entry.reopens.addLast(now)
+            AuditLog.event("tunnel.reopen", "connection" to connection.id, "port" to endpoint.port, "reason" to "exited while in use (code ${runCatching { died.exitValue() }.getOrNull()})")
+            try {
+                val (process, log) = start(connection, endpoint)
+                entry.process = process
+                entry.log = log
+                awaitPort(entry, endpoint.host, endpoint.port)
+                AuditLog.event("tunnel.open", "connection" to connection.id, "port" to endpoint.port, "reopened" to true, "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"))
+                watch(connection, endpoint, entry, process)
+            } catch (t: Throwable) {
+                if (t is InterruptedException) Thread.currentThread().interrupt()
+                AuditLog.event("tunnel.exited", "connection" to connection.id, "result" to "REOPEN_FAILED", "error" to (t.message ?: t.javaClass.simpleName))
+                runCatching { destroy(entry.process) }
+                live.remove(connection.id)
+                notifyIfIdle()
+            }
         }
     }
 
@@ -209,14 +269,17 @@ class TunnelManager(
                         "the launcher, so it can't be reopened here — open it again and relaunch",
                 )
             AuditLog.event("tunnel.reopen", "connection" to connection.id, "port" to port, "reason" to "stopped listening after the download")
+            entry.closing = true
             destroy(entry.process)
             onWaiting()
             val (process, log) = start(connection, endpoint)
             entry.process = process
             entry.log = log
+            entry.closing = false
             try {
                 awaitPort(entry, host, port)
             } catch (t: Throwable) {
+                entry.closing = true
                 destroy(process)
                 live.remove(connection.id) // every lease on it is now stale and releases nothing
                 throw t
@@ -225,6 +288,7 @@ class TunnelManager(
                 "tunnel.open", "connection" to connection.id, "port" to port, "reopened" to true,
                 "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
             )
+            watch(connection, endpoint, entry, process)
         }
     }
 
@@ -235,7 +299,7 @@ class TunnelManager(
     fun closeAll() {
         for (id in live.keys.toList()) {
             synchronized(lockFor(id)) {
-                live.remove(id)?.let { destroy(it.process); AuditLog.event("tunnel.close", "connection" to id, "reason" to "shutdown") }
+                live.remove(id)?.let { it.closing = true; destroy(it.process); AuditLog.event("tunnel.close", "connection" to id, "reason" to "shutdown") }
             }
         }
         notifyIfIdle()
@@ -248,6 +312,7 @@ class TunnelManager(
             entry.users--
             if (entry.users <= 0) {
                 live.remove(id)
+                entry.closing = true
                 destroy(entry.process)
                 AuditLog.event("tunnel.close", "connection" to id, "reason" to "last Administrator exited")
             }
@@ -313,6 +378,11 @@ class TunnelManager(
         const val DEFAULT_TIMEOUT_MS = 60_000L
         private const val POLL_MS = 250L
         private const val CONNECT_PROBE_MS = 400
+        /** Unexpected exits reopened per [REOPEN_WINDOW_MS] before the launcher gives the forward up. */
+        internal const val REOPEN_LIMIT = 3
+        internal const val REOPEN_WINDOW_MS = 10 * 60_000L
+        /** The SSM plugin's basic-mode accept line (mux mode prints `[id]`, with brackets). */
+        private val BASIC_MODE_LINE = Regex("^Connection accepted for session [^\\[\\]\\s]+\\.$")
 
         /** The process-wide manager: launches share tunnels per connection, and exit tears them all down. */
         val shared: TunnelManager by lazy {

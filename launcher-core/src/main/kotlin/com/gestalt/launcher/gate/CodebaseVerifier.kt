@@ -87,11 +87,15 @@ class CodebaseVerifier(
         }
     }
 
-    fun verify(artifactName: String, file: Path, manifest: DigestManifest): GateOutcome {
+    /**
+     * Run [file] through the gate. [sha256] is the file's digest when the caller has just computed it
+     * (saves hashing a large jar twice); it is still compared to the manifest here.
+     */
+    fun verify(artifactName: String, file: Path, manifest: DigestManifest, sha256: String? = null): GateOutcome {
         // (a) DIGEST — fail closed.
         val expected = manifest.expectedFor(artifactName)
             ?: return reject(artifactName, "no digest in manifest for '$artifactName'", false, false, null)
-        val actual = DigestVerifier.sha256Hex(file)
+        val actual = sha256 ?: DigestVerifier.sha256Hex(file)
         if (!DigestVerifier.constantTimeEquals(actual, expected)) {
             return reject(artifactName, "digest mismatch (expected $expected, got $actual)", false, false, null)
         }
@@ -131,6 +135,17 @@ class CodebaseVerifier(
         return GateOutcome.Admitted(
             AdmittedJarImpl(artifactName, file, result.signerDN ?: "-", actual, result.usedTimestamp),
         )
+    }
+
+    /**
+     * Admit on the strength of a recorded admission ([AdmissionCache]): these exact bytes ([sha256], which
+     * the caller has just matched against this launch's manifest) passed the full signature check before,
+     * under the policy in force now. Audited like any admission, marked as cached.
+     */
+    fun admitCached(artifactName: String, file: Path, sha256: String, signerDN: String, usedTimestamp: Boolean): AdmittedJar {
+        AuditLog.jarVerified(connectionId, artifactName, signerDN, true, true, admitted = true)
+        AuditLog.signatureEnforcement("CACHED_ADMISSION", signerDN, "ACCEPT")
+        return AdmittedJarImpl(artifactName, file, signerDN, sha256, usedTimestamp)
     }
 
     /** Admit on the strength of an explicit, audited decision about this exact signer (integrity already proven). */

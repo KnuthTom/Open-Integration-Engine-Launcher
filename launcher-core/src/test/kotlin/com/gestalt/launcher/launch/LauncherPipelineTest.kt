@@ -14,6 +14,7 @@ import com.gestalt.trust.TrustMode
 import com.gestalt.trust.TrustStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -369,6 +370,51 @@ class LauncherPipelineTest {
           </application-desc>
         </jnlp>
     """.trimIndent()
+
+    @Test
+    @DisplayName("admission cache: identical bytes under the same policy reuse the recorded verdict; a tampered file is still caught by the digest; another policy re-verifies")
+    fun admissionCacheReusesVerdicts(@TempDir dir: Path) {
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca, "CN=OIE,O=BrightCodeCompany OÜ,C=EE")
+        val cacheDir = dir.resolve("cache")
+        val signers = com.gestalt.launcher.gate.TrustedSignerStore(dir.resolve("trusted-signers.json"))
+        val admissions = com.gestalt.launcher.gate.AdmissionCache(cacheDir.resolve("admissions.json"))
+        val responses = mapOf(
+            "${base}webstart" to jnlpWithInlineDigest(sha256Base64(jarBytes)).toByteArray(),
+            "${base}core.jar" to jarBytes,
+        )
+        fun core(mode: TrustMode) = LauncherCore(
+            trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = mode,
+            cacheDir = cacheDir, trustedSigners = signers, fetcherFactory = { FakeFetcher(responses) }, admissions = admissions,
+        )
+
+        // First launch: full verification, verdict recorded.
+        val first = core(TrustMode.PIN_KNOWN_SIGNERS).prepareLaunch(connection())
+        val sha = com.gestalt.launcher.digest.DigestVerifier.sha256Hex(jarBytes)
+        val policy = com.gestalt.launcher.gate.AdmissionCache.policyFingerprint(TrustMode.PIN_KNOWN_SIGNERS, GestaltTrust.OFFICIAL_SIGNER_PINS, TrustStore.of(ca.cert), signers)
+        val recorded = admissions.lookup(sha, policy)
+        assertNotNull(recorded)
+        assertEquals(first.admitted.single().signerDN, recorded!!.signerDN)
+
+        // Second launch: the recorded verdict is what the gate uses — provable by planting a marker in it.
+        admissions.record(recorded.copy(signerDN = "CN=From The Cache,O=Example Lab"))
+        val second = core(TrustMode.PIN_KNOWN_SIGNERS).prepareLaunch(connection())
+        assertEquals("CN=From The Cache,O=Example Lab", second.admitted.single().signerDN) { "the cached admission was used" }
+
+        // Another policy: the marker is not honoured; full verification gives the real signer.
+        val caRoot = core(TrustMode.CA_ROOT).prepareLaunch(connection())
+        assertEquals(first.admitted.single().signerDN, caRoot.admitted.single().signerDN)
+
+        // Altered bytes — on disk and from the server: the digest check still runs every launch and the launch aborts.
+        Files.write(first.admitted.single().file, jarBytes + byteArrayOf(0x00))
+        val tampered = mapOf("${base}webstart" to responses.getValue("${base}webstart"), "${base}core.jar" to jarBytes + byteArrayOf(0x00))
+        val poisoned = LauncherCore(
+            trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = TrustMode.PIN_KNOWN_SIGNERS,
+            cacheDir = cacheDir, trustedSigners = signers, fetcherFactory = { FakeFetcher(tampered) }, admissions = admissions,
+        )
+        val ex = assertThrows(LaunchAbortedException::class.java) { poisoned.prepareLaunch(connection()) }
+        assertTrue(ex.message!!.contains("digest mismatch")) { ex.message }
+    }
 
     @Test
     @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale, anything else is dropped, null leaves the JVM's choice")

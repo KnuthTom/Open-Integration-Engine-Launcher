@@ -171,16 +171,15 @@ class PortForwardLaunchTest {
     }
 
     @Test
-    @DisplayName("one fetch at a time through a port-forward (loopback address or tunnel command); the configured parallelism elsewhere")
-    fun singleConnectionThroughForwards(@TempDir dir: Path) {
+    @DisplayName("fetches run in parallel everywhere — a loopback address, a tunnel command, a direct host — unless the forward is known to be a basic-mode SSM session")
+    fun parallelUnlessBasicForward(@TempDir dir: Path) {
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val core = LauncherCore(
             trustStore = TrustStore.of(ca.cert), cacheDir = dir.resolve("cache"), fetcherFactory = { FlakyFetcher(emptyMap(), 0) },
             sleeper = {}, parallelism = 4,
         )
-        assertEquals(1, core.parallelismFor(Connection(id = "a", name = "fwd", serverUrl = "https://localhost:31065")))
-        assertEquals(1, core.parallelismFor(Connection(id = "b", name = "fwd6", serverUrl = "https://[::1]:31065")))
-        assertEquals(1, core.parallelismFor(Connection(id = "c", name = "tunnelled", serverUrl = "https://mirth.example.internal:8443", tunnelCommand = "forward.bat")))
+        assertEquals(4, core.parallelismFor(Connection(id = "a", name = "fwd", serverUrl = "https://localhost:31065")))
+        assertEquals(4, core.parallelismFor(Connection(id = "c", name = "tunnelled", serverUrl = "https://localhost:31065", tunnelCommand = "forward.bat")))
         assertEquals(4, core.parallelismFor(Connection(id = "d", name = "direct", serverUrl = "https://mirth.example.internal:8443")))
     }
 

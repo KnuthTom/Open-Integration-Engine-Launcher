@@ -37,7 +37,12 @@ class TunnelManagerTest {
         override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
         override fun getInputStream(): InputStream = InputStream.nullInputStream()
         override fun getErrorStream(): InputStream = InputStream.nullInputStream()
-        override fun waitFor(): Int = exit ?: 0
+        override fun waitFor(): Int {
+            while (true) {
+                exit?.let { return it }
+                Thread.sleep(5)
+            }
+        }
         override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = !isAlive
         override fun exitValue(): Int = exit ?: throw IllegalThreadStateException("running")
         override fun isAlive(): Boolean = exit == null
@@ -149,46 +154,99 @@ class TunnelManagerTest {
     }
 
     @Test
-    @DisplayName("a tunnel that died and was replaced: the old launch's lease never closes the replacement")
-    fun staleLeaseDoesNotCloseReplacement(@TempDir dir: Path) {
+    @DisplayName("a forward that dies while an Administrator uses it is reopened on its own; existing and new leases keep working across the reopen")
+    fun reopensAfterCrashWhileInUse(@TempDir dir: Path) {
         val starter = Scripted()
         // The port listens exactly while one of the started commands is alive.
         val m = manager(dir, starter, { _, _ -> starter.processes.any { it.isAlive } })
         val first = m.acquire(connection())!!
-        starter.processes[0].die(1) // the forward idles out while the first Administrator is still open
-        val second = m.acquire(connection())!! // the next launch opens a fresh one
-        assertEquals(2, starter.processes.size)
-        assertTrue(second.managed)
+        starter.processes[0].die(1) // the SSM session idles out while the first Administrator is still open
+        awaitUntil("the forward is reopened") { starter.processes.size == 2 && starter.processes[1].isAlive }
+        assertEquals(1, m.holders("c1")) { "same tunnel, same holder" }
 
-        first.close() // the first Administrator exits
-        assertFalse(starter.processes[1].destroyed.get()) { "the replacement is the second launch's, not the first's" }
-        assertEquals(1, m.holders("c1"))
+        val second = m.acquire(connection())!! // another launch joins the reopened forward
+        assertEquals(2, starter.processes.size) { "nothing new started: the reopened forward serves it" }
+        assertEquals(2, m.holders("c1"))
+        first.close()
+        assertFalse(starter.processes[1].destroyed.get()) { "still held by the second launch" }
         second.close()
         assertTrue(starter.processes[1].destroyed.get())
+        assertEquals(0, m.holders("c1"))
     }
 
     @Test
-    @DisplayName("recheck before the spawn: a port that still answers is left alone; a dead forward the launcher opened is reopened in place")
+    @DisplayName("a forward the launcher took down itself is not reopened; one that keeps crashing is given up")
+    fun crashReopenIsBounded(@TempDir dir: Path) {
+        val starter = Scripted()
+        var now = 0L
+        val m = manager(dir, starter, { _, _ -> starter.processes.any { it.isAlive } }, clock = { now })
+        val lease = m.acquire(connection())!!
+        repeat(TunnelManager.REOPEN_LIMIT) { i ->
+            starter.processes.last().die(1)
+            awaitUntil("reopen #${i + 1}") { starter.processes.size == i + 2 && starter.processes[i + 1].isAlive }
+        }
+        starter.processes.last().die(1) // one too many inside the window
+        awaitUntil("given up") { m.holders("c1") == 0 }
+        assertEquals(TunnelManager.REOPEN_LIMIT + 1, starter.processes.size) { "no further reopen" }
+        lease.close() // stale lease: nothing to release
+        assertEquals(0, m.holders("c1"))
+
+        // Taken down by the launcher: stays down.
+        val m2 = manager(dir, Scripted(), probeAfter(refusals = 1))
+        val l2 = m2.acquire(connection())!!
+        l2.close()
+        Thread.sleep(150)
+        assertEquals(0, m2.holders("c1"))
+    }
+
+    private fun awaitUntil(what: String, timeoutMs: Long = 5_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition()) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("timed out waiting for $what")
+            Thread.sleep(10)
+        }
+    }
+
+    @Test
+    @DisplayName("recheck before the spawn: a port that still answers is left alone; a forward that stopped listening is reopened in place")
     fun recheckReopensDeadForward(@TempDir dir: Path) {
         val starter = Scripted()
-        val m = manager(dir, starter, { _, _ -> starter.processes.any { it.isAlive } })
+        var listening = true
+        // The plugin process lives on but its listener is gone (the session was dropped).
+        val m = manager(dir, starter, { _, _ -> listening && starter.processes.any { it.isAlive } })
         val lease = m.acquire(connection())!!
         assertEquals(1, starter.started.size)
 
         m.recheck(connection(), lease)
         assertEquals(1, starter.started.size) { "still listening: nothing to do" }
 
-        starter.processes[0].die(0) // the plugin dropped the session when the launcher's connections closed
+        listening = false
         var waiting = 0
-        m.recheck(connection(), lease) { waiting++ }
+        m.recheck(connection(), lease) { waiting++; listening = true }
         assertEquals(2, starter.started.size) { "reopened" }
         assertEquals(1, waiting)
+        assertTrue(starter.processes[0].destroyed.get()) { "the old process is taken down" }
         assertTrue(starter.processes[1].isAlive)
         assertEquals(1, m.holders("c1")) { "same tunnel entry, same holder" }
 
         lease.close() // the Administrator exits: the lease taken on the FIRST process closes the reopened one
         assertTrue(starter.processes[1].destroyed.get())
         assertEquals(0, m.holders("c1"))
+    }
+
+    @Test
+    @DisplayName("basic-mode detection reads the plugin's own output: the bracket-less accept line means one connection at a time")
+    fun basicModeDetection(@TempDir dir: Path) {
+        val starter = Scripted()
+        val m = manager(dir, starter, probeAfter(refusals = 1))
+        assertFalse(m.isBasicForward("c1")) { "no tunnel yet" }
+        m.acquire(connection())
+        val log = starter.logs.single()!!
+        Files.writeString(log, Files.readString(log) + "Starting session with SessionId: user-abc123\nPort 31065 opened for sessionId user-abc123.\nWaiting for connections...\n\nConnection accepted for session [user-abc123]\n")
+        assertFalse(m.isBasicForward("c1")) { "multiplexing: brackets" }
+        Files.writeString(log, Files.readString(log) + "Connection accepted for session user-abc123.\n")
+        assertTrue(m.isBasicForward("c1")) { "basic: bare id with a period" }
+        assertFalse(m.isBasicForward("other"))
     }
 
     @Test

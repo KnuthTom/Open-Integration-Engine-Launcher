@@ -10,6 +10,7 @@ import com.gestalt.launcher.AppPaths
 import com.gestalt.launcher.audit.AuditLog
 import com.gestalt.launcher.digest.DigestManifest
 import com.gestalt.launcher.digest.DigestVerifier
+import com.gestalt.launcher.gate.AdmissionCache
 import com.gestalt.launcher.gate.AdmittedJar
 import com.gestalt.launcher.gate.CodebaseVerifier
 import com.gestalt.launcher.gate.GateOutcome
@@ -120,8 +121,10 @@ open class LauncherCore(
     private val trustedCerts: TrustedCertStore = TrustedCertStore.shared,
     /** The user's reviewed jar publishers; the gate consults it for signers the policy doesn't accept. */
     private val trustedSigners: TrustedSignerStore = TrustedSignerStore.shared,
+    /** Opens a connection's port-forward before the launch and closes it after the Administrator exits. */
+    private val tunnels: TunnelManager = TunnelManager.shared,
     private val fetcherFactory: (Connection) -> ArtifactFetcher = { conn ->
-        HttpArtifactFetcher(HttpClientFactory.forConnection(conn, trustedCerts))
+        HttpArtifactFetcher(HttpClientFactory.forConnection(conn, trustedCerts, singleConnection = tunnels.isBasicForward(conn.id)))
     },
     /**
      * Captures the server leaf after a TLS trust failure, so it can be auto-approved or handed to the
@@ -147,8 +150,11 @@ open class LauncherCore(
     private val parallelism: Int = DEFAULT_PARALLELISM,
     /** Where each launched client's console output is kept (see [ClientLog]). */
     private val clientLogDir: Path = AppPaths.logDir.resolve("client"),
-    /** Opens a connection's port-forward before the launch and closes it after the Administrator exits. */
-    private val tunnels: TunnelManager = TunnelManager.shared,
+    /**
+     * Admissions remembered across launches ([AdmissionCache]): bytes the gate has already verified
+     * under the policy in force skip the signature check (never the digest check). Null disables it.
+     */
+    private val admissions: AdmissionCache? = AdmissionCache(cacheDir.resolve(AdmissionCache.FILE_NAME)),
 ) {
     /**
      * Verify everything and produce the launch plan. Does NOT spawn the process.
@@ -215,20 +221,27 @@ open class LauncherCore(
             // 3-4. Download each jar and run it through the single gate, [parallelism] jars at a time.
             //      Fail closed on any miss: the first rejection cancels the rest and aborts the launch.
             val gate = CodebaseVerifier(trustStore, signerPins, gateMode, connection.id, trustedSigners)
+            // Everything the gate's verdict depends on besides the jar: a change invalidates cached admissions.
+            val policy = AdmissionCache.policyFingerprint(gateMode, signerPins, trustStore, trustedSigners)
             val admitted = ArrayList<AdmittedJar>(jars.size)
+            val cachedHits = java.util.concurrent.atomic.AtomicInteger()
             val verifyStarted = System.currentTimeMillis()
-            parallel(connection) { pool ->
-                val futures = jars.map { jar ->
-                    pool.submit(Callable { downloadAndGate(connection, fetcher, gate, manifest, version, jar) })
+            try {
+                parallel(connection) { pool ->
+                    val futures = jars.map { jar ->
+                        pool.submit(Callable { downloadAndGate(connection, fetcher, gate, manifest, version, jar, policy, cachedHits) })
+                    }
+                    for (future in futures) {
+                        checkNotCancelled()
+                        admitted += await(future, futures)
+                    }
                 }
-                for (future in futures) {
-                    checkNotCancelled()
-                    admitted += await(future, futures)
-                }
+            } finally {
+                admissions?.flush()
             }
             val verifyMs = System.currentTimeMillis() - verifyStarted
             AuditLog.event(
-                "launch.timing", "connection" to connection.id, "jars" to jars.size,
+                "launch.timing", "connection" to connection.id, "jars" to jars.size, "cachedAdmissions" to cachedHits.get(),
                 "descriptorsMs" to descriptorsMs, "downloadVerifyMs" to verifyMs, "parallelism" to parallelismFor(connection),
             )
 
@@ -467,13 +480,14 @@ open class LauncherCore(
     }
 
     /**
-     * How many fetches run at once for [connection]: ONE through a port-forward (a loopback address or a
-     * tunnel command — see [HttpClientFactory.singleConnection]: a non-multiplexing SSM forward services a
-     * single connection and parks the rest in the backlog, where they time out and retry), else
-     * [parallelism]. The gate's CPU work is what parallelises; a tunnel is a single pipe either way.
+     * How many fetches run at once for [connection]: [parallelism], except ONE through a port-forward the
+     * launcher opened whose plugin runs in basic (non-multiplexing) mode — that forward services a single
+     * connection and parks the rest in the listener's backlog, where they time out and retry
+     * ([TunnelManager.isBasicForward]). A multiplexing forward, a hand-started tunnel and a direct host
+     * all take the parallel path, which through a tunnel is several times faster.
      */
     internal fun parallelismFor(connection: Connection): Int =
-        if (HttpClientFactory.singleConnection(connection)) 1 else parallelism.coerceAtLeast(1)
+        if (tunnels.isBasicForward(connection.id)) 1 else parallelism.coerceAtLeast(1)
 
     /**
      * Wait for one task; a failure anywhere cancels the rest and surfaces as the original exception, and
@@ -558,15 +572,35 @@ open class LauncherCore(
      * know stops the launch for review with the jar kept (it is exactly what the signer signed); any
      * other rejection deletes the cached file and aborts.
      */
-    private fun downloadAndGate(connection: Connection, fetcher: ArtifactFetcher, gate: CodebaseVerifier, manifest: DigestManifest, version: String, jar: PlannedJar): AdmittedJar {
+    private fun downloadAndGate(
+        connection: Connection, fetcher: ArtifactFetcher, gate: CodebaseVerifier, manifest: DigestManifest, version: String, jar: PlannedJar,
+        policy: String, cachedHits: java.util.concurrent.atomic.AtomicInteger,
+    ): AdmittedJar {
         val name = jar.artifactName
         val file = cacheFile(connection.id, version, name)
-        if (!cachedJarMatches(file, manifest, name)) {
+        val expected = manifest.expectedFor(name)
+        // One hash of the cached file decides both reuse and (below) the gate's digest check.
+        val cached: String? = if (expected != null && Files.isRegularFile(file)) runCatching { DigestVerifier.sha256Hex(file) }.getOrNull() else null
+        val actual: String = if (expected == null || cached == null || !DigestVerifier.constantTimeEquals(cached, expected)) {
             val bytes = withConnectRetry(connection) { fetcher.fetchBytes(jar.uri) }
             Files.write(file, bytes)
+            DigestVerifier.sha256Hex(bytes)
+        } else {
+            cached
         }
-        return when (val outcome = gate.verify(name, file, manifest)) {
-            is GateOutcome.Admitted -> outcome.jar
+        // Fast path: these exact bytes (they match this launch's digest) were admitted before under the
+        // policy in force. The signature was verified then; the digest is verified now.
+        if (admissions != null && expected != null && DigestVerifier.constantTimeEquals(actual, expected)) {
+            admissions.lookup(actual, policy)?.let { hit ->
+                cachedHits.incrementAndGet()
+                return gate.admitCached(name, file, actual, hit.signerDN, hit.usedTimestamp)
+            }
+        }
+        return when (val outcome = gate.verify(name, file, manifest, sha256 = actual)) {
+            is GateOutcome.Admitted -> {
+                admissions?.record(AdmissionCache.Entry(outcome.jar.sha256, policy, outcome.jar.signerDN, outcome.jar.usedTimestamp, AdmissionCache.now(), name))
+                outcome.jar
+            }
             is GateOutcome.Rejected -> {
                 val publisher = outcome.publisherToReview
                 if (publisher != null) {
@@ -577,18 +611,6 @@ open class LauncherCore(
                 throw LaunchAbortedException("verification failed for '$name': ${outcome.reason}")
             }
         }
-    }
-
-    /**
-     * True when [file] already holds bytes whose SHA-256 matches the digest [manifest] expects for [name] —
-     * i.e. a cached jar that is byte-identical to what the server would serve this launch. Uses the SAME
-     * hex comparison the gate uses, so "cache hit here" and "passes the digest gate" never disagree.
-     */
-    private fun cachedJarMatches(file: Path, manifest: DigestManifest, name: String): Boolean {
-        if (!Files.isRegularFile(file)) return false
-        val expected = manifest.expectedFor(name) ?: return false
-        return runCatching { DigestVerifier.constantTimeEquals(DigestVerifier.sha256Hex(file), expected) }
-            .getOrDefault(false)
     }
 
     /**

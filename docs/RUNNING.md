@@ -72,6 +72,10 @@ Audit:
   `event=launch.timing … descriptorsMs=… downloadVerifyMs=…` is where a slow launch shows which half
   was slow; `event=child.launch … reachedAt=…` is the address the launcher reached the server on.
 
+Speed: `event=launch.timing … cachedAdmissions=N` counts the jars whose signature check was skipped
+because exactly those bytes were admitted before under the same trust policy (`cache/admissions.json`);
+the digest check still runs for every jar, every launch.
+
 Client output:
 
 - `logs/client/<connection>-<yyyyMMdd-HHmmss>.log` — one file per launch, the Administrator's own
@@ -110,15 +114,15 @@ it was started with against the heap size saved in its own preferences and, when
 actually runs in. (Before this, the forward was torn down under the relaunched client — "Connection
 refused" on its login screen a second after it appeared.)
 
-Through a port-forward (a loopback address, or any connection with a tunnel command) the launcher
-fetches over **one** TCP connection at a time: an SSM forward without TCP multiplexing (the plugin's
-basic mode, used when the instance's SSM agent is older) services a single connection and parks the
-rest in the listener's backlog until it closes, so "parallel" fetches there only time out and retry.
-Right before the Administrator is started the launcher **re-checks** the port — an outdated
-session-manager-plugin has been seen to drop the session when the launcher's connections close — and
-reopens a dead forward it started (`audit.log`: `tunnel.reopen`). Upgrade the plugin when it prints
-"An outdated SessionManagerPlugin version detected": the basic mode also gives the Administrator
-itself a single connection at a time.
+Fetches run in parallel through a tunnel as everywhere else — with one exception the launcher detects
+from the plugin's own output: an SSM forward in **basic** (non-multiplexing) mode, used when the
+instance's SSM agent is old, services one connection at a time and parks the rest in the listener's
+backlog, so the launcher fetches one thing at a time through such a forward. Right before the
+Administrator is started the launcher **re-checks** the port and reopens a forward of its own that has
+stopped listening; a forward that dies *while* the Administrator uses it (a session timing out, a
+dropped network) is reopened on its own, a bounded number of times, so the client can reconnect
+(`audit.log`: `tunnel.reopen`, `tunnel.exited`). Upgrade the plugin when it prints "An outdated
+SessionManagerPlugin version detected".
 
 The tunnel command is local config like the Java home: it is exported with the connection but **never
 imported** from a file (a file from elsewhere must not be able to plant a command the launcher would
