@@ -34,7 +34,9 @@ class LauncherApp : Application() {
         stage.minWidth = 720.0
         stage.minHeight = 560.0
         restoreGeometry(stage, model)
-        stage.setOnCloseRequest { shell.shutdown() }
+        // The X goes through the shell: a plain close, or — while an Administrator still runs through a
+        // port-forward the launcher opened — hide and stay alive until it exits (see Shell.requestClose).
+        stage.setOnCloseRequest { e -> e.consume(); shell.requestClose() }
         stage.show()
     }
 

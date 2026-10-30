@@ -79,7 +79,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED) { e -> onShortcut(e) }
 
-        model.onRequestClose = { shutdown(); stage.close() }
+        model.onRequestClose = { requestClose() }
 
         // First selection: the first connection, like the design opens on one.
         model.rows.firstOrNull { it is TreeRow.ConnectionRow }?.let { r ->
@@ -379,6 +379,32 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     private fun issuerName(dn: String): String = subjectName(dn)
 
     private var shutDown = false
+    private var lingering = false
+
+    /**
+     * Close the window — the user's X, or close-after-launch once the Administrator is running.
+     *
+     * When an Administrator launched from here still depends on a port-forward the launcher opened, the
+     * window goes away but the process does not: the tunnel is the client's connection, so it must stay
+     * up while the client runs and come down when it exits. The launcher keeps running hidden, holding
+     * the tunnel, and exits once the last such Administrator has closed. Otherwise it is a plain close.
+     */
+    fun requestClose() {
+        val tunnels = com.gestalt.launcher.tunnel.TunnelManager.shared
+        if (tunnels.hasLiveTunnels()) {
+            if (!lingering) {
+                lingering = true
+                com.gestalt.launcher.audit.AuditLog.event("launcher.linger", "reason" to "port-forward held for a running Administrator")
+                javafx.application.Platform.setImplicitExit(false)
+                shutdown() // geometry saved, edits flushed; the tunnel is left to its leases
+                tunnels.onIdle { javafx.application.Platform.runLater { javafx.application.Platform.exit() } }
+            }
+            stage.hide()
+        } else {
+            shutdown()
+            stage.close()
+        }
+    }
 
     /** Save the window geometry, flush edits and stop background work; once. */
     fun shutdown() {

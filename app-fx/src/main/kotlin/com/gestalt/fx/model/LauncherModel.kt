@@ -561,14 +561,16 @@ class LauncherModel(
         else pending?.let { runCatching { it.get(5, TimeUnit.SECONDS) } }
     }
 
-    /** Flush edits and stop background work; the window closes after this. */
+    /**
+     * Flush edits and stop background work; the window closes (or hides) after this. Port-forwards are
+     * NOT closed here: each is held by the Administrators launched through it and comes down when the
+     * last of them exits ([com.gestalt.launcher.tunnel.TunnelManager]); the JVM shutdown hook is the
+     * backstop for an abnormal exit.
+     */
     fun shutdown() {
         flushPendingSave()
         launchController.shutdown()
         persistExecutor.shutdownNow()
-        // Port-forwards the launcher opened die with it (off the UI thread: a teardown may wait a few
-        // seconds per tunnel; the JVM shutdown hook is the backstop). Running Administrators keep their sockets.
-        Thread({ runCatching { com.gestalt.launcher.tunnel.TunnelManager.shared.closeAll() } }, "tunnel-close").apply { isDaemon = true }.start()
     }
 
     private fun freshId(): String {

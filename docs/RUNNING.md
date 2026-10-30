@@ -96,6 +96,13 @@ and torn down (the command and everything it spawned) when the last one exits, o
 closes. The command's output goes to `logs/client/<connection>-<stamp>-tunnel.log`; a tunnel that
 fails reports the command's exit code and the log's last lines in the launch failure.
 
+The tunnel is the Administrator's connection, so closing the launcher window — by hand, or with
+*Close this window after launching* — must not take it down. While an Administrator launched from here
+still depends on a forward the launcher opened, the window hides but the launcher keeps running (no
+window, `audit.log`: `launcher.linger`), holding the tunnel; it exits on its own once the last such
+Administrator has closed. A launcher started again meanwhile is a second instance and simply finds the
+port already open.
+
 "When the Administrator exits" means the Administrator, not the first JVM: the client checks the heap
 it was started with against the heap size saved in its own preferences and, when they differ,
 **relaunches itself** in a new JVM and exits within a second. The launcher follows that hand-over

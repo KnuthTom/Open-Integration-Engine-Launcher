@@ -122,6 +122,27 @@ class TunnelManager(
 
     private val live = ConcurrentHashMap<String, Live>()
     private val locks = ConcurrentHashMap<String, Any>()
+    private val idleListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    /** True while the launcher runs a tunnel that a launched Administrator is using. */
+    fun hasLiveTunnels(): Boolean = live.isNotEmpty()
+
+    /**
+     * Run [listener] once the launcher runs no tunnels — at once if that is already so. The window uses it
+     * to stay alive, hidden, after the user closes it while an Administrator still depends on a forward
+     * the launcher opened, and to exit when the last one is gone.
+     */
+    fun onIdle(listener: () -> Unit) {
+        idleListeners += listener
+        notifyIfIdle()
+    }
+
+    private fun notifyIfIdle() {
+        if (live.isNotEmpty()) return
+        val listeners = idleListeners.toList()
+        idleListeners.removeAll(listeners)
+        listeners.forEach { runCatching { it() } }
+    }
 
     private fun lockFor(id: String): Any = locks.computeIfAbsent(id) { Any() }
 
@@ -217,6 +238,7 @@ class TunnelManager(
                 live.remove(id)?.let { destroy(it.process); AuditLog.event("tunnel.close", "connection" to id, "reason" to "shutdown") }
             }
         }
+        notifyIfIdle()
     }
 
     private fun release(id: String, entry: Live) {
@@ -230,6 +252,7 @@ class TunnelManager(
                 AuditLog.event("tunnel.close", "connection" to id, "reason" to "last Administrator exited")
             }
         }
+        notifyIfIdle()
     }
 
     /**

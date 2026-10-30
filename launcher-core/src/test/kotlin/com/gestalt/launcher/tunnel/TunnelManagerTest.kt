@@ -207,6 +207,24 @@ class TunnelManagerTest {
     }
 
     @Test
+    @DisplayName("onIdle fires when the last tunnel is released (at once when none is running) — what keeps the hidden launcher alive")
+    fun idleNotification(@TempDir dir: Path) {
+        val starter = Scripted()
+        val m = manager(dir, starter, probeAfter(refusals = 1))
+        var idle = 0
+        m.onIdle { idle++ }
+        assertEquals(1, idle) { "nothing running: idle at once" }
+
+        val lease = m.acquire(connection())!!
+        assertTrue(m.hasLiveTunnels())
+        m.onIdle { idle++ }
+        assertEquals(1, idle) { "a tunnel is held: not yet" }
+        lease.close()
+        assertFalse(m.hasLiveTunnels())
+        assertEquals(2, idle) { "the last release fires it" }
+    }
+
+    @Test
     @DisplayName("different connections get their own tunnels")
     fun perConnection(@TempDir dir: Path) {
         val starter = Scripted()

@@ -68,11 +68,12 @@ class ProcessTreeTest {
     }
 
     @Test
-    @DisplayName("the fingerprint match reads the command line")
+    @DisplayName("the fingerprint match reads what the platform knows of the command line (at least the command)")
     fun fingerprintMatch() {
         val me = ProcessHandle.current()
-        assertTrue(ProcessTree.matches(me, listOf("java")))
+        assertTrue(ProcessTree.matches(me, listOf("java"))) { "the current process is a JVM: ${me.info()}" }
         assertFalse(ProcessTree.matches(me, listOf("java", "definitely-not-on-this-command-line-7f3a")))
+        assertFalse(ProcessTree.matches(me, listOf("definitely-not-on-this-command-line-7f3a")))
     }
 
     private fun javaExe(): String {

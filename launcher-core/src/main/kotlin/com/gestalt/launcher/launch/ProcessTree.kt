@@ -91,10 +91,18 @@ object ProcessTree {
     private fun startedAfter(h: ProcessHandle, since: Instant): Boolean =
         runCatching { h.info().startInstant().orElse(null) }.getOrNull()?.let { it >= since.minus(Duration.ofSeconds(2)) } ?: true
 
-    /** True when every [fingerprint] string occurs in the process's command line (unknown command line: no match). */
+    /**
+     * True when every [fingerprint] string occurs in what is known of the process's command line: the
+     * full line where the platform gives it, else the command plus arguments, else the command alone
+     * (Windows often reports only that). Nothing known: no match.
+     */
     internal fun matches(h: ProcessHandle, fingerprint: List<String>): Boolean {
-        val line = runCatching { h.info().commandLine().orElse(null) }.getOrNull()
-            ?: runCatching { h.info().arguments().orElse(null)?.joinToString(" ") }.getOrNull()
+        val info = runCatching { h.info() }.getOrNull() ?: return false
+        val line = runCatching { info.commandLine().orElse(null) }.getOrNull()
+            ?: listOfNotNull(
+                runCatching { info.command().orElse(null) }.getOrNull(),
+                runCatching { info.arguments().orElse(null)?.joinToString(" ") }.getOrNull(),
+            ).joinToString(" ").ifBlank { null }
             ?: return false
         return fingerprint.all { line.contains(it) }
     }
