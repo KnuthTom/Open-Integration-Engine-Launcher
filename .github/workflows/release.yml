@@ -38,9 +38,10 @@ jobs:
         shell: bash
 
       - name: Package installer + portable image
-        # :app:packageAll builds the current-OS installer(s) AND the portable app-image zip, each
-        # bundling the Temurin 8 + 17 client runtimes (fetched + checksum-verified at build time).
-        run: ./gradlew :app:packageAll --no-daemon --stacktrace
+        # :app-fx:packageAll builds the current-OS installer(s) AND the portable app-image zip of the
+        # JavaFX product UI, each bundling the Temurin 8 + 17 client runtimes (fetched +
+        # checksum-verified at build time).
+        run: ./gradlew :app-fx:packageAll --no-daemon --stacktrace
         shell: bash
 
       - name: Generate SBOM (once, on Linux)
@@ -54,11 +55,11 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           # Installers (whatever formats the build is configured to emit) ...
-          find app/build/compose/binaries -type f \
+          find app-fx/build/compose/binaries -type f \
             \( -iname '*.msi' -o -iname '*.exe' -o -iname '*.dmg' -o -iname '*.pkg' \
                -o -iname '*.deb' -o -iname '*.rpm' \) -exec cp -f {} dist/ \; 2>/dev/null || true
           # ... and the portable zip(s).
-          find app/build/distributions -type f -iname '*.zip' -exec cp -f {} dist/ \; 2>/dev/null || true
+          find app-fx/build/distributions -type f -iname '*.zip' -exec cp -f {} dist/ \; 2>/dev/null || true
           # SBOM (present only on the Linux job).
           find . -type f \( -iname 'bom.json' -o -iname 'bom.xml' \) -exec cp -f {} dist/ \; 2>/dev/null || true
           echo "Staged artifacts:"; ls -1 dist/ || true

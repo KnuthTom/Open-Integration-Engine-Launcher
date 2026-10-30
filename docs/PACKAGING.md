@@ -38,16 +38,16 @@ Compose/jpackage runtime (JDK 17).
 
 ```bash
 # Everything for this OS: installer(s) + portable zip, from one config.
-./gradlew :app:packageAll
+./gradlew :app-fx:packageAll
 
 # Just the per-user installer(s) for the current OS (.msi/.exe | .dmg/.pkg | .deb/.rpm).
-./gradlew :app:packageDistributionForCurrentOS
+./gradlew :app-fx:packageDistributionForCurrentOS
 
 # Just the portable app-image zip.
-./gradlew :app:packagePortableZip
+./gradlew :app-fx:packagePortableZip
 
 # The raw app-image (a runnable directory; no installer tooling / no WiX needed).
-./gradlew :app:createDistributable
+./gradlew :app-fx:createDistributable
 
 # Building blocks (run automatically by the above; useful in isolation):
 ./gradlew :app:stageClientRuntimes   # download + checksum-verify + stage Temurin 8 & 17
@@ -56,8 +56,8 @@ Compose/jpackage runtime (JDK 17).
 
 Outputs land under `app/build/`:
 
-- Installers → `app/build/compose/binaries/main/<format>/`
-- App-image → `app/build/compose/binaries/main/app/GestaltCloudConnect/`
+- Installers → `app-fx/build/compose/binaries/main/<format>/`
+- App-image → `app-fx/build/compose/binaries/main/app/OpenIntegrationEngineLauncher/`
 - Portable zip → `app/build/distributions/GestaltCloudConnect-<version>-portable-<os>-<arch>.zip`
 
 ---
@@ -164,7 +164,7 @@ vendor (**Gestalt Diagnostics**), the build time, the bundled runtimes, and the 
 
 | Acceptance | How |
 |------------|-----|
-| Package task produces a Windows installer **and** a portable app-image | `./gradlew :app:packageAll` (installer needs WiX) |
+| Package task produces a Windows installer **and** a portable app-image | `./gradlew :app-fx:packageAll` (installer needs WiX) |
 | Installs without admin; GD icon in Start menu / taskbar / installer | per-user MSI (`perUserInstall = true`) + `windows.iconFile` |
 | Both client runtimes present | `runtimes/jre8` + `runtimes/jre17` staged by `stageClientRuntimes` |
 | `Bundled` Java 17 launches the Administrator; `Bundled` 8 resolves to the bundled JRE | `ChildJvmCommandBuilder` → `compose.application.resources.dir/runtimes/jre<N>` |

@@ -100,8 +100,9 @@ the channel. See [UPDATES.md](UPDATES.md).
 
 ## Packaging & runtimes
 
-`:app` uses Compose/jpackage to produce per-OS installers and a portable app-image (state under
-`./data` beside the executable, via a sentinel file). Each package bundles **two client runtimes**
+`:app-fx` uses the Compose Gradle plugin as a jpackage wrapper to produce per-OS installers and a
+portable app-image (state under `./data` beside the executable, via a sentinel file); JavaFX runs from
+the classpath in the packaged app, started by a plain `main`. Each package bundles **two client runtimes**
 (Temurin JRE 8 + 17, fetched from Adoptium at build time, not committed) for launching the
 Administrator; the launcher itself runs on its own jlinked JDK-17 runtime. See [PACKAGING.md](PACKAGING.md)
 and [BUILDING.md](BUILDING.md).

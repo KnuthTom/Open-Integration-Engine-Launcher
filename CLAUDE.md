@@ -44,11 +44,13 @@ Full architecture + trust pipeline: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 ./gradlew :app-fx:run                    # product UI (JavaFX redesign)
 ./gradlew :app:run --args="--gallery"    # design-system component gallery
 ./gradlew :app:run --args="--test https://host:8443"   # headless connection diagnostic
-./gradlew :app:packageMsi                # Windows installer -> app/build/compose/binaries/main/msi/
-./gradlew :app:packageAll                # current-OS installer(s) + portable zip
+./gradlew :app-fx:packageMsi             # Windows installer -> app-fx/build/compose/binaries/main/msi/
+./gradlew :app-fx:packageAll             # current-OS installer(s) + portable zip (the JavaFX UI is the product)
 ./gradlew cyclonedxBom                   # SBOM -> build/reports/bom.{json,xml}
 ```
 Packaging bundles Temurin **JRE 8 + 17** (the *client* runtimes), fetched from Adoptium at build time.
+`:app-fx` packages through the Compose Gradle plugin used purely as a jpackage wrapper (WiX download,
+app-image, bundled resources); JavaFX runs from the classpath in the packaged app.
 
 ## House rules (do not break these)
 1. **Clean-room** — never add decompiled/copied/derived Mirth/NextGen source or a vendored client jar.
