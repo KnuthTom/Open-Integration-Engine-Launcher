@@ -79,6 +79,27 @@ Client output:
   to the server", TLS or class-loading complaints land). Headed with the server, version, Java and main
   class — never the command line, which carries the auto-login credentials. The newest 20 are kept.
 
+## Port-forwards (tunnels)
+
+A connection's **Tunnel** field names a command the launcher runs *before* launching, with the
+user's own tools and environment — typically a batch file that starts an AWS SSM port-forwarding
+session (`aws ssm start-session … --document-name AWS-StartPortForwardingSession …`), or an
+`ssh -N -L …`. The address's **port is the local end of the forward** (`https://localhost:31065`), so
+it must be explicit; it is what the Administrator shows on its login screen.
+
+On Launch: if the port is already listening (a tunnel opened by hand, or by a previous launch whose
+Administrator is still running) the command is not run and nothing is closed afterwards. Otherwise the
+command runs (`cmd.exe /c …` on Windows, `/bin/sh -c …` elsewhere; a bare path to a file runs in that
+file's folder), the launcher waits up to 60 s for the port — the Launch button reads *Opening tunnel…*
+— then fetches and launches as usual. The tunnel is held while Administrators launched through it run
+and torn down (the command and everything it spawned) when the last one exits, or when the launcher
+closes. The command's output goes to `logs/client/<connection>-<stamp>-tunnel.log`; a tunnel that
+fails reports the command's exit code and the log's last lines in the launch failure.
+
+The tunnel command is local config like the Java home: it is exported with the connection but **never
+imported** from a file (a file from elsewhere must not be able to plant a command the launcher would
+run; `audit.log` records `import.tunnelCommand … NOT_IMPORTED`). Set it by hand on each machine.
+
 ## Testing a connection (diagnostic)
 
 Before launching (or to triage a failure), run the **Test connection** diagnostic — the `Connect` button
@@ -189,7 +210,7 @@ What it does:
 - **Connection form** — mode radio (Standard host+port; Localhost/port-forward = port only; Custom = full
   URL), each with an **https/http scheme choice** (https default; plain http is allowed for servers like an
   OIE appliance on `http://localhost:8080` and is flagged "NO TLS" on the row/form/diagnosis), icon picker, Java runtime
-  (Automatic/Bundled[8|17]/Custom path), JavaFX home, max heap, show-console, SSL protocols/ciphers
+  (Automatic/Bundled[8|17]/Custom path), a tunnel command (see *Port-forwards*), JavaFX home, max heap, show-console, SSL protocols/ciphers
   (Default/Custom), legacy-DH toggle, optional pinned-cert SHA-256, and optional username/password that
   are written **only to the OS keychain** (never to `connections.json`). New / Save / Save As / Delete.
 - **Import / Export** — Import auto-detects the format by JSON root node (a top-level **array** is a legacy

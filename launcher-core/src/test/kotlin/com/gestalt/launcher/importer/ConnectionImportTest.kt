@@ -179,6 +179,17 @@ class ConnectionImportTest {
     }
 
     @Test
+    @DisplayName("a tunnel command in an imported file is dropped — a file from elsewhere must not plant a command the launcher would run")
+    fun neverImportsTunnelCommand() {
+        val own = """{"version":1,"connections":[{"id":"x","name":"Forwarded","serverUrl":"https://localhost:31065","tunnelCommand":"C:\\\\tools\\\\evil.bat"}]}"""
+        val fromOwn = ConnectionImport.parse(own).single()
+        assertEquals(null, fromOwn.tunnelCommand)
+        assertFalse(fromOwn.hasTunnel)
+        val bare = """{"id":"x","name":"Forwarded","serverUrl":"https://localhost:31065","tunnelCommand":"evil.bat"}"""
+        assertEquals(null, ConnectionImport.parseSingleEntry(bare)?.tunnelCommand)
+    }
+
+    @Test
     @DisplayName("never imports credentials — no username and no plaintext secret survives")
     fun neverImportsSecrets() {
         val all = parsed()

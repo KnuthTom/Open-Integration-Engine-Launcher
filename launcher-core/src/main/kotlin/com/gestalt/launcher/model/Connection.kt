@@ -67,8 +67,19 @@ data class Connection(
     val addedAt: String? = null,
     val lastLaunchedAt: String? = null,
     val uiScale: String? = null,
+    /**
+     * A command the launcher runs before launching to open the address's port — a port-forward: a
+     * batch file that starts an AWS SSM port-forwarding session, an `ssh -L`, anything that makes the
+     * address's host:port listen. The launcher waits for the port, launches, and tears the command (and
+     * what it spawned) down when the last Administrator launched through it exits. Trusted local config
+     * like [javaHome]; never imported from a connection file. Null: no tunnel.
+     */
+    val tunnelCommand: String? = null,
 ) {
     val isPinned: Boolean get() = !pinnedCertSha256.isNullOrBlank()
+
+    /** True when this connection opens a port-forward before launching. */
+    val hasTunnel: Boolean get() = !tunnelCommand.isNullOrBlank()
 
     /** `host:port` for trust-store bookkeeping (port defaults to 443 for https / 80 for http); null if unparseable. */
     val hostPort: String? get() = runCatching {

@@ -32,6 +32,10 @@ trust path — without you hand-managing Java Web Start, keystores, or JVM flags
 - **TLS that fits the field** — full chain + hostname verification for public-CA servers; exact
   server-leaf certificate **pinning** (trust-on-first-use) for self-signed engines and SSH/SSM
   tunnels, with a re-pin prompt when a server's certificate rotates.
+- **Port-forwards opened for you** — a connection can name a tunnel command (a batch file that
+  starts an AWS SSM port-forwarding session, an `ssh -L`, …); the launcher runs it before launching,
+  waits for the address's port, and closes it when the Administrator exits. Your own tools, your own
+  config — nothing is bundled.
 - **Bundled client runtimes** — launches the Administrator on a bundled Zulu FX **JRE 8 or 17**
   (JavaFX included, which the Administrator needs), chosen by the server's version or per
   connection, so you don't need a system Java.

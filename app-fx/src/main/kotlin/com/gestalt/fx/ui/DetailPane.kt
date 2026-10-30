@@ -32,6 +32,7 @@ import javafx.scene.layout.Region
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.stage.DirectoryChooser
+import javafx.stage.FileChooser
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -73,6 +74,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
     // connection card
     private val addressField = TextField().apply { styleClass += "mono-field"; promptText = "https://host:8443" }
+    private val tunnelField = TextField().apply { styleClass += "mono-field"; promptText = "None — or a batch file / command that opens the address's port" }
+    private val browseTunnel = Controls.button("Browse…") { browseFileInto(tunnelField) { path -> update { it.copy(tunnelCommand = path) } } }
+    private val tunnelNote = Label("Runs before each launch when the port isn't already listening (e.g. a batch file that starts an SSM port-forward); closed when the Administrator exits.").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
     private val folderButton: MenuButton = Controls.menuButton("Top level", Icons.glyph("folder", 14.0)) { folderMenuItems() }
 
     // java card
@@ -142,11 +146,18 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         header.alignment = Pos.CENTER_LEFT
 
         // --- cards ---
+        val tunnelRow = VBox(
+            4.0,
+            HBox(8.0, tunnelField, browseTunnel).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(tunnelField, Priority.ALWAYS); tunnelField.minWidth = 0.0 },
+            tunnelNote,
+        ).apply { minWidth = 0.0 }
         val connectionCard = Controls.card("Connection", Controls.fieldGrid().apply {
             row(0, "Address", addressField)
             row(1, "Folder", HBox(folderButton).apply { alignment = Pos.CENTER_LEFT })
+            row(2, "Tunnel", tunnelRow)
         })
         addressField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(serverUrl = v.orEmpty()) } }
+        tunnelField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(tunnelCommand = v?.trim()?.takeIf { s -> s.isNotEmpty() }) } }
 
         val javaRow = HBox(8.0, javaButton, javaNote, customJavaField, browseJava).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(customJavaField, Priority.ALWAYS); customJavaField.minWidth = 0.0 }
         val fxRow = HBox(8.0, javaFxField, browseFx).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(javaFxField, Priority.ALWAYS); javaFxField.minWidth = 0.0 }
@@ -249,6 +260,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             pathLabel.text = model.pathOf(d.folderId)
             lastLabel.text = TreeRows.launchedLabel(d.lastLaunchedAt)
             if (addressField.text != d.serverUrl) addressField.text = d.serverUrl
+            val tunnel = d.tunnelCommand.orEmpty()
+            if (tunnelField.text.orEmpty().trim() != tunnel) tunnelField.text = tunnel
             folderButton.setCaption(model.pathOf(d.folderId))
             // Menus are rebuilt when they open; seed them here too so the first click never finds them empty.
             folderButton.items.setAll(folderMenuItems())
@@ -351,7 +364,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val inFlight = state?.inFlight == true
         launchButton.isDisable = inFlight
         val text = when {
-            inFlight -> when (state?.phase) { LaunchPhase.Verifying -> "Verifying…"; LaunchPhase.Launching -> "Starting…"; else -> "Launching…" }
+            inFlight -> when (state?.phase) { LaunchPhase.Tunneling -> "Opening tunnel…"; LaunchPhase.Verifying -> "Verifying…"; LaunchPhase.Launching -> "Starting…"; else -> "Launching…" }
             state?.phase == LaunchPhase.Running && state.instances > 1 -> "Launch (${state.instances} running)"
             else -> "Launch"
         }
@@ -406,6 +419,22 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             Controls.menuSeparator(),
             Controls.menuItem("Custom path…", checked = jh.mode == JavaHomeMode.Custom) { update { it.copy(javaHome = it.javaHome.copy(mode = JavaHomeMode.Custom)) } },
         )
+    }
+
+    /** Pick a script or program for the tunnel command (the current text, when it is a file, seeds the chooser). */
+    private fun browseFileInto(field: TextField, apply: (String) -> Unit) {
+        val chooser = FileChooser().apply {
+            title = "Choose the tunnel script"
+            extensionFilters.setAll(
+                FileChooser.ExtensionFilter("Scripts and programs", "*.bat", "*.cmd", "*.ps1", "*.sh", "*.exe"),
+                FileChooser.ExtensionFilter("All files", "*.*"),
+            )
+            field.text?.trim()?.trim('"')?.takeIf { it.isNotBlank() }?.let { File(it) }?.let { f ->
+                if (f.isFile) { initialDirectory = f.parentFile; initialFileName = f.name } else if (f.isDirectory) initialDirectory = f
+            }
+        }
+        val file = chooser.showOpenDialog(scene?.window) ?: return
+        apply(file.absolutePath)
     }
 
     private fun browseInto(field: TextField, apply: (String) -> Unit) {

@@ -559,9 +559,10 @@ private fun OverflowItem(label: String, icon: ChromeIcon, danger: Boolean = fals
 private fun RowStatus(appState: AppState, conn: Connection) {
     val launch: LaunchView? = appState.launches[conn.id]
     when (launch?.phase) {
-        LaunchPhase.Downloading, LaunchPhase.Verifying, LaunchPhase.Launching -> {
+        LaunchPhase.Tunneling, LaunchPhase.Downloading, LaunchPhase.Verifying, LaunchPhase.Launching -> {
             // In flight: click to cancel (takes effect at the next download boundary; nothing is spawned).
             val label = when (launch.phase) {
+                LaunchPhase.Tunneling -> "Opening tunnel…"
                 LaunchPhase.Downloading -> "Downloading…"
                 LaunchPhase.Verifying -> "Verifying…"
                 else -> "Launching…"

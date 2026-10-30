@@ -6,6 +6,7 @@
 
 package com.gestalt.launcher.launch
 
+import com.gestalt.launcher.model.Connection
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -54,6 +55,31 @@ internal object ClientLog {
         }.getOrNull()
 
     /**
+     * The log for a connection's tunnel command: `<name>-<stamp>-tunnel.log` beside the client logs,
+     * headed with the command (the user's own local config). Null when the directory can't be written —
+     * the command then runs with its output discarded rather than not at all.
+     */
+    fun openTunnel(dir: Path, connection: Connection, command: String, now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): Path? =
+        runCatching {
+            Files.createDirectories(dir)
+            val file = freshFile(dir, "${stemOf(connection)}-${STAMP.withZone(zone).format(now)}-tunnel")
+            Files.write(
+                file,
+                listOf(
+                    "# Tunnel command output — ${connection.name}",
+                    "# started: $now",
+                    "# address: ${connection.serverUrl}",
+                    "# command: $command",
+                    "",
+                ),
+                Charsets.UTF_8,
+                StandardOpenOption.WRITE, StandardOpenOption.APPEND,
+            )
+            prune(dir, KEEP, keepAlso = file)
+            file
+        }.getOrNull()
+
+    /**
      * The JVM options of the command — everything between the java binary and `-cp` (`-Xmx`, `-D…`,
      * `--add-opens`). Never the application arguments after the main class, which carry the
      * auto-login credentials.
@@ -62,8 +88,10 @@ internal object ClientLog {
         plan.command.drop(1).takeWhile { it != "-cp" && it != "-classpath" }
 
     /** The connection's name as a file-name stem (its id when the name has nothing usable). */
-    internal fun stem(plan: LaunchPlan): String =
-        plan.connection.name.replace(UNSAFE, "_").trim('_').take(40).ifBlank { plan.connection.id.replace(UNSAFE, "_").take(12) }
+    internal fun stem(plan: LaunchPlan): String = stemOf(plan.connection)
+
+    private fun stemOf(connection: Connection): String =
+        connection.name.replace(UNSAFE, "_").trim('_').take(40).ifBlank { connection.id.replace(UNSAFE, "_").take(12) }
 
     /** `<base>.log`, or `<base>-2.log`, `-3`… when a launch in the same second already took it. */
     private fun freshFile(dir: Path, base: String): Path {

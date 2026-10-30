@@ -91,7 +91,7 @@ data class LaunchView(
     val instances: Int = 0,
 ) {
     /** True while a launch is being prepared (download / verify / spawn) and can still be cancelled. */
-    val inFlight: Boolean get() = phase == LaunchPhase.Downloading || phase == LaunchPhase.Verifying || phase == LaunchPhase.Launching
+    val inFlight: Boolean get() = phase == LaunchPhase.Tunneling || phase == LaunchPhase.Downloading || phase == LaunchPhase.Verifying || phase == LaunchPhase.Launching
 }
 
 /** Best-effort environment hint inferred from a connection's name/group. */

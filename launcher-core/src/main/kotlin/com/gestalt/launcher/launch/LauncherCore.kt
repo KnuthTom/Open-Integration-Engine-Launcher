@@ -26,6 +26,7 @@ import com.gestalt.launcher.tls.HttpClientFactory
 import com.gestalt.launcher.tls.ServerCertProbe
 import com.gestalt.launcher.tls.ServerTrustFailure
 import com.gestalt.launcher.tls.TrustedCertStore
+import com.gestalt.launcher.tunnel.TunnelManager
 import com.gestalt.trust.TrustMode
 import com.gestalt.trust.TrustStore
 import java.net.URI
@@ -64,8 +65,9 @@ class PublisherReviewRequiredException(val signer: X509Certificate, val artifact
 /**
  * Coarse, observational launch phases for UI progress. Purely informational — emitting them does not
  * change any verification logic or control flow (the pipeline stays fail-closed regardless).
+ * [Tunneling] is reported only when the connection's port-forward command has to be run first.
  */
-enum class LaunchPhase { Downloading, Verifying, Launching, Running, Failed }
+enum class LaunchPhase { Tunneling, Downloading, Verifying, Launching, Running, Failed }
 
 /** The result of preparing a launch: the verified jars and the exact child-JVM command to run. */
 data class LaunchPlan(
@@ -145,6 +147,8 @@ open class LauncherCore(
     private val parallelism: Int = DEFAULT_PARALLELISM,
     /** Where each launched client's console output is kept (see [ClientLog]). */
     private val clientLogDir: Path = AppPaths.logDir.resolve("client"),
+    /** Opens a connection's port-forward before the launch and closes it after the Administrator exits. */
+    private val tunnels: TunnelManager = TunnelManager.shared,
 ) {
     /**
      * Verify everything and produce the launch plan. Does NOT spawn the process.
@@ -272,25 +276,35 @@ open class LauncherCore(
      * The child's stdout/stderr go to a per-launch file under the client log directory ([ClientLog]) —
      * the Administrator reports its own failures there, and a windowless launcher has no console to show
      * them on. Only if that file can't be created does the child inherit the launcher's console.
+     *
+     * A connection with a tunnel command has its port-forward opened first ([TunnelManager]) and held
+     * until the Administrator exits; a launch that fails after opening it releases it at once.
      */
     open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}, autoLogin: AutoLogin? = null): Process {
         try {
-            val plan = prepareLaunch(connection, onPhase)
-            checkNotCancelled()
-            onPhase(LaunchPhase.Launching)
-            val builder = ProcessBuilder(commandWithLogin(plan, autoLogin))
-            val log = ClientLog.open(clientLogDir, plan)
-            if (log != null) {
-                builder.redirectInput(ProcessBuilder.Redirect.INHERIT)
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
-                AuditLog.event("child.log", "connection" to connection.id, "path" to log.toString())
-            } else {
-                builder.inheritIO()
+            val lease = tunnels.acquire(connection) { onPhase(LaunchPhase.Tunneling) }
+            try {
+                val plan = prepareLaunch(connection, onPhase)
+                checkNotCancelled()
+                onPhase(LaunchPhase.Launching)
+                val builder = ProcessBuilder(commandWithLogin(plan, autoLogin))
+                val log = ClientLog.open(clientLogDir, plan)
+                if (log != null) {
+                    builder.redirectInput(ProcessBuilder.Redirect.INHERIT)
+                        .redirectErrorStream(true)
+                        .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
+                    AuditLog.event("child.log", "connection" to connection.id, "path" to log.toString())
+                } else {
+                    builder.inheritIO()
+                }
+                val process = builder.start()
+                if (lease != null) process.onExit().thenRun { runCatching { lease.close() } }
+                onPhase(LaunchPhase.Running)
+                return process
+            } catch (t: Throwable) {
+                lease?.close()
+                throw t
             }
-            val process = builder.start()
-            onPhase(LaunchPhase.Running)
-            return process
         } finally {
             autoLogin?.password?.fill('\u0000')
         }

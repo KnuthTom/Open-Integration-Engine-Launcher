@@ -79,6 +79,12 @@ runs headlessly in tests without real networking or spawning a process.
 - **Client output** — the spawned Administrator's stdout/stderr go to `logs/client/<connection>-<stamp>.log`
   (newest 20 kept; header without the command line), so a login that fails inside the client is
   diagnosable from a windowless launcher.
+- **Tunnels** — `TunnelManager` opens a connection's port-forward before the launch (its *tunnel
+  command*, run through the platform shell with the user's own environment), waits for the address's
+  port, and holds the process per connection with a lease count: shared by concurrent launches of the
+  same connection, torn down — the whole process tree — when the last Administrator exits or the
+  launcher closes. A port that is already listening is used as-is and never torn down. The command is
+  trusted local config and is dropped on import.
 - **Loopback address family** — `localhost` is two addresses and a port-forward listens on one of them.
   The launcher's own fetches fall back across both and record which answered
   (`ArtifactFetcher.lastRemoteAddress`); the child JVM is then pinned to that family

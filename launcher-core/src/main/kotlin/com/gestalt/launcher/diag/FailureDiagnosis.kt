@@ -50,6 +50,8 @@ enum class FailureKind {
     HostUnreachable,
     JnlpInvalid,
     JavaRuntimeMissing,
+    /** The connection's tunnel command didn't bring the address's port up. */
+    TunnelFailed,
     Unknown,
 }
 
@@ -87,6 +89,12 @@ object FailureDiagnosis {
 
         fun anyType(vararg names: String) = types.any { t -> names.any { t.contains(it) } }
         fun msg(vararg subs: String) = subs.any { lower.contains(it) }
+
+        // 0. The port-forward didn't come up. Its message carries the command's own output, which would
+        //    otherwise trip the connect / runtime keyword rules below about the wrong thing.
+        if (anyType("TunnelFailedException")) {
+            return tunnelFailed(text)
+        }
 
         // 1. Our own controlled abort (verification + URL-policy failures). Branch on the message the
         //    pipeline already composed — these are the deliberate fail-closed stops.
@@ -212,6 +220,16 @@ object FailureDiagnosis {
             "The launch was stopped before any code ran.\n" + detail.substringAfter("publisher needs review before launching: ").substringBefore(" | "),
         nextStep = "If you recognise the publisher, trust it and launch again. Trust is per signing certificate and is audited.",
         actions = listOf(FixAction.TrustPublisher, FixAction.ReviewTrustPosture, FixAction.ViewLogs),
+    )
+
+    private fun tunnelFailed(text: String) = Diagnosis(
+        kind = FailureKind.TunnelFailed,
+        title = "The tunnel didn't open",
+        explanation = "This connection's tunnel command ran, but the address's port never started listening. " +
+            text.substringAfter(": ", text).trim().take(400),
+        nextStep = "Check the tunnel command and its log (logs/client/…-tunnel.log): the AWS/SSH session may " +
+            "need you to sign in first, or the local port in the address may not match the forward.",
+        actions = listOf(FixAction.EditConnection, FixAction.ViewLogs),
     )
 
     private fun hostUnreachable(target: String) = Diagnosis(

@@ -60,6 +60,19 @@ class ClientLogTest {
     }
 
     @Test
+    @DisplayName("the tunnel log sits beside the client logs, named -tunnel, headed with the command")
+    fun tunnelLog(@TempDir dir: Path) {
+        val at = Instant.parse("2026-10-30T14:32:05Z")
+        val conn = Connection(id = "c1", name = "Example Lab", serverUrl = "https://localhost:31065", tunnelCommand = "C:\\tools\\forward.bat")
+        val file = ClientLog.openTunnel(dir, conn, conn.tunnelCommand!!, at, ZoneOffset.UTC)
+        assertNotNull(file)
+        assertEquals("Example_Lab-20261030-143205-tunnel.log", file!!.fileName.toString())
+        val text = Files.readString(file)
+        assertTrue(text.contains("# command: C:\\tools\\forward.bat")) { text }
+        assertTrue(text.contains("# address: https://localhost:31065")) { text }
+    }
+
+    @Test
     @DisplayName("two launches in the same second get distinct files")
     fun sameSecondDoesNotCollide(@TempDir dir: Path) {
         val at = Instant.parse("2026-10-30T14:32:05Z")

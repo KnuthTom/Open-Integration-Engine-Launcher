@@ -399,6 +399,8 @@ class ConnectionStore(
             "folderId", "addedAt", "lastLaunchedAt",
             // The Administrator's display scale (a number as text, non-secret):
             "uiScale",
+            // The port-forward command run before launch (the user's own local config, non-secret):
+            "tunnelCommand",
         )
 
         // Nested config objects are also allow-listed one level deep, so a secret cannot be smuggled

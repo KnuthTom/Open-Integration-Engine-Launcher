@@ -109,7 +109,7 @@ object ConnectionImport {
         // A bare Gestalt connection object carries serverUrl; a legacy entry carries address.
         return if (root["serverUrl"] != null) {
             runCatching { lenient.decodeFromString<Connection>(trimmed) }.getOrNull()
-                ?.copy(username = null) // never adopt a pasted credential association
+                ?.copy(username = null, tunnelCommand = null) // never adopt a pasted credential association, nor a command to run
         } else {
             runCatching { parseLegacy("[$trimmed]", idGenerator).firstOrNull() }.getOrNull()
         }
@@ -121,11 +121,15 @@ object ConnectionImport {
 
     // Our own export format. Ids are regenerated on import (see import), so a username would be a
     // dangling keychain reference — drop it like the legacy path does; and never let `user:pw@` userinfo
-    // from a hand-edited file into the store.
+    // from a hand-edited file into the store. A tunnel command is a command line the launcher would
+    // run on Launch: a file from elsewhere must not be able to plant one, so it is dropped too (audited)
+    // and set by hand on this machine.
     private fun parseGestalt(text: String): Parsed {
         val file = lenient.decodeFromString<GestaltFile>(text)
+        val withTunnel = file.connections.count { it.hasTunnel }
+        if (withTunnel > 0) AuditLog.event("import.tunnelCommand", "dropped" to withTunnel, "result" to "NOT_IMPORTED")
         return Parsed(
-            file.connections.map { it.copy(username = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl)) },
+            file.connections.map { it.copy(username = null, tunnelCommand = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl)) },
             file.folders,
         )
     }

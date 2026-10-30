@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit
 /** A connection's launch, as the sidebar and the Launch button show it. */
 data class LaunchState(val phase: LaunchPhase, val instances: Int = 0, val message: String? = null) {
     /** Preparing: downloading / verifying / spawning. The Launch button waits and the row offers cancel. */
-    val inFlight: Boolean get() = phase == LaunchPhase.Downloading || phase == LaunchPhase.Verifying || phase == LaunchPhase.Launching
+    val inFlight: Boolean get() = phase == LaunchPhase.Tunneling || phase == LaunchPhase.Downloading || phase == LaunchPhase.Verifying || phase == LaunchPhase.Launching
 }
 
 /**
@@ -566,6 +566,9 @@ class LauncherModel(
         flushPendingSave()
         launchController.shutdown()
         persistExecutor.shutdownNow()
+        // Port-forwards the launcher opened die with it (off the UI thread: a teardown may wait a few
+        // seconds per tunnel; the JVM shutdown hook is the backstop). Running Administrators keep their sockets.
+        Thread({ runCatching { com.gestalt.launcher.tunnel.TunnelManager.shared.closeAll() } }, "tunnel-close").apply { isDaemon = true }.start()
     }
 
     private fun freshId(): String {
