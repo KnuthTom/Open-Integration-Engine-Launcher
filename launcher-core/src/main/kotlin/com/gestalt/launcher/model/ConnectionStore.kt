@@ -21,15 +21,18 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.time.Instant
+import java.util.UUID
 
 @Serializable
 private data class ConnectionsFile(
     val version: Int = ConnectionStore.SCHEMA_VERSION,
     val connections: List<Connection> = emptyList(),
+    val folders: List<Folder> = emptyList(),
 )
 
 /**
- * Persists the list of [Connection]s to `connections.json` — **non-secret fields only**.
+ * Persists the [Connection]s and their [Folder] tree to `connections.json` — **non-secret fields only**.
  *
  * Every save runs a [secretScan]: if the serialized JSON ever contains a credential-looking key the
  * save aborts, so a future change that accidentally adds a secret field to [Connection] fails loudly
@@ -52,6 +55,8 @@ class ConnectionStore(
 
     private val lock = Any()
     private val connections = LinkedHashMap<String, Connection>()
+    private val folders = LinkedHashMap<String, Folder>()
+    private val clock: () -> Instant = { Instant.now() }
 
     /**
      * Schema version the file on disk declared when loaded. When it is NEWER than [SCHEMA_VERSION] the
@@ -76,24 +81,129 @@ class ConnectionStore(
      * on the UI thread while the (slower) disk write is scheduled off-thread + debounced by `AppState`,
      * then committed with an explicit [save].
      */
+    /** Adds [connection], stamping [Connection.addedAt] when unset and placing a legacy `group` in its folder. */
     fun add(connection: Connection, persist: Boolean = true): Connection {
-        synchronized(lock) {
+        val placed = synchronized(lock) {
             require(connection.id !in connections) { "connection already exists: ${connection.id}" }
-            connections[connection.id] = connection
+            val c = placeInFolderLocked(connection).let { if (it.addedAt == null) it.copy(addedAt = clock().toString()) else it }
+            connections[c.id] = c
             if (persist) save()
+            c
         }
-        AuditLog.connectionAdded(connection.id, connection.name, connection.serverUrl)
-        return connection
+        AuditLog.connectionAdded(placed.id, placed.name, placed.serverUrl)
+        return placed
     }
 
     fun update(connection: Connection, persist: Boolean = true): Connection {
         synchronized(lock) {
             require(connection.id in connections) { "no such connection: ${connection.id}" }
+            val folderId = connection.folderId
+            require(folderId == null || folderId in folders) { "no such folder: $folderId" }
             connections[connection.id] = connection
             if (persist) save()
         }
         AuditLog.connectionEdited(connection.id, connection.name, connection.serverUrl)
         return connection
+    }
+
+    /** Record that a launch of [id] started now (the "Last launched" sort and the header line). */
+    fun markLaunched(id: String, at: Instant = clock(), persist: Boolean = true): Connection? = synchronized(lock) {
+        val existing = connections[id] ?: return@synchronized null
+        val updated = existing.copy(lastLaunchedAt = at.toString())
+        connections[id] = updated
+        if (persist) save()
+        updated
+    }
+
+    // --- folders ----------------------------------------------------------------------------------
+
+    fun folders(): List<Folder> = synchronized(lock) { folders.values.toList() }
+
+    fun getFolder(id: String): Folder? = synchronized(lock) { folders[id] }
+
+    fun addFolder(folder: Folder, persist: Boolean = true): Folder {
+        synchronized(lock) {
+            require(folder.id !in folders) { "folder already exists: ${folder.id}" }
+            val parent = folder.parentId
+            require(parent == null || parent in folders) { "no such parent folder: $parent" }
+            folders[folder.id] = folder
+            if (persist) save()
+        }
+        AuditLog.event("folder.add", "id" to folder.id, "name" to folder.name)
+        return folder
+    }
+
+    /** Rename, move, reorder or expand/collapse a folder. A move that would make a cycle is refused. */
+    fun updateFolder(folder: Folder, persist: Boolean = true): Folder {
+        synchronized(lock) {
+            require(folder.id in folders) { "no such folder: ${folder.id}" }
+            val parent = folder.parentId
+            if (parent != null) {
+                require(parent in folders) { "no such parent folder: $parent" }
+                require(parent != folder.id && parent !in descendantFolderIdsLocked(folder.id)) {
+                    "a folder cannot be moved into itself: ${folder.id}"
+                }
+            }
+            folders[folder.id] = folder
+            if (persist) save()
+        }
+        return folder
+    }
+
+    /**
+     * Delete a folder; its connections and subfolders move up to its parent (the design's "Its N
+     * connections and any subfolders move to <parent>"). Nothing but the folder itself is lost.
+     */
+    fun deleteFolder(id: String, persist: Boolean = true) {
+        val removed = synchronized(lock) {
+            val folder = folders.remove(id) ?: return@synchronized false
+            val parent = folder.parentId
+            folders.values.filter { it.parentId == id }.forEach { folders[it.id] = it.copy(parentId = parent) }
+            connections.values.filter { it.folderId == id }.forEach { connections[it.id] = it.copy(folderId = parent) }
+            if (persist) save()
+            true
+        }
+        if (removed) AuditLog.event("folder.delete", "id" to id)
+    }
+
+    /** Every folder below [id] (children, grandchildren, …), not including [id] itself. */
+    fun descendantFolderIds(id: String): Set<String> = synchronized(lock) { descendantFolderIdsLocked(id) }
+
+    private fun descendantFolderIdsLocked(id: String): Set<String> {
+        val out = LinkedHashSet<String>()
+        var frontier = folders.values.filter { it.parentId == id }.map { it.id }
+        while (frontier.isNotEmpty()) {
+            val next = ArrayList<String>()
+            for (f in frontier) if (out.add(f)) next += folders.values.filter { it.parentId == f }.map { it.id }
+            frontier = next
+        }
+        return out
+    }
+
+    /**
+     * A connection that still carries only the legacy flat `group` is placed in a top-level folder of
+     * that name (created on first sight) and the legacy field is consumed, so a later move to the top
+     * level sticks. Idempotent: a connection with a [Connection.folderId] is returned unchanged (or
+     * lifted to the top level if its folder no longer exists).
+     */
+    private fun placeInFolderLocked(c: Connection): Connection {
+        val current = c.folderId
+        if (current != null) return if (current in folders) c else c.copy(folderId = null)
+        val name = c.group?.trim()?.takeIf { it.isNotEmpty() } ?: return c
+        val existing = folders.values.firstOrNull { it.parentId == null && it.name.equals(name, ignoreCase = true) }
+        val folder = existing ?: Folder(
+            id = freshFolderIdLocked(),
+            name = name,
+            parentId = null,
+            sortOrder = folders.values.count { it.parentId == null },
+        ).also { folders[it.id] = it }
+        return c.copy(folderId = folder.id, group = null)
+    }
+
+    private fun freshFolderIdLocked(): String {
+        var id = UUID.randomUUID().toString()
+        while (id in folders) id = UUID.randomUUID().toString()
+        return id
     }
 
     fun delete(id: String, persist: Boolean = true) {
@@ -123,11 +233,19 @@ class ConnectionStore(
         changed
     }
 
-    /** Replace the entire set in one transaction (used by import). Saves once. */
-    fun replaceAll(newConnections: List<Connection>) {
+    /**
+     * Replace the entire set in one transaction (used by import). Saves once. Folders not listed in
+     * [newFolders] are kept — an import adds to the tree, it never prunes it — and a connection that
+     * still carries only a legacy `group` is placed in a folder of that name.
+     */
+    fun replaceAll(newConnections: List<Connection>, newFolders: List<Folder> = emptyList()) {
         synchronized(lock) {
+            newFolders.forEach { folders[it.id] = it }
             connections.clear()
-            newConnections.forEach { connections[it.id] = it }
+            newConnections.forEach { c ->
+                val placed = placeInFolderLocked(c).let { if (it.addedAt == null) it.copy(addedAt = clock().toString()) else it }
+                connections[placed.id] = placed
+            }
             save()
         }
     }
@@ -142,7 +260,14 @@ class ConnectionStore(
         val text = synchronized(lock) {
             val selected = if (ids == null) connections.values else connections.values.filter { it.id in ids }
             val ordered = selected.sortedWith(compareBy({ it.sortOrder }, { it.name.lowercase() }))
-            json.encodeToString(ConnectionsFile(connections = ordered))
+            // The folders those connections live in, with their ancestors, so the tree re-imports intact.
+            val wanted = LinkedHashSet<String>()
+            ordered.forEach { c ->
+                var fid = c.folderId
+                while (fid != null && wanted.add(fid)) fid = folders[fid]?.parentId
+            }
+            val exportedFolders = folders.values.filter { ids == null || it.id in wanted }
+            json.encodeToString(ConnectionsFile(connections = ordered, folders = exportedFolders))
         }
         secretScan(text)
         target.parent?.let { Files.createDirectories(it) }
@@ -164,6 +289,7 @@ class ConnectionStore(
 
     private fun loadLocked() {
         connections.clear()
+        folders.clear()
         sweepStaleTemps()
         val parsed = parseOrNull(file)
             ?: run {
@@ -175,7 +301,11 @@ class ConnectionStore(
             }
         loadedVersion = parsed?.version ?: SCHEMA_VERSION
         newerSchemaPreserved = false
-        parsed?.connections?.forEach { connections[it.id] = it }
+        parsed?.folders?.forEach { folders[it.id] = it }
+        // A folder whose parent is missing (a hand-edited file) is lifted to the top level rather than lost.
+        folders.values.filter { it.parentId != null && it.parentId !in folders }.forEach { folders[it.id] = it.copy(parentId = null) }
+        // Schema 1 rows carry a flat `group`; each becomes a top-level folder on the way in.
+        parsed?.connections?.forEach { connections[it.id] = placeInFolderLocked(it) }
     }
 
     /**
@@ -190,7 +320,7 @@ class ConnectionStore(
     }
 
     private fun saveLocked() {
-        val text = json.encodeToString(ConnectionsFile(connections = connections.values.toList()))
+        val text = json.encodeToString(ConnectionsFile(connections = connections.values.toList(), folders = folders.values.toList()))
         secretScan(text)
         Files.createDirectories(file.parent)
         preserveNewerSchemaOnce()
@@ -239,8 +369,12 @@ class ConnectionStore(
     private fun sibling(suffix: String): Path = file.resolveSibling(file.fileName.toString() + suffix)
 
     companion object {
-        /** Schema version this build writes. Bump when a field is added or its meaning changes. */
-        const val SCHEMA_VERSION = 1
+        /**
+         * Schema version this build writes. Bump when a field is added or its meaning changes.
+         *  1 — flat list with a `group` name per connection.
+         *  2 — `folders` tree; connections carry `folderId`, `addedAt`, `lastLaunchedAt`.
+         */
+        const val SCHEMA_VERSION = 2
 
         private const val TEMP_SUFFIX = ".tmp"
 
@@ -249,7 +383,8 @@ class ConnectionStore(
         // Connection — whatever it is named — cannot silently smuggle a secret into config. A unit test
         // pins these sets to the serializers' descriptors, so adding a field without updating the list
         // fails the build rather than every save at runtime.
-        internal val ALLOWED_TOP_LEVEL = setOf("version", "connections")
+        internal val ALLOWED_TOP_LEVEL = setOf("version", "connections", "folders")
+        internal val ALLOWED_FOLDER_KEYS = setOf("id", "name", "parentId", "sortOrder", "expanded")
         internal val ALLOWED_CONNECTION_KEYS = setOf(
             "id", "name", "serverUrl", "username", "pinnedCertSha256",
             "legacyTlsCompatibility", "webstartPath", "digestPath",
@@ -260,6 +395,8 @@ class ConnectionStore(
             "closeAfterLaunch",
             // Trust-on-first-use auto-approve toggle (a boolean, non-secret):
             "autoApproveCertificates",
+            // Schema 2: the folder tree and the two timestamps (non-secret):
+            "folderId", "addedAt", "lastLaunchedAt",
         )
 
         // Nested config objects are also allow-listed one level deep, so a secret cannot be smuggled
@@ -276,6 +413,13 @@ class ConnectionStore(
             val unknownTop = root.keys - ALLOWED_TOP_LEVEL
             check(unknownTop.isEmpty()) {
                 "refusing to persist unexpected top-level key(s) in connections.json: $unknownTop"
+            }
+            (root["folders"] as? JsonArray)?.forEachIndexed { i, element ->
+                check(element is JsonObject) { "folders[$i] must be a JSON object" }
+                val unknown = element.keys - ALLOWED_FOLDER_KEYS
+                check(unknown.isEmpty()) {
+                    "refusing to persist unexpected field(s) on folders[$i] — possible secret leak: $unknown"
+                }
             }
             val connections = root["connections"] as? JsonArray ?: return
             connections.forEachIndexed { i, element ->

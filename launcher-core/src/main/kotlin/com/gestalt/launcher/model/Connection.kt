@@ -28,6 +28,13 @@ import java.net.URI
  *   "Use Legacy DH Settings" toggle in the form / legacy `useLegacyDHSettings`.)
  * @property icon semantic key into the design-system ConnectionIcons library (stored as a plain string
  *   so this module stays UI-framework-free; the UI resolves it to a glyph and falls back to the default).
+ * @property group LEGACY: the flat group name of the old launcher. The store turns it into a top-level
+ *   [Folder] and sets [folderId]; new code reads [folderId] only.
+ * @property folderId the [Folder] this connection sits in; null = top level.
+ * @property addedAt ISO-8601 instant the connection was created (stamped by the store on add); the
+ *   "Date added" sort. Null for rows that predate the field — sorted as oldest.
+ * @property lastLaunchedAt ISO-8601 instant of the last launch this launcher started for it; the
+ *   "Last launched" sort and the header's "Launched 12 min ago". Null = never launched from here.
  */
 @Serializable
 data class Connection(
@@ -53,6 +60,9 @@ data class Connection(
     /** Per-connection override of the global close-after-launch setting (defaults to inheriting it). */
     val closeAfterLaunch: CloseAfterLaunch = CloseAfterLaunch.Inherit,
     val autoApproveCertificates: Boolean = false,
+    val folderId: String? = null,
+    val addedAt: String? = null,
+    val lastLaunchedAt: String? = null,
 ) {
     val isPinned: Boolean get() = !pinnedCertSha256.isNullOrBlank()
 

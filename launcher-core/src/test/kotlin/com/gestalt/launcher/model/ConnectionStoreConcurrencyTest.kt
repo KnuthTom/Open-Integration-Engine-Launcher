@@ -119,6 +119,9 @@ class ConnectionStoreConcurrencyTest {
         assertEquals(names(Connection.serializer().descriptor), ConnectionStore.ALLOWED_CONNECTION_KEYS) {
             "ALLOWED_CONNECTION_KEYS must list exactly the fields of Connection — update both together"
         }
+        assertEquals(names(Folder.serializer().descriptor), ConnectionStore.ALLOWED_FOLDER_KEYS) {
+            "ALLOWED_FOLDER_KEYS must list exactly the fields of Folder — update both together"
+        }
         assertEquals(names(JavaHomeConfig.serializer().descriptor), ConnectionStore.ALLOWED_NESTED_KEYS.getValue("javaHome"))
         assertEquals(names(SslOption.serializer().descriptor), ConnectionStore.ALLOWED_NESTED_KEYS.getValue("sslProtocols"))
         assertEquals(names(SslOption.serializer().descriptor), ConnectionStore.ALLOWED_NESTED_KEYS.getValue("sslCipherSuites"))

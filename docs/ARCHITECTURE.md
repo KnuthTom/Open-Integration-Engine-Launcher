@@ -75,12 +75,17 @@ runs headlessly in tests without real networking or spawning a process.
 
 ## Connections, storage, import
 
-- `Connection` is the model; `ConnectionStore` persists a list to `connections.json` with an **atomic,
-  crash-safe write** (temp → rename, `.bak` fallback, corrupt-file recovery).
+- `Connection` is the model; `ConnectionStore` persists the connections and their `Folder` tree to
+  `connections.json` (schema 2) with an **atomic, crash-safe write** (temp → rename, `.bak` fallback,
+  corrupt-file recovery). Folders nest (`parentId`), keep a manual order and their expanded state;
+  a connection carries `folderId`, `addedAt` and `lastLaunchedAt` (the sort modes and the header's
+  "Launched … ago"). A schema-1 file's flat `group` becomes a top-level folder on load; deleting a
+  folder lifts its contents to the parent, never drops them.
 - `ConnectionImport` detects format by root node: a top-level JSON **array** is a legacy MCAL export; an
   object with a `connections` array is the launcher's own format. Import regenerates duplicate ids,
   derives connection mode, strips a trailing `/webstart`, maps legacy icon/runtime fields, and **drops
-  credentials**.
+  credentials**. An export carries the folders of the exported connections (with their ancestors);
+  an import brings them back as a fresh subtree at the top level.
 - The shipped app starts with **no connections** — users add their own. (Test fixtures use synthetic
   data only.)
 

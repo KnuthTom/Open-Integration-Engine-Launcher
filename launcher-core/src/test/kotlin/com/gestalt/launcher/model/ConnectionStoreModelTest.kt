@@ -43,9 +43,12 @@ class ConnectionStoreModelTest {
         val file = dir.resolve("connections.json")
         ConnectionStore(file).add(fullConnection())
 
-        // Re-load from disk in a fresh store: the entire model must survive byte-for-byte.
-        val reloaded = ConnectionStore(file).get("c1")
-        assertEquals(fullConnection(), reloaded)
+        // Re-load from disk in a fresh store: the entire model must survive byte-for-byte — bar what the
+        // store itself stamps: the add time, and the legacy `group` consumed into a top-level folder.
+        val reloaded = ConnectionStore(file).get("c1")!!
+        assertEquals(fullConnection().copy(addedAt = reloaded.addedAt, folderId = reloaded.folderId, group = null), reloaded)
+        assertTrue(reloaded.addedAt != null) { "addedAt is stamped on add" }
+        assertEquals("Production", ConnectionStore(file).getFolder(reloaded.folderId!!)!!.name) { "the legacy group became a folder" }
 
         val text = Files.readString(file)
         assertTrue(text.contains("\"version\"")) { "connections.json must be schema-versioned" }

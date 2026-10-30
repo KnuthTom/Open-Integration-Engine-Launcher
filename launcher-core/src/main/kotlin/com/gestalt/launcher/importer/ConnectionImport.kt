@@ -8,6 +8,7 @@ package com.gestalt.launcher.importer
 
 import com.gestalt.launcher.audit.AuditLog
 import com.gestalt.launcher.model.Connection
+import com.gestalt.launcher.model.Folder
 import com.gestalt.launcher.model.ConnectionStore
 import com.gestalt.launcher.model.ConnectionUrl
 import com.gestalt.launcher.model.JavaHomeConfig
@@ -76,8 +77,15 @@ object ConnectionImport {
      * not recognized.
      */
     fun parse(text: String, idGenerator: () -> String = { UUID.randomUUID().toString() }): List<Connection> =
+        parseAll(text, idGenerator).connections
+
+    /** What a file carries: its connections and (our own format only) the folder tree they sit in. */
+    data class Parsed(val connections: List<Connection>, val folders: List<Folder>)
+
+    /** [parse], plus the folders of a Gestalt export. A legacy file has no folders — its `group`s become folders in the store. */
+    fun parseAll(text: String, idGenerator: () -> String = { UUID.randomUUID().toString() }): Parsed =
         when (detectFormat(text)) {
-            SourceFormat.LegacyMcal -> parseLegacy(text, idGenerator)
+            SourceFormat.LegacyMcal -> Parsed(parseLegacy(text, idGenerator), emptyList())
             SourceFormat.Gestalt -> parseGestalt(text)
             SourceFormat.Unknown -> throw IllegalArgumentException("unrecognized connections file format")
         }
@@ -114,13 +122,20 @@ object ConnectionImport {
     // Our own export format. Ids are regenerated on import (see import), so a username would be a
     // dangling keychain reference — drop it like the legacy path does; and never let `user:pw@` userinfo
     // from a hand-edited file into the store.
-    private fun parseGestalt(text: String): List<Connection> =
-        lenient.decodeFromString<GestaltFile>(text).connections.map {
-            it.copy(username = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl))
-        }
+    private fun parseGestalt(text: String): Parsed {
+        val file = lenient.decodeFromString<GestaltFile>(text)
+        return Parsed(
+            file.connections.map { it.copy(username = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl)) },
+            file.folders,
+        )
+    }
 
     @Serializable
-    private data class GestaltFile(val version: Int = 1, val connections: List<Connection> = emptyList())
+    private data class GestaltFile(
+        val version: Int = 1,
+        val connections: List<Connection> = emptyList(),
+        val folders: List<Folder> = emptyList(),
+    )
 
     /**
      * The legacy MCAL element schema — the exact 14 fields the real export carries, all defaulted so a
@@ -220,20 +235,44 @@ object ConnectionImport {
     fun importFile(store: ConnectionStore, path: Path, policy: DedupePolicy = DedupePolicy.Merge): ImportSummary =
         import(store, Files.readString(path), policy)
 
-    /** Parse [text] and merge it into [store] under [policy]; persists once. */
+    /**
+     * Parse [text] and merge it into [store] under [policy]; persists once. The file's folders come
+     * along under fresh ids (a folder is never deduplicated against an existing one — an import adds a
+     * subtree at the top level, so nothing already in the tree is disturbed); an incoming connection
+     * that lands in one keeps that placement, while a connection that matches an existing one keeps the
+     * existing folder.
+     */
     fun import(store: ConnectionStore, text: String, policy: DedupePolicy = DedupePolicy.Merge): ImportSummary {
         val format = detectFormat(text)
-        val incoming = parse(text)
+        val parsed = parseAll(text)
+        val incoming = parsed.connections
         val result = store.list().toMutableList()
         val byKey = HashMap<String, Connection>()
         result.forEach { byKey[dedupeKey(it)] = it }
+
+        // Fresh ids for every imported folder; a parent missing from the file lifts to the top level.
+        val existingFolders = store.folders()
+        val folderIdMap = HashMap<String, String>()
+        parsed.folders.forEach { f -> folderIdMap[f.id] = freshFolderId(existingFolders, folderIdMap.values) }
+        val topLevelBase = existingFolders.count { it.parentId == null }
+        val newFolders = parsed.folders.mapIndexed { i, f ->
+            val parent = f.parentId?.let { folderIdMap[it] }
+            Folder(
+                id = folderIdMap.getValue(f.id),
+                name = f.name.ifBlank { "Folder" },
+                parentId = parent,
+                sortOrder = if (parent == null) topLevelBase + i else f.sortOrder,
+                expanded = f.expanded,
+            )
+        }
+        fun placement(c: Connection): String? = c.folderId?.let { folderIdMap[it] }
 
         var added = 0; var replaced = 0; var merged = 0; var skipped = 0
         for (candidate in incoming) {
             val key = dedupeKey(candidate)
             val match = byKey[key]
             if (match == null) {
-                val placed = candidate.copy(id = freshId(result), sortOrder = result.size)
+                val placed = candidate.copy(id = freshId(result), sortOrder = result.size, folderId = placement(candidate), lastLaunchedAt = null)
                 result += placed
                 byKey[key] = placed
                 added++
@@ -241,7 +280,10 @@ object ConnectionImport {
                 when (policy) {
                     DedupePolicy.Skip -> skipped++
                     DedupePolicy.Replace -> {
-                        val replacement = candidate.copy(id = match.id, sortOrder = match.sortOrder, group = match.group)
+                        val replacement = candidate.copy(
+                            id = match.id, sortOrder = match.sortOrder, group = match.group,
+                            folderId = match.folderId, addedAt = match.addedAt, lastLaunchedAt = match.lastLaunchedAt,
+                        )
                         result[result.indexOfFirst { it.id == match.id }] = replacement
                         byKey[key] = replacement
                         replaced++
@@ -255,10 +297,10 @@ object ConnectionImport {
                 }
             }
         }
-        store.replaceAll(result)
+        store.replaceAll(result, newFolders)
         AuditLog.event(
             "connection.import",
-            "format" to format.name, "incoming" to incoming.size,
+            "format" to format.name, "incoming" to incoming.size, "folders" to newFolders.size,
             "added" to added, "replaced" to replaced, "merged" to merged, "skipped" to skipped,
         )
         return ImportSummary(format, incoming.size, added, replaced, merged, skipped)
@@ -270,6 +312,13 @@ object ConnectionImport {
 
     private fun freshId(existing: List<Connection>): String {
         val taken = existing.mapTo(HashSet()) { it.id }
+        var id = UUID.randomUUID().toString()
+        while (id in taken) id = UUID.randomUUID().toString()
+        return id
+    }
+
+    private fun freshFolderId(existing: List<Folder>, alsoTaken: Collection<String>): String {
+        val taken = existing.mapTo(HashSet()) { it.id } + alsoTaken
         var id = UUID.randomUUID().toString()
         while (id in taken) id = UUID.randomUUID().toString()
         return id
