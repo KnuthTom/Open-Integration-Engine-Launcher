@@ -23,6 +23,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import com.gestalt.launcher.tls.CertTrustStatus
+import com.gestalt.launcher.tls.TrustedCertStore
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.cert.X509Certificate
@@ -35,6 +37,7 @@ class TrustAndSettingsTest {
         prefs = AppPreferences(dir.resolve("prefs.properties")),
         credentials = InMemoryCredentialStore(),
         scope = CoroutineScope(Dispatchers.Unconfined),
+        trustedCerts = TrustedCertStore(dir.resolve("trusted-certs.json")),
     )
 
     private fun sampleCert(): X509Certificate =
@@ -72,25 +75,45 @@ class TrustAndSettingsTest {
     }
 
     @Test
-    @DisplayName("pinning a server cert sets pinnedCertSha256, writes an audit entry, and unpin clears it")
-    fun serverCertPinRoundTrip(@TempDir dir: Path) {
+    @DisplayName("trusting a server cert records it in the trusted-cert store, writes an audit entry, and withdrawing removes it")
+    fun serverCertTrustRoundTrip(@TempDir dir: Path) {
         val state = newState(dir)
         val cert = sampleCert()
         val fp = CertFingerprint.sha256Hex(cert)
         state.upsert(Connection(id = "c1", name = "OIE prod", serverUrl = "https://oie.lab:8443", sortOrder = 0))
 
         state.confirmTrustPin("c1", cert)
-        assertEquals(fp, state.get("c1")!!.pinnedCertSha256)
+        assertEquals(CertTrustStatus.TRUSTED, state.trustedCerts.statusOf(cert))
+        assertTrue(state.trustedCerts.get(fp)!!.connectionIds.contains("c1"))
+        assertNull(state.get("c1")!!.pinnedCertSha256) { "nothing is written onto the connection any more" }
+        assertTrue(state.pinnedConnections.any { it.id == "c1" }) { "the trust screen lists connections with trusted certs" }
 
-        // Audit trail records the pin (servercert.pin + the fingerprint).
+        // Audit trail records the decision (servercert.trust + the fingerprint).
         val audit = AppPaths.logDir.resolve("audit.log")
         assertTrue(Files.isRegularFile(audit)) { "audit.log not written at $audit" }
         val text = Files.readString(audit)
-        assertTrue(text.contains("servercert.pin")) { "no servercert.pin event in audit log" }
-        assertTrue(text.contains(fp)) { "pinned fingerprint not in audit log" }
+        assertTrue(text.contains("servercert.trust")) { "no servercert.trust event in audit log" }
+        assertTrue(text.contains(fp)) { "trusted fingerprint not in audit log" }
 
         state.unpinServerCert("c1")
-        assertNull(state.get("c1")!!.pinnedCertSha256)
+        assertNull(state.trustedCerts.statusOf(cert)) { "withdrawing trust removes the entry this connection introduced" }
+    }
+
+    @Test
+    @DisplayName("a legacy per-connection pin migrates into the trusted-cert store on start-up and the pin is cleared")
+    fun legacyPinMigrates(@TempDir dir: Path) {
+        val cert = sampleCert()
+        val fp = CertFingerprint.sha256Hex(cert)
+        ConnectionStore(dir.resolve("connections.json")).add(
+            Connection(id = "old", name = "Pinned long ago", serverUrl = "https://oie.lab:8443", pinnedCertSha256 = fp),
+        )
+
+        val state = newState(dir)
+
+        assertNull(state.get("old")!!.pinnedCertSha256) { "the legacy pin is cleared" }
+        assertEquals(CertTrustStatus.TRUSTED, state.trustedCerts.get(fp)?.status) { "and now lives in the trusted-cert store" }
+        assertTrue(state.trustedCerts.get(fp)!!.hosts.contains("oie.lab:8443"))
+        assertEquals(CertTrustStatus.TRUSTED, state.trustedCerts.statusOf(cert))
     }
 
     @Test

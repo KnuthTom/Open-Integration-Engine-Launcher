@@ -21,10 +21,10 @@ import com.gestalt.launcher.net.ArtifactFetcher
 import com.gestalt.launcher.net.HttpArtifactFetcher
 import com.gestalt.launcher.net.LocalhostResolver
 import com.gestalt.launcher.model.Connection
-import com.gestalt.launcher.tls.CertFingerprint
 import com.gestalt.launcher.tls.HttpClientFactory
 import com.gestalt.launcher.tls.ServerCertProbe
-import com.gestalt.launcher.tls.ServerTrustStore
+import com.gestalt.launcher.tls.ServerTrustFailure
+import com.gestalt.launcher.tls.TrustedCertStore
 import com.gestalt.trust.TrustMode
 import com.gestalt.trust.TrustStore
 import java.net.URI
@@ -33,7 +33,19 @@ import java.nio.file.Path
 import java.security.cert.X509Certificate
 
 /** Raised whenever any verification step fails. The launch is aborted; nothing is executed. */
-class LaunchAbortedException(message: String) : Exception(message)
+open class LaunchAbortedException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/**
+ * The server presented an https certificate that is neither trusted by the system CAs nor reviewed by
+ * the user, and the connection doesn't auto-approve. The launch stopped before any code ran; [leaf] is
+ * the certificate to show for review (it has been recorded as PENDING in the trusted-certificate store).
+ */
+class ServerCertificateReviewRequiredException(val leaf: X509Certificate, val hostPort: String?, cause: Throwable?) :
+    LaunchAbortedException("server certificate needs review before launching: ${leaf.subjectX500Principal.name}", cause)
+
+/** The server presented a certificate the user has explicitly rejected. */
+class ServerCertificateRejectedException(val leaf: X509Certificate, cause: Throwable?) :
+    LaunchAbortedException("server certificate was rejected by the user: ${leaf.subjectX500Principal.name}", cause)
 
 /**
  * Coarse, observational launch phases for UI progress. Purely informational — emitting them does not
@@ -78,12 +90,14 @@ open class LauncherCore(
     private val gateMode: TrustMode = TrustMode.PIN_KNOWN_SIGNERS,
     private val cacheDir: Path = AppPaths.cacheDir,
     private val commandBuilder: ChildJvmCommandBuilder = ChildJvmCommandBuilder(),
+    /** The user's reviewed server certificates; every https fetch is policed against it. */
+    private val trustedCerts: TrustedCertStore = TrustedCertStore.shared,
     private val fetcherFactory: (Connection) -> ArtifactFetcher = { conn ->
-        HttpArtifactFetcher(HttpClientFactory.forConnection(conn))
+        HttpArtifactFetcher(HttpClientFactory.forConnection(conn, trustedCerts))
     },
     /**
-     * Captures the server leaf for a pinned https connection (the cert handed to the child JVM). Injected
-     * so the pin check + truststore propagation can be tested offline; the default does a real handshake.
+     * Captures the server leaf after a TLS trust failure, so it can be auto-approved or handed to the
+     * user for review. Injected so that path is testable offline; the default does a real handshake.
      */
     private val serverLeafProbe: (Connection) -> X509Certificate = { conn ->
         val uri = conn.baseUri()
@@ -98,15 +112,40 @@ open class LauncherCore(
     /** Sleep between connect retries (injected so the port-forward retry path is testable without waits). */
     private val sleeper: (Long) -> Unit = { if (it > 0) Thread.sleep(it) },
 ) {
-    /** Verify everything and produce the launch plan. Does NOT spawn the process. */
-    fun prepareLaunch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}): LaunchPlan {
+    /**
+     * Verify everything and produce the launch plan. Does NOT spawn the process.
+     *
+     * Server trust: an https certificate the policy doesn't accept surfaces from the first fetch. If the
+     * connection auto-approves, the leaf is captured, trusted (audited as auto-approved) and the whole
+     * preparation is retried once; otherwise the leaf is recorded as PENDING and the launch stops with a
+     * [ServerCertificateReviewRequiredException] for the UI to offer a review. A REJECTED certificate
+     * stops the launch with [ServerCertificateRejectedException].
+     */
+    fun prepareLaunch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}): LaunchPlan =
+        try {
+            prepareLaunchOnce(connection, onPhase)
+        } catch (e: Exception) {
+            when (ServerTrustFailure.kindOf(e)) {
+                null -> throw e
+                ServerTrustFailure.Kind.REJECTED -> throw ServerCertificateRejectedException(serverLeafProbe(connection), e)
+                ServerTrustFailure.Kind.UNKNOWN -> {
+                    val leaf = serverLeafProbe(connection)
+                    if (connection.autoApproveCertificates) {
+                        trustedCerts.trust(leaf, connection.hostPort, connection.id, autoApproved = true)
+                        AuditLog.event("servercert.autoapprove", "connection" to connection.id, "host" to (connection.hostPort ?: "-"))
+                        prepareLaunchOnce(connection, onPhase) // one retry with the certificate now trusted
+                    } else {
+                        trustedCerts.markPending(leaf, connection.hostPort, connection.id)
+                        throw ServerCertificateReviewRequiredException(leaf, connection.hostPort, e)
+                    }
+                }
+            }
+        }
+
+    private fun prepareLaunchOnce(connection: Connection, onPhase: (LaunchPhase) -> Unit): LaunchPlan {
         val fetcher = fetcherFactory(connection)
         try {
             onPhase(LaunchPhase.Downloading)
-            // 0. For a pinned https connection, capture the server leaf up front and fail closed if it
-            //    does not match the pin. This both enforces the pin early and gives us the exact leaf to
-            //    hand to the launched Administrator (which opens its OWN TLS connection to the server).
-            val pinnedLeaf = capturePinnedLeaf(connection)
 
             // 1. JNLP (untrusted): only jars / extensions / main-class / args / version are read from it.
             val jnlpUri = requireSupportedScheme(connection.webstartUri())
@@ -164,19 +203,9 @@ open class LauncherCore(
             // this connection (keeps the cache-reuse speed-up for the current version, no unbounded growth).
             runCatching { pruneOldVersionCaches(connection.id, version) }
 
-            // Propagate the pinned server leaf to the child JVM as a per-connection PKCS12 truststore so
-            // the launched Administrator's own TLS connection to the server also succeeds. Only for a
-            // pinned https connection — a non-pinned (public-CA) server validates normally via the child's
-            // default trust store, so no override is written.
-            val tlsProps = pinnedLeaf?.let { leaf ->
-                val store = ServerTrustStore.write(connection.id, leaf)
-                AuditLog.serverTrustStoreWritten(connection.id, store.toAbsolutePath().toString())
-                mapOf(
-                    "javax.net.ssl.trustStore" to store.toAbsolutePath().toString(),
-                    "javax.net.ssl.trustStorePassword" to ServerTrustStore.PASSWORD,
-                    "javax.net.ssl.trustStoreType" to ServerTrustStore.TYPE,
-                )
-            } ?: emptyMap()
+            // (No per-connection truststore is handed to the child any more: the Administrator does its own
+            // server-trust handling, and overriding javax.net.ssl.trustStore only shrank what else it could
+            // reach. Server trust is enforced here, on the launcher's own fetches.)
 
             // The Mirth client connects back to — and shows on its login screen — the server URL passed as
             // its first application argument. The JNLP carries the server's OWN idea of that URL, which is
@@ -188,7 +217,6 @@ open class LauncherCore(
             val appArgs = rewriteServerUrlArg(connection.serverUrl, jnlp.arguments)
             val command = commandBuilder.build(
                 connection, mainClass, admitted, appArgs,
-                extraSystemProperties = tlsProps,
                 serverJvmArgs = jnlp.untrustedJvmArgs,
             )
             AuditLog.childLaunched(connection.id, mainClass, admitted.size)
@@ -247,29 +275,6 @@ open class LauncherCore(
                 sleeper((250L * attempt).coerceAtMost(2_000L))
             }
         }
-    }
-
-    /**
-     * For a pinned https connection, capture the server's leaf certificate and fail closed if it does not
-     * match the stored pin. Returns the verified leaf (to be written into the child-JVM truststore), or
-     * null when the connection is plain http or unpinned (nothing to propagate — the child uses normal
-     * validation). The launcher's own fetches are pinned independently by [HttpClientFactory]; this is the
-     * authoritative early pin check plus the source of the leaf bytes the child needs.
-     */
-    private fun capturePinnedLeaf(connection: Connection): X509Certificate? {
-        if (!connection.isHttps || !connection.isPinned) return null
-        // isPinned is true here, so a stored pin that does not normalize to a 64-hex value is malformed —
-        // fail closed with a clear message rather than skipping the check (defense-in-depth).
-        val pin = connection.normalizedPin
-            ?: throw LaunchAbortedException("connection is marked pinned but its stored certificate pin is not a valid SHA-256")
-        val leaf = withConnectRetry(connection) { serverLeafProbe(connection) }
-        val actual = CertFingerprint.sha256Hex(leaf)
-        if (actual != pin) {
-            throw LaunchAbortedException(
-                "server certificate does not match the pinned certificate (expected $pin, got $actual)",
-            )
-        }
-        return leaf
     }
 
     /**

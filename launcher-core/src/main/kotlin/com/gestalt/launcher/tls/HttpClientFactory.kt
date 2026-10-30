@@ -23,38 +23,44 @@ import javax.net.ssl.TrustManager
 
 /**
  * Builds the Apache HttpClient 5 clients used for **all** https the launcher performs (JNLP fetch,
- * digest manifest, jar download, and any OCSP/CRL fetch). There are exactly two policies and no
- * trust-all path:
+ * digest manifest, jar download, and any OCSP/CRL fetch). The product path is ONE policy — the
+ * [TrustedOrPkixTrustManager] rule: a user-rejected leaf fails, a user-trusted leaf is accepted by exact
+ * fingerprint, anything else must pass full PKIX validation against the platform trust store plus the
+ * standard hostname check. There is no trust-all path and `NoopHostnameVerifier` is never used.
  *
- *  - **non-pinned** ([standardClient]): full PKIX chain validation against the platform trust store
- *    plus [DefaultHostnameVerifier] hostname verification. No exceptions.
- *  - **pinned** ([pinnedClient]): exact-cert pinning via [PinnedTrustManager] + [PinnedHostnameVerifier].
- *    A hostname mismatch is tolerated only because the exact certificate is cryptographically pinned.
- *
- * `NoopHostnameVerifier` is never used anywhere — not even on the pinned path.
+ * [standardClient] (PKIX only) and [pinnedClient] (exact pin only) remain as the two pure building
+ * blocks, used directly by tests and tooling.
  */
 object HttpClientFactory {
 
     /**
-     * The client for a connection. Server-cert **pinning is a TLS concept and applies only to https** —
-     * a plain-http connection (or an https one without a pin) gets the [standardClient], which performs
-     * no TLS handshake at all for http:// requests (HttpClient 5 chooses transport by URI scheme).
+     * The client for a connection: [trustAwareClient] over the shared [TrustedCertStore] (a legacy
+     * per-connection pin, if one hasn't been migrated yet, counts as trusted). For a plain-http
+     * connection no TLS handshake happens at all (HttpClient 5 chooses transport by URI scheme).
      */
-    fun forConnection(connection: Connection): CloseableHttpClient {
-        val protocols = resolveProtocols(connection)
-        val ciphers = resolveCiphers(connection)
-        return if (shouldPin(connection)) {
-            pinnedClient(connection.normalizedPin!!, protocols, ciphers)
-        } else {
-            standardClient(protocols, ciphers)
-        }
+    fun forConnection(connection: Connection, trustedCerts: TrustedCertStore = TrustedCertStore.shared): CloseableHttpClient {
+        val trusted = trustedCerts.trustedFingerprints() + listOfNotNull(connection.normalizedPin)
+        return trustAwareClient(trusted, trustedCerts.rejectedFingerprints(), resolveProtocols(connection), resolveCiphers(connection))
     }
 
     /**
-     * Pin only when the transport is https AND a *valid* pin is configured (normalizes to 64 hex chars).
-     * A malformed pin (e.g. only separators) is not treated as pinned here — it falls to [standardClient]
-     * (full PKIX), and [com.gestalt.launcher.launch.LauncherCore] additionally fails the launch closed.
+     * The product policy: rejected fingerprints fail, trusted fingerprints pass by exact match (hostname
+     * not consulted), everything else is full PKIX + hostname. Hostname policy is CLIENT because the
+     * TLS layer's own endpoint identification would veto a trusted self-signed leaf on a port-forward;
+     * [TrustedOrDefaultHostnameVerifier] applies the standard check to every non-trusted leaf instead.
      */
+    fun trustAwareClient(
+        trusted: Set<String>,
+        rejected: Set<String>,
+        protocols: Array<String> = MODERN_TLS,
+        ciphers: Array<String>? = null,
+    ): CloseableHttpClient {
+        val ctx = SSLContext.getInstance("TLS")
+        ctx.init(null, arrayOf<TrustManager>(TrustedOrPkixTrustManager(trusted, rejected)), null)
+        return build(ctx, HostnameVerificationPolicy.CLIENT, TrustedOrDefaultHostnameVerifier(trusted), protocols, ciphers)
+    }
+
+    /** True when the connection is https AND carries a (legacy, not yet migrated) 64-hex pin. */
     internal fun shouldPin(connection: Connection): Boolean = connection.isHttps && connection.normalizedPin != null
 
     /**

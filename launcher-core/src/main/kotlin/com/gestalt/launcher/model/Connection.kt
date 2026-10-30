@@ -17,9 +17,12 @@ import java.net.URI
  *
  * @property serverUrl the base URL (`https://host:port`). The legacy launcher called this the address;
  *   [connectionMode] records how it was composed so the form can reopen in the right editor.
- * @property pinnedCertSha256 lowercase hex SHA-256 of the pinned server leaf certificate, or null if
- *   this connection is not pinned. A non-null pin switches TLS to exact-cert matching (which is what
- *   allows the localhost/SSM-tunnel case to work without weakening verification).
+ * @property pinnedCertSha256 LEGACY: lowercase hex SHA-256 of a server leaf certificate pinned under the
+ *   old per-connection trust model. Migrated into the shared trusted-certificate store on start-up
+ *   (`TrustMigration`) and cleared; still honoured as a trusted fingerprint until then.
+ * @property autoApproveCertificates when true, an unknown server certificate this connection meets is
+ *   trusted at once (recorded in the trusted-certificate store as auto-approved) instead of stopping the
+ *   launch for review. Off by default — the "Auto-approve new certificates" checkbox.
  * @property legacyTlsCompatibility opt-in, per-connection. When true the child JVM is allowed weaker
  *   TLS (e.g. `-Djdk.tls.ephemeralDHKeySize=legacy`). Default false = modern TLS only. (This is the
  *   "Use Legacy DH Settings" toggle in the form / legacy `useLegacyDHSettings`.)
@@ -49,8 +52,17 @@ data class Connection(
     val sslCipherSuites: SslOption = SslOption(),
     /** Per-connection override of the global close-after-launch setting (defaults to inheriting it). */
     val closeAfterLaunch: CloseAfterLaunch = CloseAfterLaunch.Inherit,
+    val autoApproveCertificates: Boolean = false,
 ) {
     val isPinned: Boolean get() = !pinnedCertSha256.isNullOrBlank()
+
+    /** `host:port` for trust-store bookkeeping (port defaults to 443 for https / 80 for http); null if unparseable. */
+    val hostPort: String? get() = runCatching {
+        val u = baseUri()
+        val h = u.host ?: return@runCatching null
+        val p = if (u.port > 0) u.port else if (isHttps) 443 else 80
+        "$h:$p"
+    }.getOrNull()
 
     private val scheme: String? get() = runCatching { URI.create(serverUrl).scheme?.lowercase() }.getOrNull()
 

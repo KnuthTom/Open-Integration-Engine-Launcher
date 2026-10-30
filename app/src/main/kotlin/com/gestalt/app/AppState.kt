@@ -36,9 +36,11 @@ import com.gestalt.launcher.model.CloseAfterLaunch
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.ConnectionStore
 import com.gestalt.launcher.model.JavaHomeMode
+import com.gestalt.launcher.tls.CertTrustStatus
 import com.gestalt.launcher.tls.ServerCertPinning
 import com.gestalt.launcher.tls.ServerCertProbe
-import com.gestalt.launcher.tls.ServerTrustStore
+import com.gestalt.launcher.tls.TrustMigration
+import com.gestalt.launcher.tls.TrustedCertStore
 import com.gestalt.launcher.update.PortableSwap
 import com.gestalt.launcher.update.UpdateOutcome
 import com.gestalt.launcher.update.UpdateService
@@ -170,8 +172,10 @@ class AppState(
     private val credentials: CredentialStore,
     private val scope: CoroutineScope,
     private val onRequestClose: () -> Unit = {},
+    /** The user's reviewed server certificates (trust on first use); shared with the launch pipeline. */
+    val trustedCerts: TrustedCertStore = TrustedCertStore.shared,
     private val launcherFactory: (LauncherConfig) -> LauncherCore = { c ->
-        LauncherCore(trustStore = c.trustStore, signerPins = c.signerPins, gateMode = c.mode)
+        LauncherCore(trustStore = c.trustStore, signerPins = c.signerPins, gateMode = c.mode, trustedCerts = trustedCerts)
     },
     private val updateServiceFactory: () -> UpdateService = {
         UpdateService(BuildInfo.version, Platform.osArch(), AppPaths.isPortable)
@@ -367,6 +371,8 @@ class AppState(
 
     init {
         maybeFirstRunImport()
+        // Old per-connection pins become entries in the shared trusted-certificate store (idempotent).
+        runCatching { if (TrustMigration.migrateLegacyPins(store, trustedCerts) > 0) reload() }
     }
 
     // --- theme + prefs ----------------------------------------------------------------------------
@@ -529,7 +535,7 @@ class AppState(
         testing.remove(id)
         lastProbed.remove(id)
         scope.launch(Dispatchers.IO) {
-            runCatching { ServerTrustStore.delete(id) }
+            runCatching { trustedCerts.forgetConnection(id) }
             runCatching { LauncherCore.purgeConnectionCache(id) }
         }
     }
@@ -857,7 +863,12 @@ class AppState(
 
     // --- server-certificate trust (managed trust-on-first-connect) --------------------------------
 
-    val pinnedConnections: List<Connection> get() = connections.filter { it.isPinned }
+    /** Connections that introduced at least one trusted certificate (for the trust screen's server list). */
+    val pinnedConnections: List<Connection>
+        get() {
+            val withTrust = trustedCerts.list().filter { it.status == CertTrustStatus.TRUSTED }.flatMap { it.connectionIds }.toSet()
+            return connections.filter { it.isPinned || it.id in withTrust }
+        }
 
     /** Probe the live server cert and open the trust-pin dialog so a human can review + pin it. */
     fun beginTrustPrompt(id: String) {
@@ -879,20 +890,20 @@ class AppState(
     fun confirmTrustPin(id: String, cert: X509Certificate) {
         val conn = store.get(id) ?: return
         ServerCertPinning.trust(conn, cert) // audit: human reviewed + trusted
-        ServerCertPinning.pin(store, conn, cert, persist = false) // audit: pinned; saved via the single debounced path
-        reload()
-        schedulePersist()
+        ServerCertPinning.pin(store, conn, cert, persist = false, trusted = trustedCerts) // recorded in the trusted-cert store
+        trustNonce++
         dialog = null
-        banner = "Pinned the server certificate for ${conn.name}."
+        banner = "Trusted the server certificate for ${conn.name}."
     }
 
     /** Remove a connection's server-cert pin (audited). */
     fun unpinServerCert(id: String) {
         val conn = store.get(id) ?: return
-        ServerCertPinning.revoke(store, conn, persist = false)
+        ServerCertPinning.revoke(store, conn, persist = false, trusted = trustedCerts)
         reload()
         schedulePersist()
-        banner = "Removed the pinned certificate for ${conn.name}."
+        trustNonce++
+        banner = "Withdrew trust for ${conn.name}'s server certificate."
     }
 
     /** Probe + show the live cert details (read-only), flagging pin-mismatch and expiry. */
@@ -906,7 +917,13 @@ class AppState(
                 .onSuccess { cert ->
                     banner = null
                     val details = CertDetails.from(cert)
-                    val pinMatches = conn.normalizedPin?.let { it == details.fingerprintPlain }
+                    // Enrich a fingerprint-only (migrated) entry now that the real certificate is in hand.
+                    trustedCerts.observed(cert, conn.hostPort, id)
+                    val pinMatches: Boolean? = when (trustedCerts.statusOf(cert)) {
+                        CertTrustStatus.TRUSTED -> true
+                        CertTrustStatus.REJECTED, CertTrustStatus.PENDING -> false
+                        null -> conn.normalizedPin?.let { it == details.fingerprintPlain }
+                    }
                     dialog = AppDialog.CertView(id, conn.name, details, pinMatches)
                 }
                 .onFailure { banner = "Couldn't fetch certificate from $host:$port: ${it.message ?: it.javaClass.simpleName}" }

@@ -258,6 +258,8 @@ class ConnectionStore(
             "heapSize", "showJavaConsole", "sslProtocols", "sslCipherSuites",
             // Per-connection close-after-launch override (an enum, non-secret):
             "closeAfterLaunch",
+            // Trust-on-first-use auto-approve toggle (a boolean, non-secret):
+            "autoApproveCertificates",
         )
 
         // Nested config objects are also allow-listed one level deep, so a secret cannot be smuggled

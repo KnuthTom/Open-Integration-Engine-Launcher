@@ -157,9 +157,9 @@ class MatrixHarnessTest {
             else check(hasModuleFlag, "Java 17 must receive the curated module flag from the JNLP")
 
             // trust: a per-connection truststore is propagated ONLY for a pinned https connection
-            val hasTrustStore = plan.command.any { it.contains("javax.net.ssl.trustStore=") }
-            if (cell.trust == Trust.PINNED) check(hasTrustStore, "pinned https must propagate a truststore to the child")
-            else check(!hasTrustStore, "unpinned/http must NOT write a truststore override")
+            // The child JVM's default trust store is never overridden: the Administrator does its own server
+            // trust, and the launcher's trust decisions police the launcher's own fetches.
+            check(plan.command.none { it.contains("javax.net.ssl.trustStore=") }, "no truststore override may reach the child")
 
             // scheme: modern TLS is set for the child (harmless on http); never downgraded
             check(plan.command.contains("-Dhttps.protocols=TLSv1.2,TLSv1.3"), "modern TLS protocols must be set")

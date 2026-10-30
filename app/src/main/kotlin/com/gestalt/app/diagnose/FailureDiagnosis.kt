@@ -84,6 +84,8 @@ object FailureDiagnosis {
         //    pipeline already composed — these are the deliberate fail-closed stops.
         if (anyType("LaunchAbortedException")) {
             return when {
+                // Trust-on-first-use stop: the server cert is unknown (needs review) or was rejected.
+                msg("certificate needs review", "certificate was rejected") -> serverCertUntrusted(target)
                 // Integrity failures: a digest mismatch, or a signature check that proves the content was
                 // altered after signing (manifest edited, or an entry not covered by the signed manifest).
                 msg("digest mismatch", "altered after signing", "not covered by the signed manifest", "tampered", "integrity") ->
@@ -148,7 +150,7 @@ object FailureDiagnosis {
         title = "Server certificate isn't trusted",
         explanation = "The server at $target presented a certificate that isn't trusted — it may be " +
             "self-signed, or it may have changed since you pinned it. The launch was stopped before any code ran.",
-        nextStep = "Review the certificate's fingerprint and, if you recognize it, pin it to this connection.",
+        nextStep = "Review the certificate's fingerprint and, if you recognize it, trust it (or turn on auto-approve for this connection).",
         actions = listOf(FixAction.ReviewAndPinCert, FixAction.ViewLogs),
     )
 

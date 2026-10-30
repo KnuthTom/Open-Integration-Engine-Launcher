@@ -108,6 +108,34 @@ class HostnameVerificationTest {
     }
 
     @Test
+    @DisplayName("trust-aware client: a trusted fingerprint SUCCEEDS despite the hostname mismatch")
+    fun trustAwareTrustedSucceeds() {
+        val fp = CertFingerprint.sha256Hex(serverCert)
+        HttpClientFactory.trustAwareClient(trusted = setOf(fp), rejected = emptySet()).use { client ->
+            assertEquals(200, client.execute(HttpGet(url())) { it.code })
+        }
+    }
+
+    @Test
+    @DisplayName("trust-aware client: an unknown self-signed cert FAILS and the failure is classified as reviewable")
+    fun trustAwareUnknownIsReviewable() {
+        HttpClientFactory.trustAwareClient(trusted = emptySet(), rejected = emptySet()).use { client ->
+            val ex = assertThrows(Exception::class.java) { client.execute(HttpGet(url())) { it.code } }
+            assertEquals(ServerTrustFailure.Kind.UNKNOWN, ServerTrustFailure.kindOf(ex)) { "cause chain: ${generateSequence(ex as Throwable) { it.cause }.map { it.javaClass.simpleName }.toList()}" }
+        }
+    }
+
+    @Test
+    @DisplayName("trust-aware client: a rejected fingerprint FAILS as rejected")
+    fun trustAwareRejectedFails() {
+        val fp = CertFingerprint.sha256Hex(serverCert)
+        HttpClientFactory.trustAwareClient(trusted = emptySet(), rejected = setOf(fp)).use { client ->
+            val ex = assertThrows(Exception::class.java) { client.execute(HttpGet(url())) { it.code } }
+            assertEquals(ServerTrustFailure.Kind.REJECTED, ServerTrustFailure.kindOf(ex))
+        }
+    }
+
+    @Test
     @DisplayName("a wrong pin FAILS")
     fun wrongPinFails() {
         val wrongPin = "ab".repeat(32) // 64 hex chars, not the server's

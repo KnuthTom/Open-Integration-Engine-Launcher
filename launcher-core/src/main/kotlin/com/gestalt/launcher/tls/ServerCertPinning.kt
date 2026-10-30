@@ -12,35 +12,49 @@ import com.gestalt.launcher.model.ConnectionStore
 import java.security.cert.X509Certificate
 
 /**
- * Pinning a server certificate is a deliberate, audited action. These helpers persist the pin onto a
- * [Connection] and write the corresponding `servercert.*` audit record. Nothing here happens
- * automatically — the caller (UI) invokes it only after a human has reviewed the fingerprint
- * obtained from [ServerCertProbe].
+ * Trusting a server certificate is a deliberate, audited action. These helpers record the decision in
+ * the shared [TrustedCertStore] and write the corresponding `servercert.*` audit record. Nothing here
+ * happens automatically — the caller (UI) invokes it only after a human has reviewed the fingerprint
+ * obtained from [ServerCertProbe] (auto-approve is the launch pipeline's own, separately audited path).
+ *
+ * `pin`/`revoke` keep their names and the [ConnectionStore] parameter for source compatibility with the
+ * old per-connection pin model; they no longer write anything onto the connection.
  */
 object ServerCertPinning {
 
     fun fingerprint(cert: X509Certificate): String = CertFingerprint.sha256Hex(cert)
 
-    /**
-     * [persist] mirrors [ConnectionStore.update]: `true` (default) writes `connections.json` synchronously;
-     * the UI passes `false` and commits through its single debounced save path instead of writing on
-     * the UI thread. The audit record is written either way.
-     */
-    fun pin(store: ConnectionStore, connection: Connection, cert: X509Certificate, persist: Boolean = true): Connection {
-        val fp = fingerprint(cert)
-        val updated = connection.copy(pinnedCertSha256 = fp)
-        store.update(updated, persist)
-        AuditLog.serverCertPinned(hostOf(connection), fp)
-        return updated
+    /** Trust [cert] for [connection] (recorded in the shared store). Returns the connection unchanged. */
+    fun pin(
+        store: ConnectionStore,
+        connection: Connection,
+        cert: X509Certificate,
+        persist: Boolean = true,
+        trusted: TrustedCertStore = TrustedCertStore.shared,
+    ): Connection {
+        trusted.trust(cert, connection.hostPort, connection.id)
+        AuditLog.serverCertPinned(hostOf(connection), fingerprint(cert))
+        return connection
     }
 
     fun trust(connection: Connection, cert: X509Certificate) {
         AuditLog.serverCertTrusted(hostOf(connection), cert.subjectX500Principal.name)
     }
 
-    fun revoke(store: ConnectionStore, connection: Connection, persist: Boolean = true): Connection {
-        val updated = connection.copy(pinnedCertSha256 = null)
-        store.update(updated, persist)
+    /**
+     * Withdraw trust for the certificates this connection introduced: entries no other connection uses
+     * are removed (they will prompt again); shared ones just lose this connection's tag. Also clears a
+     * legacy pin if one is still on the connection.
+     */
+    fun revoke(
+        store: ConnectionStore,
+        connection: Connection,
+        persist: Boolean = true,
+        trusted: TrustedCertStore = TrustedCertStore.shared,
+    ): Connection {
+        trusted.list().filter { connection.id in it.connectionIds && it.connectionIds.size == 1 }.forEach { trusted.remove(it.sha256) }
+        trusted.forgetConnection(connection.id)
+        val updated = if (connection.isPinned) connection.copy(pinnedCertSha256 = null).also { store.update(it, persist) } else connection
         AuditLog.serverCertRevoked(hostOf(connection))
         return updated
     }

@@ -7,6 +7,8 @@
 package com.gestalt.launcher.diag
 
 import com.gestalt.launcher.jnlp.JnlpParser
+import com.gestalt.launcher.tls.CertTrustStatus
+import com.gestalt.launcher.tls.TrustedCertStore
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.net.LocalhostResolver
 import com.gestalt.launcher.tls.CertFingerprint
@@ -42,7 +44,7 @@ enum class TlsFailureClass {
     PKIX_PATH,            // untrusted chain — self-signed / private CA / unable to find valid cert path
     HOSTNAME_MISMATCH,    // chain is fine but the cert name does not match the host
     PROTOCOL_OR_CIPHER,   // handshake_failure / no cipher suites in common / protocol_version
-    PIN_MISMATCH,         // a pin is set but the presented leaf does not match it
+    REJECTED,             // the presented leaf is one the user explicitly rejected
     OTHER;
 
     val label: String
@@ -50,7 +52,7 @@ enum class TlsFailureClass {
             PKIX_PATH -> "untrusted certificate chain (PKIX path)"
             HOSTNAME_MISMATCH -> "hostname mismatch"
             PROTOCOL_OR_CIPHER -> "TLS protocol / cipher mismatch"
-            PIN_MISMATCH -> "pinned-certificate mismatch"
+            REJECTED -> "certificate rejected by the user"
             OTHER -> "transport error"
         }
 }
@@ -146,9 +148,9 @@ data class ConnectionTestReport(
      */
     fun headline(): String = when {
         ok -> "All checks passed"
-        tlsFailure == TlsFailureClass.PKIX_PATH -> "Untrusted self-signed certificate — pin it to trust this server"
-        tlsFailure == TlsFailureClass.HOSTNAME_MISMATCH -> "Certificate name doesn't match the address — pin the cert to proceed"
-        tlsFailure == TlsFailureClass.PIN_MISMATCH -> "The server's certificate doesn't match the one you pinned"
+        tlsFailure == TlsFailureClass.PKIX_PATH -> "Untrusted self-signed certificate — review and trust it to use this server"
+        tlsFailure == TlsFailureClass.HOSTNAME_MISMATCH -> "Certificate name doesn't match the address — review and trust the cert to proceed"
+        tlsFailure == TlsFailureClass.REJECTED -> "The server's certificate is one you rejected"
         tlsFailure == TlsFailureClass.PROTOCOL_OR_CIPHER -> "TLS handshake failed — the server may need legacy protocols/ciphers"
         else -> "Some checks failed"
     }
@@ -187,7 +189,12 @@ data class ConnectionTestReport(
  */
 object ConnectionDiagnostic {
 
-    fun run(connection: Connection, timeoutMs: Int = 8_000, now: Instant = Instant.now()): ConnectionTestReport {
+    fun run(
+        connection: Connection,
+        timeoutMs: Int = 8_000,
+        now: Instant = Instant.now(),
+        trustedCerts: TrustedCertStore = TrustedCertStore.shared,
+    ): ConnectionTestReport {
         // Parse defensively: a malformed serverUrl must yield a clean FAIL report, never a thrown exception
         // (the diagnostic always returns a report — the CLI and UI both rely on that).
         val uri = runCatching { connection.baseUri() }.getOrNull()
@@ -213,7 +220,7 @@ object ConnectionDiagnostic {
             if (tcp.status == CheckStatus.PASS) {
                 // --- 2. TLS handshake + leaf capture + validation (https only) ----------------------
                 if (connection.isHttps) {
-                    val (tlsCheck, capturedLeaf) = checkTls(connection, host, port, timeoutMs)
+                    val (tlsCheck, capturedLeaf) = checkTls(connection, host, port, timeoutMs, trustedCerts)
                     checks += tlsCheck
                     leaf = capturedLeaf
                 } else {
@@ -221,12 +228,12 @@ object ConnectionDiagnostic {
                 }
 
                 // --- 3. JNLP fetch (<baseUrl>/webstart) ---------------------------------------------
-                val (jnlpCheck, body) = runCatching { checkHttp(connection, connection.webstartUri(), "JNLP (/webstart)", timeoutMs) }
+                val (jnlpCheck, body) = runCatching { checkHttp(connection, connection.webstartUri(), "JNLP (/webstart)", timeoutMs, trustedCerts) }
                     .getOrElse { CheckResult("JNLP (/webstart)", CheckStatus.FAIL, "could not run the /webstart request: ${shortMessage(it)}", classify(it)) to null }
                 checks += jnlpCheck
 
                 // --- 4. One digest entry ------------------------------------------------------------
-                checks += checkDigest(connection, body, timeoutMs)
+                checks += checkDigest(connection, body, timeoutMs, trustedCerts)
             }
         } catch (t: Throwable) {
             // The diagnostic must always produce a report; an unexpected failure becomes a FAIL line.
@@ -285,7 +292,7 @@ object ConnectionDiagnostic {
 
     // --- step 2 -------------------------------------------------------------------------------------
 
-    private fun checkTls(connection: Connection, host: String, port: Int, timeoutMs: Int): Pair<CheckResult, LeafCertInfo?> {
+    private fun checkTls(connection: Connection, host: String, port: Int, timeoutMs: Int, trustedCerts: TrustedCertStore): Pair<CheckResult, LeafCertInfo?> {
         val protocols = HttpClientFactory.resolveProtocols(connection)
         val ciphers = HttpClientFactory.resolveCiphers(connection)
 
@@ -309,8 +316,11 @@ object ConnectionDiagnostic {
 
         val systemTrusted = systemTrust(capture.chain)
         val hostnameOk = runCatching { DefaultHostnameVerifier().verify(host, cert) }.isSuccess
-        val pinned = connection.normalizedPin
-        val pinMatches = pinned != null && info.sha256 == pinned
+        // The user's decision for this exact leaf (a not-yet-migrated legacy pin counts as trusted).
+        val decision = trustedCerts.statusOf(cert)
+            ?: if (connection.normalizedPin != null && info.sha256 == connection.normalizedPin) CertTrustStatus.TRUSTED else null
+        val trustedEntry = trustedCerts.get(info.sha256)
+        val expiredNote = if (decision == CertTrustStatus.TRUSTED && trustedEntry?.isExpired() == true) " (EXPIRED — still trusted, review it)" else ""
 
         val detail = buildString {
             appendLine(negotiated)
@@ -320,26 +330,26 @@ object ConnectionDiagnostic {
             appendLine("validity: ${info.notBefore} .. ${info.notAfter}")
             appendLine("trusted by system CAs: ${if (systemTrusted.first) "yes" else "no"}${systemTrusted.second?.let { " ($it)" } ?: ""}")
             appendLine("hostname matches '$host': ${if (hostnameOk) "yes" else "no"}")
-            append("pin: ${if (pinned == null) "none configured" else if (pinMatches) "matches" else "MISMATCH (configured pin != presented leaf)"}")
+            append("your decision: ${when (decision) { CertTrustStatus.TRUSTED -> "trusted$expiredNote"; CertTrustStatus.REJECTED -> "REJECTED"; CertTrustStatus.PENDING -> "awaiting review"; null -> "none yet" }}")
         }.trim()
 
         return when {
-            pinned != null && pinMatches ->
-                CheckResult("TLS handshake", CheckStatus.PASS,
-                    "$detail\nverified by exact-cert pin (hostname verification bypassed by the pin)") to info
-            pinned != null /* && !pinMatches */ ->
+            decision == CertTrustStatus.REJECTED ->
                 CheckResult("TLS handshake", CheckStatus.FAIL,
-                    "$detail\nthe presented certificate does NOT match the stored pin — failing closed", TlsFailureClass.PIN_MISMATCH) to info
+                    "$detail\nyou rejected this certificate — failing closed until that decision is changed", TlsFailureClass.REJECTED) to info
+            decision == CertTrustStatus.TRUSTED ->
+                CheckResult("TLS handshake", if (expiredNote.isEmpty()) CheckStatus.PASS else CheckStatus.WARN,
+                    "$detail\naccepted by your trust decision (exact certificate; hostname verification not applied)$expiredNote") to info
             systemTrusted.first && hostnameOk ->
                 CheckResult("TLS handshake", CheckStatus.PASS,
-                    "$detail\nverified by the system trust store and hostname (no pin needed)") to info
+                    "$detail\nverified by the system trust store and hostname (no decision needed)") to info
             !systemTrusted.first ->
                 CheckResult("TLS handshake", CheckStatus.FAIL,
-                    "$detail\nthe certificate chain is not trusted by the system CAs — review the SHA-256 and pin it to proceed",
+                    "$detail\nthe certificate chain is not trusted by the system CAs — review the SHA-256 and trust it to proceed",
                     TlsFailureClass.PKIX_PATH) to info
             else ->
                 CheckResult("TLS handshake", CheckStatus.FAIL,
-                    "$detail\nthe certificate is trusted but its name does not match '$host' — pin it to accept this exact certificate",
+                    "$detail\nthe certificate is trusted but its name does not match '$host' — trust this exact certificate to proceed",
                     TlsFailureClass.HOSTNAME_MISMATCH) to info
         }
     }
@@ -357,9 +367,9 @@ object ConnectionDiagnostic {
     }
 
     /** Returns the check plus the fetched body bytes (null on failure) so step 4 can read the version. */
-    private fun checkHttp(connection: Connection, uri: java.net.URI, label: String, timeoutMs: Int): Pair<CheckResult, ByteArray?> =
+    private fun checkHttp(connection: Connection, uri: java.net.URI, label: String, timeoutMs: Int, trustedCerts: TrustedCertStore): Pair<CheckResult, ByteArray?> =
         try {
-            HttpClientFactory.forConnection(connection).use { client ->
+            HttpClientFactory.forConnection(connection, trustedCerts).use { client ->
                 client.execute(boundedGet(uri, timeoutMs)) { response ->
                     val code = response.code
                     val bytes = response.entity?.let { EntityUtils.toByteArray(it) } ?: ByteArray(0)
@@ -378,7 +388,7 @@ object ConnectionDiagnostic {
 
     // --- step 4 -------------------------------------------------------------------------------------
 
-    private fun checkDigest(connection: Connection, jnlpBytes: ByteArray?, timeoutMs: Int): CheckResult {
+    private fun checkDigest(connection: Connection, jnlpBytes: ByteArray?, timeoutMs: Int, trustedCerts: TrustedCertStore): CheckResult {
         if (jnlpBytes == null) {
             return CheckResult("Digest entry", CheckStatus.SKIP, "skipped — the JNLP fetch above did not succeed")
         }
@@ -388,7 +398,7 @@ object ConnectionDiagnostic {
         val version = jnlp.version ?: "current"
         val uri = connection.digestUri(version)
         return try {
-            HttpClientFactory.forConnection(connection).use { client ->
+            HttpClientFactory.forConnection(connection, trustedCerts).use { client ->
                 client.execute(boundedGet(uri, timeoutMs)) { response ->
                     val code = response.code
                     val ok = code in 200..299
@@ -445,10 +455,10 @@ object ConnectionDiagnostic {
      * detail is preserved on the check (and in diagnostics.txt); this is only the human-readable summary.
      */
     internal fun plainFor(cls: TlsFailureClass?): String? = when (cls) {
-        TlsFailureClass.PKIX_PATH -> "Untrusted self-signed certificate — pin it to trust this server."
-        TlsFailureClass.HOSTNAME_MISMATCH -> "Certificate name doesn't match the address — pin the cert to proceed."
+        TlsFailureClass.PKIX_PATH -> "Untrusted self-signed certificate — review and trust it to use this server."
+        TlsFailureClass.HOSTNAME_MISMATCH -> "Certificate name doesn't match the address — review and trust the cert to proceed."
         TlsFailureClass.PROTOCOL_OR_CIPHER -> "TLS handshake failed — the server may need legacy protocols/ciphers (Security section)."
-        TlsFailureClass.PIN_MISMATCH -> "The server's certificate doesn't match the one you pinned — failing closed."
+        TlsFailureClass.REJECTED -> "The server's certificate is one you rejected — failing closed."
         TlsFailureClass.OTHER, null -> null
     }
 
@@ -461,7 +471,7 @@ object ConnectionDiagnostic {
             "no appropriate protocol" in text || "protocol_version" in text || "no cipher suites in common" in text ||
                 "handshake_failure" in text || "unsupported" in text && "protocol" in text ->
                 TlsFailureClass.PROTOCOL_OR_CIPHER
-            "pin mismatch" in text || "pin (" in text -> TlsFailureClass.PIN_MISMATCH
+            "rejected by the user" in text -> TlsFailureClass.REJECTED
             "unable to find valid certification path" in text || "pkix path" in text ||
                 "self-signed" in text || "self signed" in text || "certpathbuilderexception" in text ||
                 "trustanchor" in text -> TlsFailureClass.PKIX_PATH

@@ -7,8 +7,6 @@
 package com.gestalt.launcher
 
 import com.gestalt.launcher.launch.LauncherCore
-import com.gestalt.launcher.testutil.TestArtifacts
-import com.gestalt.launcher.tls.ServerTrustStore
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -17,23 +15,8 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** On connection delete the per-connection truststore and cached-jar subtree are removed, others untouched. */
+/** On connection delete the cached-jar subtree is removed, other connections' untouched. */
 class PerConnectionCleanupTest {
-
-    @Test
-    @DisplayName("ServerTrustStore.delete removes only that connection's .p12")
-    fun truststoreDelete(@TempDir dir: Path) {
-        val (_, leaf) = TestArtifacts.serverCert("mirth-connect", "mirth-connect")
-        val a = ServerTrustStore.write("conn-1", leaf, dir)
-        val b = ServerTrustStore.write("conn-2", leaf, dir)
-        assertTrue(Files.exists(a) && Files.exists(b))
-
-        ServerTrustStore.delete("conn-1", dir)
-
-        assertFalse(Files.exists(a)) { "deleted connection's truststore must be gone" }
-        assertTrue(Files.exists(b)) { "another connection's truststore must be untouched" }
-        ServerTrustStore.delete("conn-1", dir) // idempotent / safe when already absent
-    }
 
     @Test
     @DisplayName("purgeConnectionCache removes only that connection's cached-jar subtree")

@@ -142,35 +142,58 @@ class CertRotationDrillTest {
         record(rot, "pinned trust manager rejects the rotated leaf", tmRejects, "old pin → new leaf = CertificateException")
         assertTrue(tmRejects)
 
-        // (b) The launch pipeline fails closed when the server presents a leaf that no longer matches the pin.
+        // (b) The launch pipeline stops for review when the server presents a leaf the user hasn't trusted
+        //     (the old leaf is trusted; the rotated one is unknown). The TLS layer's refusal is simulated by
+        //     a fetcher that raises the policy's own exception until the new leaf is trusted.
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Sectigo,O=Pretend CA,C=GB")
         val codeLeaf = TestArtifacts.codeSigningLeaf("CN=OIE,O=BrightCodeCompany OÜ,C=EE", ca)
         val jarBytes = Phase5Fixtures.signedCore(dir, codeLeaf)
         val base = "https://mirth.internal:8443/"
         val responses = Phase5Fixtures.canned(base, jarBytes, "https://mirth.internal:8443")
+        val trusted = com.gestalt.launcher.tls.TrustedCertStore(dir.resolve("trusted-certs.json"))
+        trusted.trust(oldLeaf, "mirth.internal:8443", "rot-server")
         fun launcherPresenting(leaf: java.security.cert.X509Certificate) = LauncherCore(
             trustStore = TrustStore.of(ca.cert),
             signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS,
             gateMode = TrustMode.PIN_KNOWN_SIGNERS,
             cacheDir = dir.resolve("cache"),
-            fetcherFactory = { FakeFetcher(responses) },
+            trustedCerts = trusted,
+            fetcherFactory = {
+                if (trusted.statusOf(leaf) == com.gestalt.launcher.tls.CertTrustStatus.TRUSTED) FakeFetcher(responses)
+                else object : com.gestalt.launcher.net.ArtifactFetcher {
+                    override fun fetchBytes(uri: java.net.URI): ByteArray =
+                        throw javax.net.ssl.SSLHandshakeException("PKIX path building failed").apply {
+                            initCause(com.gestalt.launcher.tls.UnknownServerCertificateException(listOf(leaf)))
+                        }
+                }
+            },
             serverLeafProbe = { leaf },
         )
-        val pinnedToOld = Connection(id = "rot-server", name = "Rotation", serverUrl = base, pinnedCertSha256 = oldPin)
-        val launchFailsClosed = runCatching { launcherPresenting(newLeaf).prepareLaunch(pinnedToOld) }
-            .exceptionOrNull() is LaunchAbortedException
-        record(rot, "launch fails closed on the pin mismatch", launchFailsClosed, "prepareLaunch → LaunchAbortedException")
-        assertTrue(launchFailsClosed)
+        val conn = Connection(id = "rot-server", name = "Rotation", serverUrl = base)
+        val stopped = runCatching { launcherPresenting(newLeaf).prepareLaunch(conn) }.exceptionOrNull()
+        val launchStopsForReview = stopped is com.gestalt.launcher.launch.ServerCertificateReviewRequiredException
+        record(rot, "launch stops for review on the rotated leaf", launchStopsForReview, "prepareLaunch → ServerCertificateReviewRequiredException")
+        assertTrue(launchStopsForReview) { "got: $stopped" }
+        assertEquals(com.gestalt.launcher.tls.CertTrustStatus.PENDING, trusted.statusOf(newLeaf)) { "the rotated leaf is recorded for review" }
 
-        // (c) Recovery: re-pin to the new leaf (audited, persisted), launch succeeds.
+        // (c) Recovery: trust the new leaf (audited, persisted), launch succeeds.
         val store = ConnectionStore(dir.resolve("connections.json"))
-        val saved = store.add(pinnedToOld)
-        val repinned = ServerCertPinning.pin(store, saved, newLeaf)
-        assertEquals(newPin, repinned.pinnedCertSha256)
-        val recovered = runCatching { launcherPresenting(newLeaf).prepareLaunch(repinned) }.getOrNull()
+        val saved = store.add(conn)
+        ServerCertPinning.pin(store, saved, newLeaf, trusted = trusted)
+        assertEquals(com.gestalt.launcher.tls.CertTrustStatus.TRUSTED, trusted.statusOf(newLeaf))
+        assertEquals(newPin, trusted.get(newPin)?.sha256)
+        val recovered = runCatching { launcherPresenting(newLeaf).prepareLaunch(saved) }.getOrNull()
         val recoveredOk = recovered?.admitted?.size == 1
-        record(rot, "re-pinning to the new leaf recovers the launch", recoveredOk, "after re-pin, prepareLaunch admits the jar")
+        record(rot, "trusting the new leaf recovers the launch", recoveredOk, "after trust, prepareLaunch admits the jar")
         assertTrue(recoveredOk)
+
+        // (d) Auto-approve: a connection with the checkbox on trusts a rotated leaf by itself and launches.
+        val freshLeaf = TestArtifacts.serverCert("mirth-connect", "mirth-connect").second
+        val auto = Connection(id = "rot-auto", name = "Rotation (auto)", serverUrl = base, autoApproveCertificates = true)
+        val autoPlan = runCatching { launcherPresenting(freshLeaf).prepareLaunch(auto) }.getOrNull()
+        val autoOk = autoPlan?.admitted?.size == 1 && trusted.get(com.gestalt.launcher.tls.CertFingerprint.sha256Hex(freshLeaf))?.autoApproved == true
+        record(rot, "auto-approve trusts a new leaf without a prompt", autoOk, "prepareLaunch succeeds; entry marked autoApproved")
+        assertTrue(autoOk)
     }
 
     // --- 3. update-key rotation ----------------------------------------------------------------------

@@ -18,7 +18,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.net.InetSocketAddress
+import java.nio.file.Path
 import java.net.ServerSocket
 import java.security.KeyStore
 import java.security.cert.X509Certificate
@@ -90,18 +92,18 @@ class ConnectionDiagnosticTest {
         assertFalse(report.ok)
         assertTrue(report.toText().contains(leaf.sha256Display)) { "diagnostics text must carry the fingerprint" }
 
-        // Plain language: an untrusted self-signed leaf reads as a pin prompt, not a bare failure.
+        // Plain language: an untrusted self-signed leaf reads as a review-and-trust prompt, not a bare failure.
         if (tls.classification == TlsFailureClass.PKIX_PATH) {
             assertTrue(report.headline().startsWith("Untrusted self-signed certificate")) { report.headline() }
-            assertTrue(tls.plainLanguage!!.contains("pin it to trust", ignoreCase = true)) { tls.plainLanguage!! }
+            assertTrue(tls.plainLanguage!!.contains("review and trust it", ignoreCase = true)) { tls.plainLanguage!! }
         } else {
             assertTrue(report.headline().contains("name doesn't match", ignoreCase = true)) { report.headline() }
-            assertTrue(tls.plainLanguage!!.contains("pin the cert", ignoreCase = true)) { tls.plainLanguage!! }
+            assertTrue(tls.plainLanguage!!.contains("trust the cert", ignoreCase = true)) { tls.plainLanguage!! }
         }
     }
 
     @Test
-    @DisplayName("exact pin: TLS PASSES (hostname bypassed) and the JNLP fetch succeeds")
+    @DisplayName("a legacy exact pin still counts as trusted: TLS PASSES (hostname bypassed) and the JNLP fetch succeeds")
     fun pinnedConnectionPasses() {
         val report = ConnectionDiagnostic.run(conn(CertFingerprint.sha256Hex(serverCert)), timeoutMs = 4_000)
 
@@ -110,6 +112,23 @@ class ConnectionDiagnosticTest {
         // /digest is not served, but the JNLP carries inline digests, so it is a WARN (not required), not a FAIL.
         assertEquals(CheckStatus.WARN, report.checks.first { it.name == "Digest entry" }.status)
         assertTrue(report.ok) { report.toText() }
+    }
+
+    @Test
+    @DisplayName("a certificate trusted in the store PASSES; a rejected one FAILS as REJECTED")
+    fun trustStoreDecisionsDriveTheTlsCheck(@TempDir dir: Path) {
+        val trusted = com.gestalt.launcher.tls.TrustedCertStore(dir.resolve("trusted-certs.json"))
+        trusted.trust(serverCert, "localhost:$port", "d")
+        val pass = ConnectionDiagnostic.run(conn(), timeoutMs = 4_000, trustedCerts = trusted)
+        assertEquals(CheckStatus.PASS, pass.checks.first { it.name == "TLS handshake" }.status) { pass.toText() }
+        assertTrue(pass.ok) { pass.toText() }
+
+        trusted.reject(serverCert, "localhost:$port", "d")
+        val fail = ConnectionDiagnostic.run(conn(), timeoutMs = 4_000, trustedCerts = trusted)
+        val tls = fail.checks.first { it.name == "TLS handshake" }
+        assertEquals(CheckStatus.FAIL, tls.status) { fail.toText() }
+        assertEquals(TlsFailureClass.REJECTED, tls.classification)
+        assertTrue(fail.headline().contains("rejected", ignoreCase = true)) { fail.headline() }
     }
 
     @Test
