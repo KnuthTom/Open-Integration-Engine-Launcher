@@ -143,6 +143,8 @@ open class LauncherCore(
      * (SHA-256 + CMS/PKIX per jar) is CPU work that parallelises cleanly. 1 makes everything sequential.
      */
     private val parallelism: Int = DEFAULT_PARALLELISM,
+    /** Where each launched client's console output is kept (see [ClientLog]). */
+    private val clientLogDir: Path = AppPaths.logDir.resolve("client"),
 ) {
     /**
      * Verify everything and produce the launch plan. Does NOT spawn the process.
@@ -242,11 +244,15 @@ open class LauncherCore(
             // just fetched everything from, so it is ALWAYS what the client gets — scheme, host and port.
             // A no-op when the JNLP URL already matches.
             val appArgs = rewriteServerUrlArg(connection.serverUrl, jnlp.arguments)
+            // The address those fetches actually reached the server on. For a loopback connection it is
+            // which loopback literal the port-forward answers on, and the client is pointed at the same one.
+            val reachedAt = fetcher.lastRemoteAddress
             val command = commandBuilder.build(
                 connection, mainClass, admitted, appArgs,
                 serverJvmArgs = jnlp.untrustedJvmArgs,
+                reachedAddress = reachedAt,
             )
-            AuditLog.childLaunched(connection.id, mainClass, admitted.size)
+            AuditLog.childLaunched(connection.id, mainClass, admitted.size, reachedAt?.hostAddress)
             return LaunchPlan(connection, version, mainClass, admitted, appArgs, command)
         } finally {
             (fetcher as? AutoCloseable)?.let { runCatching { it.close() } }
@@ -261,13 +267,27 @@ open class LauncherCore(
      * Cancellation: the pipeline checks the calling thread's interrupt flag between network fetches, so
      * running it under `runInterruptible` makes a coroutine cancel take effect at the next fetch boundary
      * (a blocking socket read in progress completes first). A cancelled launch spawns nothing.
+     *
+     * The child's stdout/stderr go to a per-launch file under the client log directory ([ClientLog]) —
+     * the Administrator reports its own failures there, and a windowless launcher has no console to show
+     * them on. Only if that file can't be created does the child inherit the launcher's console.
      */
     open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}, autoLogin: AutoLogin? = null): Process {
         try {
             val plan = prepareLaunch(connection, onPhase)
             checkNotCancelled()
             onPhase(LaunchPhase.Launching)
-            val process = ProcessBuilder(commandWithLogin(plan, autoLogin)).inheritIO().start()
+            val builder = ProcessBuilder(commandWithLogin(plan, autoLogin))
+            val log = ClientLog.open(clientLogDir, plan)
+            if (log != null) {
+                builder.redirectInput(ProcessBuilder.Redirect.INHERIT)
+                    .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
+                AuditLog.event("child.log", "connection" to connection.id, "path" to log.toString())
+            } else {
+                builder.inheritIO()
+            }
+            val process = builder.start()
             onPhase(LaunchPhase.Running)
             return process
         } finally {

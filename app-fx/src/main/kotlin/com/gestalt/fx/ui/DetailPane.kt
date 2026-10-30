@@ -128,10 +128,10 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         // --- header ---
         val iconHolder = StackPane().apply {
             children += iconButton
-            val pencil = Button().apply { styleClass += "header-pencil"; graphic = Icons.glyph("pencil", 12.0, "-text", 2.5); tooltip = javafx.scene.control.Tooltip("Change icon"); setOnAction { host.changeIcon() } }
+            val pencil = Button().apply { styleClass += "header-pencil"; graphic = Icons.pencilBadge(13.0, "-text"); tooltip = javafx.scene.control.Tooltip("Change icon"); setOnAction { host.changeIcon() } }
             children += pencil
             StackPane.setAlignment(pencil, Pos.BOTTOM_RIGHT)
-            StackPane.setMargin(pencil, Insets(0.0, -6.0, -6.0, 0.0))
+            StackPane.setMargin(pencil, Insets(0.0, -7.0, -7.0, 0.0))
             minWidth = 40.0; prefWidth = 40.0; maxWidth = 40.0; minHeight = 40.0; prefHeight = 40.0; maxHeight = 40.0
         }
         iconButton.setOnAction { host.launchActive() }

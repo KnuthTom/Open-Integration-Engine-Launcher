@@ -69,6 +69,15 @@ Audit:
 - `logs/audit.log` (under the per-user dir, RollingFile, bounded retention) records connection
   add/edit/delete, server-cert pin/trust/revoke, codebase download + per-jar verification results,
   signature-enforcement decisions, child launch, and credential access — **events only, no secrets**.
+  `event=launch.timing … descriptorsMs=… downloadVerifyMs=…` is where a slow launch shows which half
+  was slow; `event=child.launch … reachedAt=…` is the address the launcher reached the server on.
+
+Client output:
+
+- `logs/client/<connection>-<yyyyMMdd-HHmmss>.log` — one file per launch, the Administrator's own
+  stdout/stderr (the installed launcher is windowless, so this is the only place its "error connecting
+  to the server", TLS or class-loading complaints land). Headed with the server, version, Java and main
+  class — never the command line, which carries the auto-login credentials. The newest 20 are kept.
 
 ## Testing a connection (diagnostic)
 

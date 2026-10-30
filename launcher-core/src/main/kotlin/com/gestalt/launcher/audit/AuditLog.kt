@@ -97,8 +97,8 @@ object AuditLog {
     fun signatureEnforcement(mode: String, signerDN: String?, decision: String) =
         event("signature.enforce", "mode" to mode, "signer" to signerDN, "result" to decision)
 
-    fun childLaunched(connection: String, mainClass: String, classpathSize: Int) =
-        event("child.launch", "connection" to connection, "mainClass" to mainClass, "classpath" to classpathSize)
+    fun childLaunched(connection: String, mainClass: String, classpathSize: Int, reachedAt: String? = null) =
+        event("child.launch", "connection" to connection, "mainClass" to mainClass, "classpath" to classpathSize, "reachedAt" to (reachedAt ?: "-"))
 
     /** Credential access — event only. The value is NEVER recorded. */
     fun credentialAccessed(connection: String, action: String, store: String) =

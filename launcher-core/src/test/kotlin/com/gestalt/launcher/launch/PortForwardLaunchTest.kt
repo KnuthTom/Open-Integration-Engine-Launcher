@@ -47,6 +47,8 @@ class PortForwardLaunchTest {
         private val responses: Map<String, ByteArray>,
         private val failFirst: Int,
         private val error: () -> Exception = { ConnectException("Connection refused: no further information") },
+        /** What the transport reports it reached the server on (null: a transport that can't tell). */
+        override val lastRemoteAddress: java.net.InetAddress? = null,
     ) : ArtifactFetcher {
         val calls = HashMap<String, Int>()
         override fun fetchBytes(uri: URI): ByteArray {
@@ -115,6 +117,57 @@ class PortForwardLaunchTest {
         }
         assertTrue((fetcher.calls["${base}webstart"] ?: 0) >= 3) { "the JNLP fetch must have been retried past the refusals" }
         assertTrue((fetcher.calls["${base}core.jar"] ?: 0) >= 3) { "the per-jar fetch (the dominant cost) must also be retried" }
+    }
+
+    @Test
+    @DisplayName("loopback reached over ::1: the client is told to prefer IPv6 — not pinned to an IPv4 stack it can't use")
+    fun loopbackReachedOverIpv6PrefersIpv6(@TempDir dir: Path) {
+        val base = "https://localhost:31054/"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca)
+        val (_, serverLeaf) = TestArtifacts.serverCert("mirth-connect", "mirth-connect")
+        val v6 = java.net.InetAddress.getByName("::1")
+        val fetcher = FlakyFetcher(responses(base, jarBytes), failFirst = 0, lastRemoteAddress = v6)
+        val conn = Connection(id = "pf6", name = "ssm-forward", serverUrl = base, pinnedCertSha256 = CertFingerprint.sha256Hex(serverLeaf))
+
+        val plan = launcher(dir, ca, fetcher, serverLeaf).prepareLaunch(conn)
+
+        assertTrue("-Djava.net.preferIPv6Addresses=true" in plan.command) { "the forward answered on ::1, so the client must look there first: ${plan.command}" }
+        assertTrue("-Djava.net.preferIPv4Stack=true" !in plan.command) { "an IPv4-only stack would strand the client on 127.0.0.1: ${plan.command}" }
+        assertEquals(listOf("https://localhost:31054", "1.0.0"), plan.appArgs) { "the login screen still shows the typed address" }
+    }
+
+    @Test
+    @DisplayName("loopback reached over 127.0.0.1 (or a transport that can't say): the IPv4-only stack as before")
+    fun loopbackReachedOverIpv4KeepsIpv4Stack(@TempDir dir: Path) {
+        val base = "https://localhost:31065/"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca)
+        val (_, serverLeaf) = TestArtifacts.serverCert("mirth-connect", "mirth-connect")
+        val pin = CertFingerprint.sha256Hex(serverLeaf)
+        for (reached in listOf(java.net.InetAddress.getByName("127.0.0.1"), null)) {
+            val fetcher = FlakyFetcher(responses(base, jarBytes), failFirst = 0, lastRemoteAddress = reached)
+            val conn = Connection(id = "pf4-${reached?.hostAddress ?: "unknown"}", name = "forward", serverUrl = base, pinnedCertSha256 = pin)
+
+            val plan = launcher(dir, ca, fetcher, serverLeaf).prepareLaunch(conn)
+
+            assertTrue("-Djava.net.preferIPv4Stack=true" in plan.command) { "reached=$reached: ${plan.command}" }
+            assertTrue("-Djava.net.preferIPv6Addresses=true" !in plan.command) { "reached=$reached: ${plan.command}" }
+        }
+    }
+
+    @Test
+    @DisplayName("remote connection: no loopback stack flag at all, whichever family the fetch used")
+    fun remoteGetsNoStackFlag(@TempDir dir: Path) {
+        val base = "https://mirth.example:8443/"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca)
+        val fetcher = FlakyFetcher(responses(base, jarBytes), failFirst = 0, lastRemoteAddress = java.net.InetAddress.getByName("2001:db8::10"))
+        val conn = Connection(id = "r6", name = "Remote", serverUrl = base, connectionMode = ConnectionMode.Standard)
+
+        val plan = launcher(dir, ca, fetcher, leaf = null).prepareLaunch(conn)
+
+        assertTrue(plan.command.none { it.startsWith("-Djava.net.preferIPv") }) { "a remote host keeps the default dual stack: ${plan.command}" }
     }
 
     @Test

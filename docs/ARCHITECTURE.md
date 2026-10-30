@@ -73,6 +73,15 @@ runs headlessly in tests without real networking or spawning a process.
   descriptor, the array is zeroed afterwards, and the audit log records the event, never the value.
   The inherited caveat: a program argument is visible to other processes of the same user.
 - **Audit** — security-relevant events are appended to `logs/audit.log`, never including a secret.
+- **Client output** — the spawned Administrator's stdout/stderr go to `logs/client/<connection>-<stamp>.log`
+  (newest 20 kept; header without the command line), so a login that fails inside the client is
+  diagnosable from a windowless launcher.
+- **Loopback address family** — `localhost` is two addresses and a port-forward listens on one of them.
+  The launcher's own fetches fall back across both and record which answered
+  (`ArtifactFetcher.lastRemoteAddress`); the child JVM is then pinned to that family
+  (`-Djava.net.preferIPv4Stack=true` for 127.0.0.1, `-Djava.net.preferIPv6Addresses=true` for ::1) so
+  its own connection can't be stranded on the one the tunnel doesn't serve. Remote hosts keep the
+  default dual stack.
 
 ## Connections, storage, import
 

@@ -11,6 +11,8 @@ import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.JavaHomeMode
 import com.gestalt.launcher.net.LocalhostResolver
 import java.io.File
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -48,6 +50,8 @@ class ChildJvmCommandBuilder(
         appArgs: List<String> = emptyList(),
         extraSystemProperties: Map<String, String> = emptyMap(),
         serverJvmArgs: List<String> = emptyList(),
+        /** The address the launcher's own fetches reached the server on, when the transport could tell. */
+        reachedAddress: InetAddress? = null,
     ): List<String> {
         require(classpath.isNotEmpty()) { "refusing to launch with an empty (unverified) classpath" }
         require(mainClass.isNotBlank()) { "refusing to launch without a main class" }
@@ -58,10 +62,16 @@ class ChildJvmCommandBuilder(
         // Max heap (-Xmx) — only a well-formed size is honored, as a guard against argument injection.
         connection.heapSize?.trim()?.takeIf { it.matches(HEAP_PATTERN) }?.let { cmd += "-Xmx$it" }
 
-        // For a localhost/SSM-forward connection (IPv4-only), force the launched client onto the IPv4 stack
-        // so its own TLS connection to the server doesn't get stranded on a refused IPv6 ::1. Only for
-        // loopback — a genuine remote host (which may be IPv6-only) is left on its default dual stack.
-        if (isLoopbackConnection(connection)) cmd += "-Djava.net.preferIPv4Stack=true"
+        // A loopback (port-forward) connection: point the client at the SAME loopback literal the launcher
+        // just reached the server on. `localhost` is two addresses, and a forward listens on one of them
+        // (ssh -L binds both; SSM's plugin and most other tools bind only 127.0.0.1 OR only ::1) — the
+        // launcher's fetch fell back across both and found the live one, and the client's own connect must
+        // not be stranded on the dead one. Reached over IPv6 → prefer IPv6 so `localhost` resolves to ::1
+        // first; reached over IPv4, or unknown → IPv4-only stack (the common case, and what this always
+        // did). A genuine remote host (which may be IPv6-only) is left on its default dual stack.
+        if (isLoopbackConnection(connection)) {
+            cmd += if (reachedAddress is Inet6Address) "-Djava.net.preferIPv6Addresses=true" else "-Djava.net.preferIPv4Stack=true"
+        }
 
         // Modern TLS by default; an explicit per-connection protocol list overrides it.
         val protocols = connection.sslProtocols.takeIf { it.custom && it.value.isNotBlank() }?.value?.trim()
