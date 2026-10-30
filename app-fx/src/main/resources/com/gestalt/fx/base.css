@@ -124,21 +124,21 @@
     -fx-cursor: hand;
 }
 .header-icon-button:hover { -fx-border-color: -accent; -fx-border-width: 2; -fx-border-insets: -1; }
-/* The change-icon badge over the header icon's corner: a 22 px disc with a 2 px halo in the page
-   colour so it reads as sitting ON the tile rather than being part of its border. */
+/* The change-icon pencil: a bare glyph in the tile's bottom-right corner — no disc, no border of its own
+   (a 1 px circle over the tile's border was two curves fighting at fractional DPI). A soft rounded
+   plate appears under it on hover only. */
 .header-pencil {
-    -fx-background-color: -surface, -surface-raised;
-    -fx-background-insets: -2, 0;
-    -fx-background-radius: 999, 999;
-    -fx-border-color: -border-strong;
-    -fx-border-radius: 999;
-    -fx-border-width: 1;
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 5;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
     -fx-padding: 0;
-    -fx-min-width: 22; -fx-pref-width: 22; -fx-max-width: 22;
-    -fx-min-height: 22; -fx-pref-height: 22; -fx-max-height: 22;
+    -fx-min-width: 16; -fx-pref-width: 16; -fx-max-width: 16;
+    -fx-min-height: 16; -fx-pref-height: 16; -fx-max-height: 16;
     -fx-cursor: hand;
 }
-.header-pencil:hover { -fx-border-color: -text; -fx-background-color: -surface, -hover; }
+.header-pencil:hover { -fx-background-color: -hover; }
 
 .name-field {
     -fx-font-size: 22px;

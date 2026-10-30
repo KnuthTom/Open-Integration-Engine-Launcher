@@ -93,7 +93,11 @@ runs headlessly in tests without real networking or spawning a process.
   port, and holds the process per connection with a lease count: shared by concurrent launches of the
   same connection, torn down — the whole process tree — when the last Administrator exits or the
   launcher closes. A port that is already listening is used as-is and never torn down. The command is
-  trusted local config and is dropped on import.
+  trusted local config and is dropped on import. The window closing while a lease is held does not end
+  the process: the launcher **lingers** hidden with the model and executors live until the last such
+  Administrator exits; `SingleInstance` (a lock on `instance.lock` far past EOF plus a loopback socket
+  and a per-run secret) makes a launcher started meanwhile re-show that window rather than start a
+  second one — and start normally if the first cannot be reached.
 - **Loopback address family** — `localhost` is two addresses and a port-forward listens on one of them.
   The launcher's own fetches fall back across both and record which answered
   (`ArtifactFetcher.lastRemoteAddress`); the child JVM is then pinned to that family

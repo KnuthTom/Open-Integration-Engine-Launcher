@@ -55,12 +55,15 @@ class CredentialAndConnectionStoreTest {
     fun credentialRoundTrips() {
         val store: CredentialStore =
             if (AppPaths.isWindows) AuditingCredentialStore(WindowsDpapiCredentialStore()) else InMemoryCredentialStore()
+        assertFalse(store.exists("conn-rt", "bob"))
         store.store("conn-rt", "bob", "rt-secret-987".toCharArray())
+        assertTrue(store.exists("conn-rt", "bob")) { "existence is answered without reading the secret where the platform allows" }
         val got = store.retrieve("conn-rt", "bob")
         assertNotNull(got)
         assertEquals("rt-secret-987", String(got!!))
         store.delete("conn-rt", "bob")
         assertNull(store.retrieve("conn-rt", "bob"))
+        assertFalse(store.exists("conn-rt", "bob"))
     }
 
     @Test

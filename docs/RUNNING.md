@@ -103,9 +103,12 @@ fails reports the command's exit code and the log's last lines in the launch fai
 The tunnel is the Administrator's connection, so closing the launcher window — by hand, or with
 *Close this window after launching* — must not take it down. While an Administrator launched from here
 still depends on a forward the launcher opened, the window hides but the launcher keeps running (no
-window, `audit.log`: `launcher.linger`), holding the tunnel; it exits on its own once the last such
-Administrator has closed. A launcher started again meanwhile is a second instance and simply finds the
-port already open.
+window, `audit.log`: `launcher.linger`), holding the tunnel, with everything else still live; it exits on
+its own once the last such Administrator has closed. There is **one launcher per profile**: starting it
+again meanwhile does not open a second one — the new process asks the running (hidden) launcher to show
+its window and ends (`audit.log`: `launcher.show` / `launcher.handover`; `instance.lock` in the data dir
+carries the loopback port and a per-run secret, and the lock itself dies with the process). A running
+launcher that cannot be reached lets the newcomer start normally.
 
 "When the Administrator exits" means the Administrator, not the first JVM: the client checks the heap
 it was started with against the heap size saved in its own preferences and, when they differ,
@@ -127,6 +130,18 @@ SessionManagerPlugin version detected".
 The tunnel command is local config like the Java home: it is exported with the connection but **never
 imported** from a file (a file from elsewhere must not be able to plant a command the launcher would
 run; `audit.log` records `import.tunnelCommand … NOT_IMPORTED`). Set it by hand on each machine.
+
+## Sign-in (auto-login)
+
+The detail pane's **Sign-in** card is where the Administrator's credentials are set. The **Username** is
+a field of the connection (saved with it, in `connections.json`). The **Password** is typed once and
+*Save password* hands it straight to the OS credential store — Windows DPAPI (encrypted for the Windows
+account), the macOS Keychain, or libsecret — keyed by connection and username; it never reaches
+`connections.json`, the exports, or any log, and saving it applies at once (it also saves the username).
+With both in place the launcher fills them into the Administrator's login screen
+(`audit.log`: `credential.access action=retrieve`, `child.autologin result=SUPPLIED`); without a
+saved password the Administrator asks. Renaming the username on Save moves the saved password with it;
+*Remove* deletes it; deleting the connection deletes it; *Save as…* and Duplicate never copy it.
 
 ## Testing a connection (diagnostic)
 

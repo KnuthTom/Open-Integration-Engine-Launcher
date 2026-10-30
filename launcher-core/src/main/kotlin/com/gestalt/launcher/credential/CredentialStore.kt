@@ -30,6 +30,14 @@ interface CredentialStore {
     fun retrieve(connectionId: String, username: String): CharArray?
 
     fun delete(connectionId: String, username: String)
+
+    /**
+     * Whether a password is stored, **without reading it** where the platform allows (the UI asks this
+     * when a connection is merely selected; a read on macOS can raise the Keychain's access prompt). The
+     * default reads and discards.
+     */
+    fun exists(connectionId: String, username: String): Boolean =
+        retrieve(connectionId, username)?.also { it.fill('\u0000') } != null
 }
 
 /**
@@ -55,6 +63,9 @@ class AuditingCredentialStore(private val delegate: CredentialStore) : Credentia
         delegate.delete(connectionId, username)
         AuditLog.credentialAccessed(connectionId, "delete", delegate.name)
     }
+
+    /** An existence check reads no secret, so it is not a credential access and is not audited. */
+    override fun exists(connectionId: String, username: String): Boolean = delegate.exists(connectionId, username)
 }
 
 /** In-memory store for tests. Never persists. */

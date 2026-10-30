@@ -40,8 +40,11 @@ trust path — without you hand-managing Java Web Start, keystores, or JVM flags
   (JavaFX included, which the Administrator needs), chosen by the server's version or per
   connection, so you don't need a system Java.
 - **Credentials stay in the OS keychain** (Windows DPAPI / macOS Keychain / Linux libsecret) —
-  never written to `connections.json` or any log. A saved password signs you in to the Administrator
-  automatically, the way MCAL did.
+  set in the connection's **Sign-in** card, never written to `connections.json` or any log. A saved
+  password signs you in to the Administrator automatically, the way MCAL did.
+- **One launcher.** Closing the window while an Administrator still uses a port-forward the launcher
+  opened keeps the forward (and the launcher, hidden) alive until that Administrator exits; starting
+  the launcher again brings the same window back.
 
 Architecture and the trust model are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [SECURITY.md](SECURITY.md).

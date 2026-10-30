@@ -316,4 +316,69 @@ class LauncherModelTest {
 
         await("closed") { closed }
     }
+
+    @Test
+    @DisplayName("sign-in: the password goes to the credential store under the connection and username, the username is saved at once, and the launch carries both")
+    fun savePassword(@TempDir dir: Path) {
+        val launcher = FakeLauncher()
+        val creds = InMemoryCredentialStore()
+        val m = model(dir, launcher, creds)
+        val c = m.newConnection(null)
+        m.updateDraft { it.copy(serverUrl = "https://lab.example.internal:8443") }
+        m.save()
+        assertFalse(m.hasSavedPassword(c.id))
+
+        assertEquals("Enter the username first", m.savePassword(c.id, "  ", "pw".toCharArray()))
+        assertEquals("Enter the password to save", m.savePassword(c.id, "admin", CharArray(0)))
+
+        val typed = "synthetic-pw".toCharArray()
+        assertNull(m.savePassword(c.id, " admin ", typed))
+        assertTrue(typed.all { it == '\u0000' }) { "the array is zeroed once stored" }
+        assertEquals("admin", m.store.get(c.id)!!.username) { "the username is saved with the password, no Save needed" }
+        assertEquals("admin", m.draft.get()!!.username)
+        assertFalse(m.dirty.get())
+        assertTrue(m.hasSavedPassword(c.id))
+        assertEquals("synthetic-pw", String(creds.retrieve(c.id, "admin")!!))
+        m.flushPendingSave()
+        val onDisk = java.nio.file.Files.readString(dir.resolve("connections.json"))
+        assertTrue(onDisk.contains("admin") && !onDisk.contains("synthetic-pw")) { "the username is in connections.json, the password never is" }
+
+        m.launch(c.id)
+        assertTrue(launcher.called.await(5, TimeUnit.SECONDS))
+        await("running") { m.launchState(c.id)?.phase == LaunchPhase.Running } // the launch thread's refresh() must finish before we mutate again
+        assertEquals("admin", launcher.lastLogin?.username)
+        assertEquals("synthetic-pw", launcher.lastLogin?.password?.let { String(it) })
+
+        // A new password under another username replaces the old entry.
+        assertNull(m.savePassword(c.id, "operator", "other-pw".toCharArray()))
+        assertNull(creds.retrieve(c.id, "admin"))
+        assertEquals("other-pw", String(creds.retrieve(c.id, "operator")!!))
+        assertEquals("operator", m.store.get(c.id)!!.username)
+
+        m.clearPassword(c.id)
+        assertFalse(m.hasSavedPassword(c.id))
+        assertNull(creds.retrieve(c.id, "operator"))
+        assertEquals("operator", m.store.get(c.id)!!.username) { "the username stays" }
+    }
+
+    @Test
+    @DisplayName("sign-in: renaming the username on Save moves the saved password with it; clearing the username drops it")
+    fun passwordFollowsUsername(@TempDir dir: Path) {
+        val creds = InMemoryCredentialStore()
+        val m = model(dir, creds = creds)
+        val c = m.newConnection(null)
+        assertNull(m.savePassword(c.id, "admin", "synthetic-pw".toCharArray()))
+
+        m.updateDraft { it.copy(username = "admin2") }
+        assertTrue(m.dirty.get())
+        assertTrue(m.save())
+        assertNull(creds.retrieve(c.id, "admin"))
+        assertEquals("synthetic-pw", String(creds.retrieve(c.id, "admin2")!!))
+        assertTrue(m.hasSavedPassword(c.id))
+
+        m.updateDraft { it.copy(username = null) }
+        assertTrue(m.save())
+        assertNull(creds.retrieve(c.id, "admin2"))
+        assertFalse(m.hasSavedPassword(c.id))
+    }
 }

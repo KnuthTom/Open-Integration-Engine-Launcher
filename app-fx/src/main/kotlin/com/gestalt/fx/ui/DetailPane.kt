@@ -22,6 +22,7 @@ import javafx.geometry.Pos
 import javafx.scene.control.Button
 import javafx.scene.control.Label
 import javafx.scene.control.MenuButton
+import javafx.scene.control.PasswordField
 import javafx.scene.control.ScrollPane
 import javafx.scene.control.TextField
 import javafx.scene.layout.BorderPane
@@ -50,12 +51,16 @@ interface DetailActions {
     fun toggleTheme()
     /** Auto-approve is a trust switch, not a form field: it applies to the saved connection at once. */
     fun setAutoApprove(on: Boolean)
+    /** Save [password] for the active connection under the draft's username; applies at once. The array is zeroed by the callee. */
+    fun savePassword(password: CharArray)
+    /** Remove the active connection's saved password. */
+    fun removePassword()
 }
 
 /**
  * The right pane: the header (icon as a launch button, the name, folder · last launched, Launch), the
- * four cards (Connection, Java runtime, Certificates, TLS / SSL) in two columns when there is room and
- * one column below 700 px, and the footer (close-after-launch, unsaved marker, Delete / Save as… /
+ * five cards (Connection, Java runtime | Sign-in, Certificates, TLS / SSL) in two columns when there is
+ * room and one column below 700 px, and the footer (close-after-launch, unsaved marker, Delete / Save as… /
  * Save). Every field edits [LauncherModel.draft]; the pane re-reads the draft after each change.
  */
 class DetailPane(private val model: LauncherModel, private val host: DetailActions, private val icons: CustomIconStore?) : BorderPane() {
@@ -78,6 +83,16 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val browseTunnel = Controls.button("Browse…") { browseFileInto(tunnelField) { path -> update { it.copy(tunnelCommand = path) } } }
     private val tunnelNote = Label("Runs before each launch when the port isn't already listening (e.g. a batch file that starts an SSM port-forward); closed when the Administrator exits.").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
     private val folderButton: MenuButton = Controls.menuButton("Top level", Icons.glyph("folder", 14.0)) { folderMenuItems() }
+
+    // sign-in card — the username is part of the connection; the password goes straight to the OS credential store
+    private val userField = TextField().apply { styleClass += "mono-field"; promptText = "Administrator username" }
+    private val passwordField = PasswordField().apply { styleClass += "mono-field"; promptText = "Password" }
+    private val savePasswordButton = Controls.button("Save password") { submitPassword() }.apply { isDisable = true }
+    private val passwordIcon = StackPane()
+    private val passwordStatus = Label().apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
+    private val removePasswordButton = Controls.button("Remove", Controls.ButtonKind.Ghost, small = true) { host.removePassword() }
+    private val signInNote = Label("Filled in on the Administrator's login screen. The password is kept in ${model.passwordStoreLabel} — never in the launcher's files — and saving it applies at once.")
+        .apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
 
     // java card
     private val javaButton: MenuButton = Controls.menuButton("Bundled Java 17") { javaMenuItems() }
@@ -124,18 +139,23 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val empty = VBox().apply { styleClass += "detail-empty" }
     private val content = BorderPane()
 
-    private val cards: List<VBox>
+    /** The two columns of cards; stacked left-then-right in one column. */
+    private val leftCards: List<VBox>
+    private val rightCards: List<VBox>
     private var twoColumns = true
     private var updating = false
+    private var renderedId: String? = null
 
     init {
         // --- header ---
         val iconHolder = StackPane().apply {
             children += iconButton
-            val pencil = Button().apply { styleClass += "header-pencil"; graphic = Icons.pencilBadge(13.0, "-text"); tooltip = javafx.scene.control.Tooltip("Change icon"); setOnAction { host.changeIcon() } }
+            // The change-icon pencil: a bare glyph tucked into the tile's bottom-right corner — no disc,
+            // no border of its own — haloed in the tile colour so it stays legible over the icon's ink.
+            val pencil = Button().apply { styleClass += "header-pencil"; graphic = Icons.pencilBadge(11.0, "-text", halo = "-surface-raised"); tooltip = javafx.scene.control.Tooltip("Change icon"); setOnAction { host.changeIcon() } }
             children += pencil
             StackPane.setAlignment(pencil, Pos.BOTTOM_RIGHT)
-            StackPane.setMargin(pencil, Insets(0.0, -7.0, -7.0, 0.0))
+            StackPane.setMargin(pencil, Insets(0.0, -1.0, -1.0, 0.0))
             minWidth = 40.0; prefWidth = 40.0; maxWidth = 40.0; minHeight = 40.0; prefHeight = 40.0; maxHeight = 40.0
         }
         iconButton.setOnAction { host.launchActive() }
@@ -158,6 +178,19 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         })
         addressField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(serverUrl = v.orEmpty()) } }
         tunnelField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(tunnelCommand = v?.trim()?.takeIf { s -> s.isNotEmpty() }) } }
+
+        val passwordRow = HBox(8.0, passwordField, savePasswordButton).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(passwordField, Priority.ALWAYS); passwordField.minWidth = 0.0 }
+        val statusRow = HBox(8.0, passwordIcon, passwordStatus, removePasswordButton).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(passwordStatus, Priority.ALWAYS); passwordStatus.maxWidth = Double.MAX_VALUE }
+        val signInCard = Controls.card("Sign-in", VBox(
+            Controls.fieldGrid().apply {
+                row(0, "Username", userField)
+                row(1, "Password", VBox(6.0, passwordRow, statusRow).apply { minWidth = 0.0 })
+            },
+            signInNote.apply { VBox.setMargin(this, Insets(10.0, 0.0, 0.0, 0.0)) },
+        ))
+        userField.textProperty().addListener { _, _, v -> if (!updating) { update { it.copy(username = v?.trim()?.takeIf { s -> s.isNotEmpty() }) }; refreshSignIn() } }
+        passwordField.textProperty().addListener { _, _, _ -> refreshSignIn() }
+        passwordField.setOnAction { if (!savePasswordButton.isDisable) submitPassword() }
 
         val javaRow = HBox(8.0, javaButton, javaNote, customJavaField, browseJava).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(customJavaField, Priority.ALWAYS); customJavaField.minWidth = 0.0 }
         val fxRow = HBox(8.0, javaFxField, browseFx).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(javaFxField, Priority.ALWAYS); javaFxField.minWidth = 0.0 }
@@ -201,8 +234,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         cipherField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(sslCipherSuites = it.sslCipherSuites.copy(value = v.orEmpty())) } }
         val tlsCard = Controls.card("TLS / SSL", tlsBody, head = tlsHead)
 
-        cards = listOf(connectionCard, javaCard, certCard, tlsCard)
-        cards.forEach { GridPane.setHgrow(it, Priority.ALWAYS); it.maxWidth = Double.MAX_VALUE; GridPane.setValignment(it, javafx.geometry.VPos.TOP) }
+        leftCards = listOf(connectionCard, javaCard)
+        rightCards = listOf(signInCard, certCard, tlsCard)
+        (leftCards + rightCards).forEach { GridPane.setHgrow(it, Priority.ALWAYS); it.maxWidth = Double.MAX_VALUE; GridPane.setValignment(it, javafx.geometry.VPos.TOP) }
         layoutCards(true)
         scroll.content = body
         body.widthProperty().addListener { _, _, w -> val two = w.toDouble() >= 700.0; if (two != twoColumns) { layoutCards(two); refreshTls() } }
@@ -235,6 +269,34 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         model.draft.get()?.let { renderCertificates(it) }
     }
 
+    /** The Sign-in card's status line and buttons, from the saved connection's credential and the fields. */
+    fun refreshSignIn() {
+        val d = model.draft.get() ?: return
+        val saved = model.active
+        val savedUser = saved?.username?.trim()?.takeIf { it.isNotEmpty() }
+        val draftUser = userField.text?.trim().orEmpty()
+        val hasPassword = savedUser != null && model.hasSavedPassword(d.id)
+        savePasswordButton.isDisable = draftUser.isEmpty() || passwordField.text.isNullOrEmpty()
+        removePasswordButton.isVisible = hasPassword; removePasswordButton.isManaged = hasPassword
+        val (glyph, color, text) = when {
+            hasPassword && draftUser != savedUser -> Triple("circle-check", "-ok", "Saved for “$savedUser” — it moves to “$draftUser” when you save the connection")
+            hasPassword -> Triple("circle-check", "-ok", "Saved for “$savedUser”")
+            draftUser.isEmpty() -> Triple("minus", "-text-muted", "No username — the Administrator shows its login screen")
+            else -> Triple("minus", "-text-muted", "No password saved — the Administrator asks for it at its login screen")
+        }
+        passwordIcon.children.setAll(Icons.glyph(glyph, 14.0, color))
+        passwordStatus.text = text
+    }
+
+    /** Hand the typed password to the window (which stores it) and clear the field; the window zeroes the array. */
+    private fun submitPassword() {
+        val typed = passwordField.text.orEmpty()
+        if (typed.isEmpty()) return
+        val chars = typed.toCharArray()
+        passwordField.clear()
+        host.savePassword(chars)
+    }
+
     fun setThemeDark(dark: Boolean) {
         Controls.setGlyph(themeButton, if (dark) "sun" else "moon")
         themeButton.tooltip = javafx.scene.control.Tooltip(if (dark) "Switch to light theme" else "Switch to dark theme")
@@ -262,6 +324,10 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             if (addressField.text != d.serverUrl) addressField.text = d.serverUrl
             val tunnel = d.tunnelCommand.orEmpty()
             if (tunnelField.text.orEmpty().trim() != tunnel) tunnelField.text = tunnel
+            val user = d.username?.trim().orEmpty()
+            if (userField.text.orEmpty().trim() != user) userField.text = user
+            if (d.id != renderedId) { passwordField.clear(); renderedId = d.id } // a typed, unsaved password never follows a selection change
+            refreshSignIn()
             folderButton.setCaption(model.pathOf(d.folderId))
             // Menus are rebuilt when they open; seed them here too so the first click never finds them empty.
             folderButton.items.setAll(folderMenuItems())
@@ -380,11 +446,15 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
                 javafx.scene.layout.ColumnConstraints().apply { percentWidth = 50.0; hgrow = Priority.ALWAYS },
                 javafx.scene.layout.ColumnConstraints().apply { percentWidth = 50.0; hgrow = Priority.ALWAYS },
             )
-            body.add(cards[0], 0, 0); body.add(cards[1], 0, 1)
-            body.add(cards[2], 1, 0); body.add(cards[3], 1, 1)
+            // Each column stacks its own cards (a VBox per column), so a tall card on one side never
+            // pushes the other side's next card down to meet it.
+            body.add(VBox(12.0).apply { children.setAll(leftCards); minWidth = 0.0 }, 0, 0)
+            body.add(VBox(12.0).apply { children.setAll(rightCards); minWidth = 0.0 }, 1, 0)
         } else {
             body.columnConstraints.add(javafx.scene.layout.ColumnConstraints().apply { percentWidth = 100.0; hgrow = Priority.ALWAYS })
-            cards.forEachIndexed { i, c -> body.add(c, 0, i) }
+            // One column: Connection, Sign-in, then the rest — the two a new connection needs first.
+            val order = listOf(leftCards[0], rightCards[0]) + leftCards.drop(1) + rightCards.drop(1)
+            order.forEachIndexed { i, c -> body.add(c, 0, i) }
         }
     }
 

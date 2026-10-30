@@ -38,9 +38,12 @@ class LauncherApp : Application() {
         // port-forward the launcher opened — hide and stay alive until it exits (see Shell.requestClose).
         stage.setOnCloseRequest { e -> e.consume(); shell.requestClose() }
         stage.show()
+        // A launcher started while this one runs (hidden or not) brings this window back instead.
+        SingleInstance.onShow = { Platform.runLater { shell.show() } }
     }
 
     override fun stop() {
+        SingleInstance.release()
         shell?.shutdown()
     }
 

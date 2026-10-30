@@ -51,6 +51,8 @@ class WindowsDpapiCredentialStore : CredentialStore {
         Files.deleteIfExists(blobFile(connectionId, username))
     }
 
+    override fun exists(connectionId: String, username: String): Boolean = Files.isRegularFile(blobFile(connectionId, username))
+
     private fun toBytes(chars: CharArray): ByteArray {
         val bb = Charsets.UTF_8.encode(CharBuffer.wrap(chars))
         val out = ByteArray(bb.remaining())

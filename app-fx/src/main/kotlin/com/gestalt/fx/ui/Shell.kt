@@ -291,6 +291,23 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         detail.refreshCertificates()
     }
 
+    override fun savePassword(password: CharArray) {
+        val id = model.activeId.get()
+        if (id == null) { password.fill('\u0000'); return }
+        val user = model.draft.get()?.username?.trim().orEmpty()
+        val error = model.savePassword(id, user, password) // zeroes the array
+        if (error == null) toast.show("Password saved", "Filled in at the Administrator’s login screen", ToastHost.Kind.Success)
+        else toast.show("Couldn’t save the password", error, ToastHost.Kind.Error, 6000)
+        detail.refreshSignIn()
+    }
+
+    override fun removePassword() {
+        val id = model.activeId.get() ?: return
+        model.clearPassword(id)
+        toast.show("Password removed", "The Administrator will ask for it at its login screen", ToastHost.Kind.Success, 2400)
+        detail.refreshSignIn()
+    }
+
     override fun toggleTheme() {
         model.dark.set(!model.dark.get())
     }
@@ -380,6 +397,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
 
     private var shutDown = false
     private var lingering = false
+    private var idleHooked = false
 
     /**
      * Close the window — the user's X, or close-after-launch once the Administrator is running.
@@ -387,29 +405,63 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
      * When an Administrator launched from here still depends on a port-forward the launcher opened, the
      * window goes away but the process does not: the tunnel is the client's connection, so it must stay
      * up while the client runs and come down when it exits. The launcher keeps running hidden, holding
-     * the tunnel, and exits once the last such Administrator has closed. Otherwise it is a plain close.
+     * the tunnel, and exits once the last such Administrator has closed. Nothing is torn down meanwhile —
+     * the model, its executors and the launch controller stay live, so the window can come back
+     * ([show], when the user starts the launcher again) and carry on as if it had never closed.
+     * Otherwise it is a plain close: everything stops and the platform exits (explicitly — implicit exit
+     * is off once the window has lingered).
      */
     fun requestClose() {
         val tunnels = com.gestalt.launcher.tunnel.TunnelManager.shared
         if (tunnels.hasLiveTunnels()) {
+            saveGeometry()
+            model.flushPendingSave()
             if (!lingering) {
                 lingering = true
                 com.gestalt.launcher.audit.AuditLog.event("launcher.linger", "reason" to "port-forward held for a running Administrator")
-                javafx.application.Platform.setImplicitExit(false)
-                shutdown() // geometry saved, edits flushed; the tunnel is left to its leases
-                tunnels.onIdle { javafx.application.Platform.runLater { javafx.application.Platform.exit() } }
+            }
+            javafx.application.Platform.setImplicitExit(false)
+            if (!idleHooked) {
+                idleHooked = true
+                // The listener is one-shot (the manager drops it when it fires); it is re-armed on the next
+                // linger. A window the user brought back meanwhile stays: only a hidden launcher exits.
+                tunnels.onIdle {
+                    javafx.application.Platform.runLater {
+                        idleHooked = false
+                        if (lingering) exitNow()
+                    }
+                }
             }
             stage.hide()
         } else {
-            shutdown()
-            stage.close()
+            exitNow()
         }
     }
 
-    /** Save the window geometry, flush edits and stop background work; once. */
-    fun shutdown() {
+    /**
+     * Bring a lingering (hidden) window back — a second launcher was started while this one held a
+     * port-forward, and asked this one to show itself instead. A visible window is just raised.
+     */
+    fun show() {
         if (shutDown) return
-        shutDown = true
+        lingering = false
+        if (!stage.isShowing) {
+            com.gestalt.launcher.audit.AuditLog.event("launcher.show", "reason" to "launcher started again while lingering")
+            stage.show()
+        }
+        if (stage.isIconified) stage.isIconified = false
+        stage.toFront()
+        stage.requestFocus()
+    }
+
+    private fun exitNow() {
+        com.gestalt.fx.SingleInstance.release() // first: a launcher started from here on must start its own window
+        shutdown()
+        stage.hide()
+        javafx.application.Platform.exit()
+    }
+
+    private fun saveGeometry() {
         model.prefs.batch {
             windowMaximized = stage.isMaximized
             if (!stage.isMaximized) {
@@ -418,6 +470,13 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
             }
             sidebarWidth = sidebar.prefWidth
         }
+    }
+
+    /** Save the window geometry, flush edits and stop background work; once. */
+    fun shutdown() {
+        if (shutDown) return
+        shutDown = true
+        if (stage.isShowing) saveGeometry() // a hidden stage reports no useful geometry; the linger saved it
         model.shutdown()
     }
 }

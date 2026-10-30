@@ -17,5 +17,8 @@ fun main(args: Array<String>) {
     // The only AWT the app touches is ImageIO / BufferedImage for icon imports, which work headless;
     // keeping AWT from creating a toolkit beside JavaFX avoids a known hang on macOS.
     System.setProperty("java.awt.headless", "true")
+    // One launcher per profile: a launcher already running (perhaps hidden, holding a port-forward for
+    // an Administrator) is asked to show its window instead, and this process ends before any UI starts.
+    if (!SingleInstance.claimOrHandOver()) return
     Application.launch(LauncherApp::class.java, *args)
 }

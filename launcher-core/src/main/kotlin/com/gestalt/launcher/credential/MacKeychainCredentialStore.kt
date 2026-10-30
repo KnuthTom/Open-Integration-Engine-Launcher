@@ -70,6 +70,16 @@ class MacKeychainCredentialStore : CredentialStore {
         }
     }
 
+    /** Finds the item without asking for its data, so the Keychain's access-control prompt is not raised. */
+    override fun exists(connectionId: String, username: String): Boolean {
+        val account = accountBytes(connectionId, username)
+        val itemRef = PointerByReference()
+        val status = sec.SecKeychainFindGenericPassword(
+            null, serviceBytes.size, serviceBytes, account.size, account, null, null, itemRef,
+        )
+        return status == ERR_SEC_SUCCESS && itemRef.value != null
+    }
+
     override fun delete(connectionId: String, username: String) {
         val account = accountBytes(connectionId, username)
         val itemRef = PointerByReference()

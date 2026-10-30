@@ -256,13 +256,112 @@ class LauncherModel(
     /** Persist the draft over the active connection. Returns false when there is nothing to save. */
     fun save(): Boolean {
         val d = draft.get() ?: return false
-        if (store.get(d.id) == null) return false
+        val previous = store.get(d.id) ?: return false
         store.update(d, persist = false)
+        followUsername(d.id, previous.username, d.username)
         schedulePersist()
         refresh()
         draft.set(store.get(d.id))
         return true
     }
+
+    // --- sign-in: the username is a field of the connection, the password lives in the OS credential store only ----
+
+    /** A short name for where passwords are kept, for the UI's note. */
+    val passwordStoreLabel: String
+        get() = when (credentials.name) {
+            "windows-dpapi" -> "Windows DPAPI, encrypted for your Windows account"
+            "macos-keychain" -> "the macOS Keychain"
+            "linux-libsecret" -> "the system keyring"
+            else -> "the OS credential store"
+        }
+
+    private val passwordKnown = HashMap<String, Boolean>()
+
+    private fun credentialKey(id: String, username: String) = "$id\u0000$username"
+
+    /**
+     * Whether a password is saved for connection [id] under its saved username. The first answer per
+     * connection is one existence check against the credential store (no secret is read); later ones
+     * come from a cache the writes below keep current.
+     */
+    fun hasSavedPassword(id: String): Boolean {
+        val user = store.get(id)?.username?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        return passwordKnown.getOrPut(credentialKey(id, user)) {
+            runCatching { credentials.exists(id, user) }
+                .onFailure { AuditLog.event("credential.error", "connection" to id, "action" to "exists", "error" to it.describe()) }
+                .getOrDefault(false)
+        }
+    }
+
+    /**
+     * Save [password] for [id] under [username] in the OS credential store — never in `connections.json`
+     * — and make [username] the saved connection's username at once (like the other switches that apply
+     * without Save), so the next launch finds the two together. A password kept under a previous
+     * username is removed. [password] is zeroed before this returns. Returns null on success, else a
+     * description of why the store refused it.
+     */
+    fun savePassword(id: String, username: String, password: CharArray): String? {
+        try {
+            val conn = store.get(id) ?: return "The connection no longer exists"
+            val user = username.trim()
+            if (user.isEmpty()) return "Enter the username first"
+            if (password.isEmpty()) return "Enter the password to save"
+            val previous = conn.username?.trim()?.takeIf { it.isNotEmpty() }
+            try {
+                credentials.store(id, user, password)
+            } catch (e: Exception) {
+                AuditLog.event("credential.error", "connection" to id, "action" to "store", "error" to e.describe())
+                passwordKnown.remove(credentialKey(id, user))
+                return e.describe() // the previous entry, if any, is untouched
+            }
+            passwordKnown[credentialKey(id, user)] = true
+            if (previous != null && previous != user) forgetPassword(id, previous)
+            if (conn.username != user) applyToSaved(id) { it.copy(username = user) }
+            return null
+        } finally {
+            password.fill('\u0000')
+        }
+    }
+
+    /** Remove the saved password for [id] (under its saved username). The username stays. */
+    fun clearPassword(id: String) {
+        val user = store.get(id)?.username?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        forgetPassword(id, user)
+    }
+
+    private fun forgetPassword(id: String, user: String) {
+        runCatching { credentials.delete(id, user) }
+            .onFailure { AuditLog.event("credential.error", "connection" to id, "action" to "delete", "error" to it.describe()) }
+        passwordKnown[credentialKey(id, user)] = false
+    }
+
+    /**
+     * The credential is keyed by connection and username, so when a Save renames the username the saved
+     * password moves with it (read under the old name, stored under the new, the old entry removed); a
+     * cleared username drops it.
+     */
+    private fun followUsername(id: String, from: String?, to: String?) {
+        val old = from?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val new = to?.trim()?.takeIf { it.isNotEmpty() }
+        if (old == new) return
+        if (new != null) {
+            val pw = runCatching { credentials.retrieve(id, old) }.getOrNull()
+            if (pw != null) {
+                try {
+                    credentials.store(id, new, pw)
+                    passwordKnown[credentialKey(id, new)] = true
+                } catch (e: Exception) {
+                    AuditLog.event("credential.error", "connection" to id, "action" to "store", "error" to e.describe())
+                } finally {
+                    pw.fill('\u0000')
+                }
+            }
+        }
+        forgetPassword(id, old)
+    }
+
+    private fun Throwable.describe(): String = message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
 
     /** Save the draft as a new connection beside the active one and select it. Returns the new id. */
     fun saveAs(): String? {
@@ -313,7 +412,7 @@ class LauncherModel(
     fun deleteConnection(id: String) {
         val conn = store.get(id) ?: return
         store.delete(id, persist = false)
-        conn.username?.takeIf { it.isNotBlank() }?.let { user -> runCatching { credentials.delete(id, user) } }
+        conn.username?.trim()?.takeIf { it.isNotEmpty() }?.let { user -> forgetPassword(id, user) }
         trustedCerts.forgetConnection(id)
         launches.remove(id)
         if (activeId.get() == id) select(null)
