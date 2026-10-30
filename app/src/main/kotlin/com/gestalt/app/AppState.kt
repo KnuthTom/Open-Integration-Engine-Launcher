@@ -1118,11 +1118,25 @@ class AppState(
             updateState = UpdateState.Available(available)
             return
         }
-        val staging = Files.createTempDirectory("gcc-update-")
+        // The executable to replace and relaunch is THIS process's own launcher exe (the package name
+        // changed once already and a hardcoded name silently broke the swap). When not running from a
+        // packaged image — e.g. `gradlew :app:run`, whose command is java.exe — there is nothing to swap.
+        val exeName = runningLauncherExeName() ?: run {
+            banner = "Self-update is only available from the packaged portable launcher."
+            updateState = UpdateState.Available(available)
+            return
+        }
+        val staging = Files.createTempDirectory("oie-launcher-update-")
         unzip(archive, staging)
-        val imageRoot = staging.resolve("GestaltCloudConnect").takeIf { Files.isDirectory(it) } ?: staging
-        val exe = appDir.resolve("GestaltCloudConnect.exe")
-        val script = staging.resolve("gestalt-swap.ps1")
+        // Refuse to swap unless the archive really holds an image with our executable in it — mirroring
+        // the wrong (e.g. one-level-too-deep) directory over the app would delete the app.
+        val imageRoot = PortableSwap.findImageRoot(staging, exeName) ?: run {
+            runCatching { staging.toFile().deleteRecursively() }
+            updateState = UpdateState.Failed("The update archive does not contain $exeName; not applied.")
+            return
+        }
+        val exe = appDir.resolve(exeName)
+        val script = staging.resolve("update-swap.ps1")
         Files.writeString(
             script,
             PortableSwap.windowsSwapScript(appDir, imageRoot, ProcessHandle.current().pid(), exe, AppPaths.PORTABLE_DATA_DIR_NAME),
@@ -1133,6 +1147,19 @@ class AppState(
             .start()
         AuditLog.updateApplied(available.manifest.version, "portable")
         runCatching { requestClose() }
+    }
+
+    /**
+     * The file name of the executable this process was started from, when it is a packaged launcher
+     * (`OpenIntegrationEngineLauncher.exe`); null under a plain JVM (`java.exe` / `javaw.exe`), i.e. a
+     * dev run that has no app image to swap.
+     */
+    private fun runningLauncherExeName(): String? {
+        val command = runCatching { ProcessHandle.current().info().command().orElse(null) }.getOrNull() ?: return null
+        val name = runCatching { Path.of(command).fileName.toString() }.getOrNull() ?: return null
+        val lower = name.lowercase()
+        if (!lower.endsWith(".exe") || lower == "java.exe" || lower == "javaw.exe") return null
+        return name
     }
 
     /** Open the update artifact's download URL in the browser (portable notify path). */
