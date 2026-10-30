@@ -165,6 +165,20 @@ class ConnectionImportTest {
     }
 
     @Test
+    @DisplayName("user:password@ userinfo in an imported address is stripped (legacy and own format)")
+    fun stripsUserInfoFromAddresses() {
+        val legacy = """[{"name":"Creds in URL","address":"https://admin:hunter2@mirth.example.com:8443/webstart"}]"""
+        val fromLegacy = ConnectionImport.parse(legacy).single()
+        assertEquals("https://mirth.example.com:8443", fromLegacy.serverUrl)
+
+        val own = """{"version":1,"connections":[{"id":"x","name":"Own","serverUrl":"https://admin:hunter2@mirth.example.com:8443","username":"admin"}]}"""
+        val fromOwn = ConnectionImport.parse(own).single()
+        assertEquals("https://mirth.example.com:8443", fromOwn.serverUrl)
+        assertEquals(null, fromOwn.username) { "ids are regenerated on import, so a username would be a dangling keychain reference" }
+        assertFalse(Json.encodeToString(listOf(fromLegacy, fromOwn)).contains("hunter2"))
+    }
+
+    @Test
     @DisplayName("never imports credentials — no username and no plaintext secret survives")
     fun neverImportsSecrets() {
         val all = parsed()

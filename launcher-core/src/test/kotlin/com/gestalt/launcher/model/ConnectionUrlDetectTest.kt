@@ -45,12 +45,51 @@ class ConnectionUrlDetectTest {
     }
 
     @Test
-    @DisplayName("plain http -> Custom + insecure")
-    fun httpIsCustomAndInsecure() {
-        val d = ConnectionUrl.detect("http://localhost:8080")
-        assertEquals(ConnectionMode.Custom, d.mode)
-        assertTrue(d.insecure)
-        assertTrue(d.valid)
+    @DisplayName("plain http is first-class: classified like https, flagged insecure (matches the importer)")
+    fun httpIsFirstClassAndInsecure() {
+        val local = ConnectionUrl.detect("http://localhost:8080")
+        assertEquals(ConnectionMode.LocalhostPortForward, local.mode) { "same answer ConnectionUrl.deriveMode gives the importer" }
+        assertTrue(local.insecure)
+        assertTrue(local.valid)
+
+        val remote = ConnectionUrl.detect("http://oie.example.internal:8080")
+        assertEquals(ConnectionMode.Standard, remote.mode)
+        assertTrue(remote.insecure)
+        assertTrue(remote.valid)
+
+        assertEquals(ConnectionMode.LocalhostPortForward, ConnectionUrl.deriveMode("http://localhost:8080"))
+        assertEquals(ConnectionMode.Standard, ConnectionUrl.deriveMode("http://oie.example.internal:8080"))
+    }
+
+    @Test
+    @DisplayName("userinfo in the address is refused — credentials never ride in a persisted, logged URL")
+    fun userInfoIsRefused() {
+        val d = ConnectionUrl.detect("https://admin:hunter2@mirth.example.com:8443")
+        assertFalse(d.valid)
+        assertTrue(d.problem.orEmpty().contains("username or password")) { d.problem.orEmpty() }
+        assertEquals("https://mirth.example.com:8443", ConnectionUrl.stripUserInfo("https://admin:hunter2@mirth.example.com:8443"))
+        assertEquals("https://mirth.example.com:8443/mirth", ConnectionUrl.stripUserInfo("https://admin@mirth.example.com:8443/mirth"))
+        assertEquals("https://mirth.example.com:8443", ConnectionUrl.stripUserInfo("https://mirth.example.com:8443")) { "no userinfo → unchanged" }
+    }
+
+    @Test
+    @DisplayName("an IPv6 loopback literal with a port is a LocalhostPortForward")
+    fun ipv6LoopbackIsPortForward() {
+        val d = ConnectionUrl.detect("https://[::1]:8443")
+        assertTrue(d.valid) { d.problem.orEmpty() }
+        assertEquals(ConnectionMode.LocalhostPortForward, d.mode)
+        assertEquals(8443, d.port)
+        assertEquals(ConnectionMode.LocalhostPortForward, ConnectionUrl.deriveMode("https://127.0.0.1:31065"))
+        assertEquals(ConnectionMode.LocalhostPortForward, ConnectionUrl.deriveMode("https://[::1]:31065"))
+    }
+
+    @Test
+    @DisplayName("a port outside 1..65535 is not valid")
+    fun portRange() {
+        assertFalse(ConnectionUrl.detect("https://host:0").valid)
+        assertFalse(ConnectionUrl.detect("https://host:70000").valid)
+        assertTrue(ConnectionUrl.detect("https://host:65535").valid)
+        assertEquals(ConnectionMode.Custom, ConnectionUrl.deriveMode("https://host:70000"))
     }
 
     @Test

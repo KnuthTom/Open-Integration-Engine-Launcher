@@ -111,8 +111,13 @@ object ConnectionImport {
         lenient.decodeFromString<List<LegacyConnection>>(text)
             .mapIndexed { index, entry -> mapLegacy(entry, index, idGenerator()) }
 
+    // Our own export format. Ids are regenerated on import (see import), so a username would be a
+    // dangling keychain reference — drop it like the legacy path does; and never let `user:pw@` userinfo
+    // from a hand-edited file into the store.
     private fun parseGestalt(text: String): List<Connection> =
-        lenient.decodeFromString<GestaltFile>(text).connections
+        lenient.decodeFromString<GestaltFile>(text).connections.map {
+            it.copy(username = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl))
+        }
 
     @Serializable
     private data class GestaltFile(val version: Int = 1, val connections: List<Connection> = emptyList())
@@ -143,7 +148,8 @@ object ConnectionImport {
     )
 
     private fun mapLegacy(entry: LegacyConnection, index: Int, id: String): Connection {
-        val baseUrl = ConnectionUrl.stripWebstart(entry.address)  // preserves scheme (http or https)
+        // Preserves scheme (http or https); strips a trailing /webstart and any user:pw@ userinfo.
+        val baseUrl = ConnectionUrl.stripUserInfo(ConnectionUrl.stripWebstart(entry.address))
         return Connection(
             id = id,
             name = entry.name.ifBlank { "Imported ${index + 1}" },
@@ -258,8 +264,9 @@ object ConnectionImport {
         return ImportSummary(format, incoming.size, added, replaced, merged, skipped)
     }
 
+    // `https://h:8443` and `https://h:8443/` are the same server.
     private fun dedupeKey(c: Connection): String =
-        c.name.trim().lowercase() + "|" + c.serverUrl.trim().lowercase()
+        c.name.trim().lowercase() + "|" + c.serverUrl.trim().trimEnd('/').lowercase()
 
     private fun freshId(existing: List<Connection>): String {
         val taken = existing.mapTo(HashSet()) { it.id }

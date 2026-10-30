@@ -6,6 +6,7 @@
 
 package com.gestalt.launcher.model
 
+import com.gestalt.launcher.net.LocalhostResolver
 import java.net.URI
 
 /**
@@ -35,26 +36,25 @@ object ConnectionUrl {
     /**
      * Classify a base URL into an edit [ConnectionMode]. Both `https` and `http` are first-class (plain
      * http is allowed for servers like an OIE appliance on `http://localhost:8080`; the insecurity is
-     * surfaced separately, not by forcing Custom mode):
+     * surfaced separately by [detect], never by forcing Custom mode). The ONE classifier for the form
+     * and the importer, so a connection reopens in the mode it was imported with:
      *  - a non-web scheme (not http/https) → [ConnectionMode.Custom];
      *  - a non-root path → [ConnectionMode.Custom];
-     *  - no explicit port → [ConnectionMode.Custom];
-     *  - `localhost`/`127.0.0.1` with a port → [ConnectionMode.LocalhostPortForward];
+     *  - no explicit (valid) port → [ConnectionMode.Custom];
+     *  - a loopback host (`localhost`, `127.x`, `[::1]`) with a port → [ConnectionMode.LocalhostPortForward];
      *  - otherwise `host:port` → [ConnectionMode.Standard].
      */
-    fun deriveMode(baseUrl: String): ConnectionMode {
-        val uri = runCatching { URI.create(baseUrl.trim()) }.getOrNull() ?: return ConnectionMode.Custom
+    fun deriveMode(baseUrl: String): ConnectionMode =
+        classify(runCatching { URI.create(baseUrl.trim()) }.getOrNull())
+
+    private fun classify(uri: URI?): ConnectionMode {
+        if (uri == null) return ConnectionMode.Custom
         val scheme = uri.scheme?.lowercase()
         if (scheme != "https" && scheme != "http") return ConnectionMode.Custom
         val path = uri.path.orEmpty()
         if (path.isNotEmpty() && path != "/") return ConnectionMode.Custom
-        if (uri.port == -1) return ConnectionMode.Custom
-        val host = uri.host?.lowercase()
-        return if (host == "localhost" || host == "127.0.0.1") {
-            ConnectionMode.LocalhostPortForward
-        } else {
-            ConnectionMode.Standard
-        }
+        if (uri.port !in VALID_PORTS) return ConnectionMode.Custom
+        return if (LocalhostResolver.isLoopbackHost(uri.host)) ConnectionMode.LocalhostPortForward else ConnectionMode.Standard
     }
 
     /**
@@ -73,16 +73,20 @@ object ConnectionUrl {
         val insecure: Boolean,
         /** True when the address parses to a usable http/https base URL with a host. */
         val valid: Boolean,
+        /** Why the address is not [valid], in words the form can show; null when valid or blank. */
+        val problem: String? = null,
     )
 
     private val SCHEME_PREFIX = Regex("^[a-zA-Z][a-zA-Z0-9+.\\-]*://")
+    private val VALID_PORTS = 1..65535
 
     /**
      * Auto-detect scheme / host / port / [ConnectionMode] / insecurity from whatever a user types or
      * pastes into the single address field. A bare `host:port` (no scheme) is assumed https. Classifies
-     * per §6.3.1: `https://host:port` → Standard, `https://localhost:port` → LocalhostPortForward, and
-     * plain `http`, a path-bearing URL, a non-web scheme, or a missing port → Custom (http also flags
-     * insecure). Never throws — a partial/garbage address yields `valid = false`.
+     * exactly like [deriveMode] (plain http is a first-class transport, flagged `insecure` rather than
+     * forced to Custom). An address carrying userinfo (`https://user:secret@host`) is refused: credentials
+     * belong in the OS keychain, never in a URL that is persisted and logged. Never throws — a
+     * partial/garbage address yields `valid = false` with a [Detected.problem].
      */
     fun detect(input: String): Detected {
         val raw = input.trim()
@@ -94,19 +98,27 @@ object ConnectionUrl {
         val scheme = uri?.scheme?.lowercase()
         val host = uri?.host
         val port = uri?.port?.takeIf { it != -1 }
-        val path = uri?.path.orEmpty()
-        val hasPath = path.isNotEmpty() && path != "/"
         val insecure = scheme == "http"
-        val valid = (scheme == "http" || scheme == "https") && !host.isNullOrBlank()
-        val mode = when {
-            scheme != "http" && scheme != "https" -> ConnectionMode.Custom
-            hasPath -> ConnectionMode.Custom
-            insecure -> ConnectionMode.Custom
-            port == null -> ConnectionMode.Custom
-            host?.lowercase() == "localhost" || host == "127.0.0.1" -> ConnectionMode.LocalhostPortForward
-            else -> ConnectionMode.Standard
+        val problem = when {
+            uri == null -> "That isn't a valid address."
+            scheme != "http" && scheme != "https" -> "Only http:// and https:// addresses are supported."
+            host.isNullOrBlank() -> "The address needs a host name or IP."
+            uri?.rawUserInfo != null -> "Don't put a username or password in the address — use the credential fields."
+            port != null && port !in VALID_PORTS -> "The port must be between 1 and 65535."
+            else -> null
         }
-        return Detected(if (valid) base else raw, scheme, host, port, mode, insecure, valid)
+        val valid = problem == null
+        return Detected(if (valid) base else raw, scheme, host, port, classify(uri), insecure, valid, problem)
+    }
+
+    /** [url] with any `user:password@` userinfo removed — for logs and for imported addresses. */
+    fun stripUserInfo(url: String): String {
+        val trimmed = url.trim()
+        val uri = runCatching { URI.create(trimmed) }.getOrNull() ?: return trimmed
+        if (uri.rawUserInfo == null) return trimmed
+        return runCatching {
+            URI(uri.scheme, null, uri.host, uri.port, uri.path, uri.query, uri.fragment).toString()
+        }.getOrDefault(trimmed)
     }
 
     /** Scheme of a URL (lowercased), or null if unparseable. */

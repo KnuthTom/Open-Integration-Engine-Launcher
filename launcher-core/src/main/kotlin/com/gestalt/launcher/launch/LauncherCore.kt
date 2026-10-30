@@ -329,7 +329,7 @@ class LauncherCore(
      * foreign or tampered jar, but we fail even earlier and closed.
      */
     private fun resolveArtifactUri(connection: Connection, href: String): URI {
-        val base = baseForRelativeResolution(connection.baseUri())
+        val base = connection.baseDirUri()
         val resolved = base.resolve(href)
         val baseHost = base.host?.lowercase()
         val resolvedHost = resolved.host?.lowercase()
@@ -348,7 +348,7 @@ class LauncherCore(
      * segment is refused so a hostile href can't escape the cache directory.
      */
     private fun artifactNameFor(connection: Connection, uri: URI): String {
-        val basePath = baseForRelativeResolution(connection.baseUri()).path.orEmpty()
+        val basePath = connection.baseDirUri().path.orEmpty()
         val path = uri.path.orEmpty()
         val relative = if (basePath.isNotEmpty() && path.startsWith(basePath)) path.substring(basePath.length) else path
         val segments = relative.split('/').filter { it.isNotEmpty() }
@@ -357,21 +357,6 @@ class LauncherCore(
         }
         return segments.joinToString("/")
     }
-
-    /**
-     * The connection base as a *directory*, for resolving relative hrefs. [URI.resolve] treats the last
-     * path segment of the base as a file: against `http://host:8080` (empty path) it yields the malformed
-     * `http://host:8080webstart/...`, and against `https://host/mirth` it drops `/mirth`. A trailing "/"
-     * fixes both — `webstart/x.jar` becomes `http://host:8080/webstart/x.jar` and
-     * `https://host/mirth/webstart/x.jar`. An absolute href ignores the base entirely (so the host and
-     * downgrade checks still apply to it).
-     */
-    private fun baseForRelativeResolution(base: URI): URI =
-        if (base.rawPath.isNullOrEmpty() || !base.rawPath.endsWith("/")) {
-            URI.create(base.toString().substringBefore('?').substringBefore('#').trimEnd('/') + "/")
-        } else {
-            base
-        }
 
     /**
      * True when [file] already holds bytes whose SHA-256 matches the digest [manifest] expects for [name] —

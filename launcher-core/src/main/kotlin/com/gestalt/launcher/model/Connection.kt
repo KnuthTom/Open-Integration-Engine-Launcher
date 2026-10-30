@@ -62,10 +62,22 @@ data class Connection(
 
     fun baseUri(): URI = URI.create(serverUrl)
 
-    fun webstartUri(): URI = baseUri().resolve(webstartPath)
+    /**
+     * The base URL as a *directory* (trailing slash, query/fragment dropped) so that relative paths resolve
+     * UNDER it. [URI.resolve] treats the last path segment of a base as a file and an absolute path as a
+     * replacement: `https://h/mirth` + `/webstart` gave `https://h/webstart`, silently discarding the
+     * path of every Custom connection that has one. `https://h/mirth/` + `webstart` gives
+     * `https://h/mirth/webstart`. A host-only URL (`http://h:8080`) becomes `http://h:8080/`.
+     */
+    fun baseDirUri(): URI {
+        val trimmed = serverUrl.trim().substringBefore('?').substringBefore('#').trimEnd('/')
+        return URI.create("$trimmed/")
+    }
+
+    fun webstartUri(): URI = baseDirUri().resolve(webstartPath.trim().trimStart('/'))
 
     fun digestUri(version: String): URI =
-        baseUri().resolve(digestPath.trimEnd('/') + "/" + version)
+        baseDirUri().resolve(digestPath.trim().trim('/') + "/" + version)
 
     /** Normalized pin for comparison (lowercase, no separators), or null. */
     val normalizedPin: String?

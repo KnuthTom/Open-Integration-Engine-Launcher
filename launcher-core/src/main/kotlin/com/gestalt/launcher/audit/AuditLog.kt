@@ -7,6 +7,7 @@
 package com.gestalt.launcher.audit
 
 import com.gestalt.launcher.AppPaths
+import com.gestalt.launcher.model.ConnectionUrl
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 
@@ -43,11 +44,12 @@ object AuditLog {
 
     // --- connection lifecycle ---------------------------------------------------------------------
 
+    // The server URL is redacted of any user:pw@ userinfo before it reaches the log, whatever the caller passed.
     fun connectionAdded(id: String, name: String, server: String) =
-        event("connection.add", "connection" to id, "name" to name, "server" to server)
+        event("connection.add", "connection" to id, "name" to name, "server" to ConnectionUrl.stripUserInfo(server))
 
     fun connectionEdited(id: String, name: String, server: String) =
-        event("connection.edit", "connection" to id, "name" to name, "server" to server)
+        event("connection.edit", "connection" to id, "name" to name, "server" to ConnectionUrl.stripUserInfo(server))
 
     fun connectionDeleted(id: String) =
         event("connection.delete", "connection" to id)
