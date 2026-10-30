@@ -14,5 +14,8 @@ import javafx.application.Application
  * that extends Application; a plain main that calls [Application.launch] starts either way.
  */
 fun main(args: Array<String>) {
+    // The only AWT the app touches is ImageIO / BufferedImage for icon imports, which work headless;
+    // keeping AWT from creating a toolkit beside JavaFX avoids a known hang on macOS.
+    System.setProperty("java.awt.headless", "true")
     Application.launch(LauncherApp::class.java, *args)
 }

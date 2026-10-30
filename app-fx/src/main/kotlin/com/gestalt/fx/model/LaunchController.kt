@@ -78,18 +78,26 @@ class LaunchController(
         if (inFlight.containsKey(id)) return
         val launcher = launcherFactory()
         val task = FutureTask<Unit> {
-            try {
+            // Decide the outcome first, release the in-flight slot, THEN tell the UI: the UI may react to
+            // a failure or a cancel by launching again at once, and that must not find the slot still
+            // taken (one task per id is registered before it runs, so removing by key is ours to do).
+            val outcome: () -> Unit = try {
                 val process = launcher.launch(connection, { phase -> if (phase != LaunchPhase.Running) post { events.onPhase(id, phase) } }, autoLogin)
-                track(id, process)
+                val deliver: () -> Unit = { track(id, process) }
+                deliver
             } catch (e: InterruptedException) {
-                post { events.onCancelled(id) }
+                val deliver: () -> Unit = { post { events.onCancelled(id) } }
+                deliver
             } catch (t: Throwable) {
-                if (Thread.currentThread().isInterrupted) post { events.onCancelled(id) }
-                else post { deliverFailure(id, connection, t) }
+                val deliver: () -> Unit =
+                    if (Thread.currentThread().isInterrupted) ({ post { events.onCancelled(id) } })
+                    else ({ post { deliverFailure(id, connection, t) } })
+                deliver
             }
+            inFlight.remove(id)
+            outcome()
         }
-        // Registered before it runs, removed only if still ours: a launch that fails at once can't leave
-        // a stale in-flight entry behind that would block every later launch of this connection.
+        // Registered before it runs; the wrapper's finally is a backstop for a task that never ran.
         inFlight[id] = task
         executor.execute {
             try { task.run() } finally { inFlight.remove(id, task) }
