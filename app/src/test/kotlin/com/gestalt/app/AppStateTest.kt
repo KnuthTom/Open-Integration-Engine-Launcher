@@ -62,6 +62,28 @@ class AppStateTest {
     }
 
     @Test
+    @DisplayName("an edit followed immediately by close reaches connections.json (the flush beats the debounce)")
+    fun editThenCloseIsPersisted(@TempDir dir: Path) {
+        val state = newState(dir)
+        val file = dir.resolve("connections.json")
+
+        state.upsert(Connection(id = "fast", name = "Fast Edit", serverUrl = "https://fast.example.com:8443"))
+        state.requestClose() // no 150 ms wait — the pending save must be written synchronously
+        assertTrue(Files.readString(file).contains("Fast Edit")) { "the edit must be on disk at close" }
+
+        // Delete, then close at once: the connection must be gone from disk too, not only from memory
+        // (previously the keychain entry was purged synchronously while the file still listed it).
+        state.delete("fast")
+        state.requestClose()
+        assertFalse(Files.readString(file).contains("Fast Edit")) { "the delete must be on disk at close" }
+
+        // A clean store is a no-op flush (nothing rewritten).
+        val before = Files.getLastModifiedTime(file)
+        state.flushPendingSave()
+        assertEquals(before, Files.getLastModifiedTime(file))
+    }
+
+    @Test
     @DisplayName("search filters and sort orders the visible list")
     fun searchAndSort(@TempDir dir: Path) {
         val state = newState(dir)

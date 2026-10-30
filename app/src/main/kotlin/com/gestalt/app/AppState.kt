@@ -47,8 +47,10 @@ import com.gestalt.trust.TrustStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.awt.Desktop
@@ -429,14 +431,51 @@ class AppState(
 
     // The in-memory model updates synchronously (fast); the connections.json write is moved off the UI
     // thread and debounced so rapid edits coalesce into one write and the UI never blocks on disk.
+    //
+    // The write itself is NOT cancellable: `scope` is the window's composition scope and is cancelled
+    // when the window closes, which used to cancel a pending save with it — edit, close within 150 ms,
+    // and the edit never reached disk (delete was worse: the keychain entry and truststore were already
+    // purged synchronously, so the connection came back with a dead credential link). Now a `dirty`
+    // flag records that disk is behind the model, the save runs under NonCancellable once the debounce
+    // elapses, and [flushPendingSave] writes synchronously before any close.
     private var persistJob: Job? = null
+    private val persistLock = Any()
+    @Volatile private var dirty = false
 
     private fun schedulePersist() {
+        dirty = true
         persistJob?.cancel()
         persistJob = scope.launch(Dispatchers.IO) {
             delay(150) // coalesce a burst of edits into a single write
-            runCatching { store.save() }.onFailure { banner = "Couldn't save connections: ${it.message}" }
+            withContext(NonCancellable) { flushNow() }
         }
+    }
+
+    /**
+     * Write any change that hasn't reached `connections.json` yet, synchronously, on the calling thread.
+     * No-op when disk is already current. Called before the window closes (both the close button and
+     * close-after-launch) so no edit is lost to a cancelled debounce; safe to call from any thread.
+     */
+    fun flushPendingSave() {
+        persistJob?.cancel()
+        flushNow()
+    }
+
+    private fun flushNow() {
+        synchronized(persistLock) {
+            if (!dirty) return
+            dirty = false
+            runCatching { store.save() }.onFailure {
+                dirty = true
+                banner = "Couldn't save connections: ${it.message}"
+            }
+        }
+    }
+
+    /** Flush pending edits, then ask the host to close the window. */
+    fun requestClose() {
+        runCatching { flushPendingSave() }
+        onRequestClose()
     }
 
     /** Insert or update a connection; if [password] is non-empty it is stored in the keychain only. */
@@ -665,7 +704,7 @@ class AppState(
                 // and was swallowed by the catch below as a "launch failure", which is why close-after-launch
                 // silently did nothing.) The per-connection override resolves the global setting; either way
                 // this runs ONLY on the success path — a failed launch falls into the catch and never closes.
-                if (resolveCloseAfterLaunch(conn)) scope.launch { onRequestClose() }
+                if (resolveCloseAfterLaunch(conn)) scope.launch { requestClose() }
             } catch (t: Throwable) {
                 val diagnosis = FailureDiagnosis.classify(t, conn)
                 launches[id] = LaunchView(LaunchPhase.Failed, t.message ?: t.javaClass.simpleName, diagnosis)
@@ -776,8 +815,9 @@ class AppState(
     fun confirmTrustPin(id: String, cert: X509Certificate) {
         val conn = store.get(id) ?: return
         ServerCertPinning.trust(conn, cert) // audit: human reviewed + trusted
-        ServerCertPinning.pin(store, conn, cert) // audit: pinned + persists pinnedCertSha256
+        ServerCertPinning.pin(store, conn, cert, persist = false) // audit: pinned; saved via the single debounced path
         reload()
+        schedulePersist()
         dialog = null
         banner = "Pinned the server certificate for ${conn.name}."
     }
@@ -785,8 +825,9 @@ class AppState(
     /** Remove a connection's server-cert pin (audited). */
     fun unpinServerCert(id: String) {
         val conn = store.get(id) ?: return
-        ServerCertPinning.revoke(store, conn)
+        ServerCertPinning.revoke(store, conn, persist = false)
         reload()
+        schedulePersist()
         banner = "Removed the pinned certificate for ${conn.name}."
     }
 
@@ -1001,7 +1042,7 @@ class AppState(
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
         AuditLog.updateApplied(available.manifest.version, "installed")
-        runCatching { onRequestClose() }
+        runCatching { requestClose() }
     }
 
     private fun applyPortable(service: UpdateService, available: UpdateOutcome.Available, archive: Path) {
@@ -1027,7 +1068,7 @@ class AppState(
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
         AuditLog.updateApplied(available.manifest.version, "portable")
-        runCatching { onRequestClose() }
+        runCatching { requestClose() }
     }
 
     /** Open the update artifact's download URL in the browser (portable notify path). */

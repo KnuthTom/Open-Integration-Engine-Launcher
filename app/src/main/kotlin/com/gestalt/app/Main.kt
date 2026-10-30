@@ -119,7 +119,8 @@ private fun launchProduct() = application {
     // Best-effort signed update check on launch (only if a channel is configured; never blocks startup).
     androidx.compose.runtime.LaunchedEffect(Unit) { appState.checkForUpdatesOnLaunch() }
     Window(
-        onCloseRequest = ::exitApplication,
+        // Flush any debounced connections.json write BEFORE the composition scope is cancelled.
+        onCloseRequest = appState::requestClose,
         state = windowState,
         title = "${branding.appName} 1.0",
         onPreviewKeyEvent = { handleShortcut(it, appState) },

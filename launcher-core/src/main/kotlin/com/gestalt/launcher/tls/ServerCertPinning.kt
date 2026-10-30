@@ -21,10 +21,15 @@ object ServerCertPinning {
 
     fun fingerprint(cert: X509Certificate): String = CertFingerprint.sha256Hex(cert)
 
-    fun pin(store: ConnectionStore, connection: Connection, cert: X509Certificate): Connection {
+    /**
+     * [persist] mirrors [ConnectionStore.update]: `true` (default) writes `connections.json` synchronously;
+     * the UI passes `false` and commits through its single debounced save path instead of writing on
+     * the UI thread. The audit record is written either way.
+     */
+    fun pin(store: ConnectionStore, connection: Connection, cert: X509Certificate, persist: Boolean = true): Connection {
         val fp = fingerprint(cert)
         val updated = connection.copy(pinnedCertSha256 = fp)
-        store.update(updated)
+        store.update(updated, persist)
         AuditLog.serverCertPinned(hostOf(connection), fp)
         return updated
     }
@@ -33,9 +38,9 @@ object ServerCertPinning {
         AuditLog.serverCertTrusted(hostOf(connection), cert.subjectX500Principal.name)
     }
 
-    fun revoke(store: ConnectionStore, connection: Connection): Connection {
+    fun revoke(store: ConnectionStore, connection: Connection, persist: Boolean = true): Connection {
         val updated = connection.copy(pinnedCertSha256 = null)
-        store.update(updated)
+        store.update(updated, persist)
         AuditLog.serverCertRevoked(hostOf(connection))
         return updated
     }
