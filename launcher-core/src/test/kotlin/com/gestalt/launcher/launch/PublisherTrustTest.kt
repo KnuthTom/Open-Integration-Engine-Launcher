@@ -178,10 +178,13 @@ class PublisherTrustTest {
     @DisplayName("the production anchors include the platform's root CAs, not only the two bundled roots")
     fun systemRootsAreAnchors() {
         val store = GestaltTrust.productionTrustStore()
-        val bundled = GestaltTrust.publicRoots().anchors.size
-        assertTrue(store.anchors.size > bundled + 10) { "expected the JDK cacerts roots among ${store.anchors.size} anchors (bundled: $bundled)" }
-        // (Not every cacerts root carries a basicConstraints extension — some are old V1 certificates — so the
-        // check is on count and self-issuance, not on the extension.)
-        assertTrue(GestaltTrust.systemRoots().all { it.subjectX500Principal == it.issuerX500Principal }) { "system anchors are self-issued roots" }
+        val bundled = GestaltTrust.publicRoots()
+        val system = GestaltTrust.systemRoots()
+        assertTrue(system.size > 10) { "expected the JDK cacerts roots, found ${system.size}" }
+        // The claim is membership — the platform's anchors are the gate's anchors, alongside the bundled ones.
+        // (No assertion about what the vendor put in cacerts: some entries are V1 certificates without
+        // basicConstraints, and some bundles carry cross-signed entries whose issuer is not their subject.)
+        assertTrue(store.anchors.containsAll(system)) { "every system root is a production anchor" }
+        assertTrue(store.anchors.containsAll(bundled.anchors)) { "the bundled roots are still anchors" }
     }
 }
