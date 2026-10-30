@@ -168,6 +168,45 @@ class TunnelManagerTest {
     }
 
     @Test
+    @DisplayName("recheck before the spawn: a port that still answers is left alone; a dead forward the launcher opened is reopened in place")
+    fun recheckReopensDeadForward(@TempDir dir: Path) {
+        val starter = Scripted()
+        val m = manager(dir, starter, { _, _ -> starter.processes.any { it.isAlive } })
+        val lease = m.acquire(connection())!!
+        assertEquals(1, starter.started.size)
+
+        m.recheck(connection(), lease)
+        assertEquals(1, starter.started.size) { "still listening: nothing to do" }
+
+        starter.processes[0].die(0) // the plugin dropped the session when the launcher's connections closed
+        var waiting = 0
+        m.recheck(connection(), lease) { waiting++ }
+        assertEquals(2, starter.started.size) { "reopened" }
+        assertEquals(1, waiting)
+        assertTrue(starter.processes[1].isAlive)
+        assertEquals(1, m.holders("c1")) { "same tunnel entry, same holder" }
+
+        lease.close() // the Administrator exits: the lease taken on the FIRST process closes the reopened one
+        assertTrue(starter.processes[1].destroyed.get())
+        assertEquals(0, m.holders("c1"))
+    }
+
+    @Test
+    @DisplayName("recheck: a forward the launcher did not open, now dead, is reported — it can't be reopened here")
+    fun recheckUnmanagedDeadThrows(@TempDir dir: Path) {
+        val starter = Scripted()
+        var open = true
+        val m = manager(dir, starter, { _, _ -> open })
+        val lease = m.acquire(connection())!!
+        assertFalse(lease.managed)
+        open = false
+        val ex = assertThrows(TunnelFailedException::class.java) { m.recheck(connection(), lease) }
+        assertTrue(ex.message!!.contains("stopped listening")) { ex.message }
+        assertTrue(starter.started.isEmpty())
+        m.recheck(connection(command = null), null) // no tunnel: nothing to check
+    }
+
+    @Test
     @DisplayName("different connections get their own tunnels")
     fun perConnection(@TempDir dir: Path) {
         val starter = Scripted()

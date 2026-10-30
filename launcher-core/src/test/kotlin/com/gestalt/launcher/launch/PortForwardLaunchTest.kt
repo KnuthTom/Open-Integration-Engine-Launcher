@@ -171,6 +171,20 @@ class PortForwardLaunchTest {
     }
 
     @Test
+    @DisplayName("one fetch at a time through a port-forward (loopback address or tunnel command); the configured parallelism elsewhere")
+    fun singleConnectionThroughForwards(@TempDir dir: Path) {
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val core = LauncherCore(
+            trustStore = TrustStore.of(ca.cert), cacheDir = dir.resolve("cache"), fetcherFactory = { FlakyFetcher(emptyMap(), 0) },
+            sleeper = {}, parallelism = 4,
+        )
+        assertEquals(1, core.parallelismFor(Connection(id = "a", name = "fwd", serverUrl = "https://localhost:31065")))
+        assertEquals(1, core.parallelismFor(Connection(id = "b", name = "fwd6", serverUrl = "https://[::1]:31065")))
+        assertEquals(1, core.parallelismFor(Connection(id = "c", name = "tunnelled", serverUrl = "https://mirth.example.internal:8443", tunnelCommand = "forward.bat")))
+        assertEquals(4, core.parallelismFor(Connection(id = "d", name = "direct", serverUrl = "https://mirth.example.internal:8443")))
+    }
+
+    @Test
     @DisplayName("remote connection: the client URL is ALSO rewritten to the address the user typed")
     fun remoteRewrittenToConnectionAddress(@TempDir dir: Path) {
         val base = "https://mirth.example:8443/"

@@ -217,7 +217,7 @@ open class LauncherCore(
             val gate = CodebaseVerifier(trustStore, signerPins, gateMode, connection.id, trustedSigners)
             val admitted = ArrayList<AdmittedJar>(jars.size)
             val verifyStarted = System.currentTimeMillis()
-            parallel { pool ->
+            parallel(connection) { pool ->
                 val futures = jars.map { jar ->
                     pool.submit(Callable { downloadAndGate(connection, fetcher, gate, manifest, version, jar) })
                 }
@@ -229,7 +229,7 @@ open class LauncherCore(
             val verifyMs = System.currentTimeMillis() - verifyStarted
             AuditLog.event(
                 "launch.timing", "connection" to connection.id, "jars" to jars.size,
-                "descriptorsMs" to descriptorsMs, "downloadVerifyMs" to verifyMs, "parallelism" to parallelism,
+                "descriptorsMs" to descriptorsMs, "downloadVerifyMs" to verifyMs, "parallelism" to parallelismFor(connection),
             )
 
             // Bound the on-disk cache: now that this version is verified, drop any other-version jars for
@@ -286,6 +286,9 @@ open class LauncherCore(
             try {
                 val plan = prepareLaunch(connection, onPhase)
                 checkNotCancelled()
+                // The launcher's own connections just closed; an older SSM plugin can drop the session with
+                // them. Make sure the port still answers before the Administrator is pointed at it.
+                tunnels.recheck(connection, lease) { onPhase(LaunchPhase.Tunneling) }
                 onPhase(LaunchPhase.Launching)
                 val builder = ProcessBuilder(commandWithLogin(plan, autoLogin))
                 val log = ClientLog.open(clientLogDir, plan)
@@ -418,7 +421,7 @@ open class LauncherCore(
         val visited = HashSet<URI>()
         var level: List<Pair<String, URI>> = root.extensions.map { it to rootBase }
         var depth = 1
-        parallel { pool ->
+        parallel(connection) { pool ->
             while (level.isNotEmpty()) {
                 if (depth > MAX_EXTENSION_DEPTH) {
                     throw LaunchAbortedException("extension descriptors nest deeper than $MAX_EXTENSION_DEPTH: ${level.first().first}")
@@ -449,14 +452,23 @@ open class LauncherCore(
     }
 
     /** Run [block] with a bounded pool that is always shut down afterwards (in-flight work is interrupted). */
-    private fun <T> parallel(block: (ExecutorService) -> T): T {
-        val pool = Executors.newFixedThreadPool(parallelism.coerceAtLeast(1)) { r -> Thread(r, "launch-fetch").apply { isDaemon = true } }
+    private fun <T> parallel(connection: Connection, block: (ExecutorService) -> T): T {
+        val pool = Executors.newFixedThreadPool(parallelismFor(connection)) { r -> Thread(r, "launch-fetch").apply { isDaemon = true } }
         try {
             return block(pool)
         } finally {
             pool.shutdownNow()
         }
     }
+
+    /**
+     * How many fetches run at once for [connection]: ONE through a port-forward (a loopback address or a
+     * tunnel command — see [HttpClientFactory.singleConnection]: a non-multiplexing SSM forward services a
+     * single connection and parks the rest in the backlog, where they time out and retry), else
+     * [parallelism]. The gate's CPU work is what parallelises; a tunnel is a single pipe either way.
+     */
+    internal fun parallelismFor(connection: Connection): Int =
+        if (HttpClientFactory.singleConnection(connection)) 1 else parallelism.coerceAtLeast(1)
 
     /**
      * Wait for one task; a failure anywhere cancels the rest and surfaces as the original exception, and

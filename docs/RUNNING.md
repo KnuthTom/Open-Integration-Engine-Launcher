@@ -96,6 +96,16 @@ and torn down (the command and everything it spawned) when the last one exits, o
 closes. The command's output goes to `logs/client/<connection>-<stamp>-tunnel.log`; a tunnel that
 fails reports the command's exit code and the log's last lines in the launch failure.
 
+Through a port-forward (a loopback address, or any connection with a tunnel command) the launcher
+fetches over **one** TCP connection at a time: an SSM forward without TCP multiplexing (the plugin's
+basic mode, used when the instance's SSM agent is older) services a single connection and parks the
+rest in the listener's backlog until it closes, so "parallel" fetches there only time out and retry.
+Right before the Administrator is started the launcher **re-checks** the port — an outdated
+session-manager-plugin has been seen to drop the session when the launcher's connections close — and
+reopens a dead forward it started (`audit.log`: `tunnel.reopen`). Upgrade the plugin when it prints
+"An outdated SessionManagerPlugin version detected": the basic mode also gives the Administrator
+itself a single connection at a time.
+
 The tunnel command is local config like the Java home: it is exported with the connection but **never
 imported** from a file (a file from elsewhere must not be able to plant a command the launcher would
 run; `audit.log` records `import.tunnelCommand … NOT_IMPORTED`). Set it by hand on each machine.

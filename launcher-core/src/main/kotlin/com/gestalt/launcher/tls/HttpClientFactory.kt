@@ -40,8 +40,21 @@ object HttpClientFactory {
      */
     fun forConnection(connection: Connection, trustedCerts: TrustedCertStore = TrustedCertStore.shared): CloseableHttpClient {
         val trusted = trustedCerts.trustedFingerprints() + listOfNotNull(connection.normalizedPin)
-        return trustAwareClient(trusted, trustedCerts.rejectedFingerprints(), resolveProtocols(connection), resolveCiphers(connection))
+        return trustAwareClient(
+            trusted, trustedCerts.rejectedFingerprints(), resolveProtocols(connection), resolveCiphers(connection),
+            singleConnection = singleConnection(connection),
+        )
     }
+
+    /**
+     * True when the launcher must talk to [connection] over ONE TCP connection at a time: a loopback
+     * address or a connection with a tunnel command, i.e. a port-forward. An SSM port-forward without TCP
+     * multiplexing (the plugin's basic mode) services a single connection and leaves the rest sitting in
+     * the listener's backlog until it closes — parallel fetches there don't run in parallel, they time
+     * out and retry. One pooled keep-alive connection is the fast path through such a tunnel.
+     */
+    internal fun singleConnection(connection: Connection): Boolean =
+        connection.hasTunnel || LocalhostResolver.isLoopbackHost(runCatching { connection.baseUri().host }.getOrNull())
 
     /**
      * The product policy: rejected fingerprints fail, trusted fingerprints pass by exact match (hostname
@@ -54,10 +67,11 @@ object HttpClientFactory {
         rejected: Set<String>,
         protocols: Array<String> = MODERN_TLS,
         ciphers: Array<String>? = null,
+        singleConnection: Boolean = false,
     ): CloseableHttpClient {
         val ctx = SSLContext.getInstance("TLS")
         ctx.init(null, arrayOf<TrustManager>(TrustedOrPkixTrustManager(trusted, rejected)), null)
-        return build(ctx, HostnameVerificationPolicy.CLIENT, TrustedOrDefaultHostnameVerifier(trusted), protocols, ciphers, propagateTrustFailures = true)
+        return build(ctx, HostnameVerificationPolicy.CLIENT, TrustedOrDefaultHostnameVerifier(trusted), protocols, ciphers, propagateTrustFailures = true, singleConnection = singleConnection)
     }
 
     /** True when the connection is https AND carries a (legacy, not yet migrated) 64-hex pin. */
@@ -124,6 +138,7 @@ object HttpClientFactory {
         protocols: Array<String>,
         ciphers: Array<String>?,
         propagateTrustFailures: Boolean = false,
+        singleConnection: Boolean = false,
     ): CloseableHttpClient {
         // DefaultClientTlsStrategy IS a TlsSocketStrategy. Protocols/ciphers come from the connection
         // (modern-only defaults when unset); a null cipher list means the JDK defaults (strong).
@@ -143,6 +158,8 @@ object HttpClientFactory {
             // IPv4-first for localhost (with fall-back across all resolved addresses); identical to the
             // platform default for every non-loopback host. Applies to the JNLP, digest and jar fetches.
             .setDnsResolver(LocalhostResolver.dnsResolver)
+            // One connection at a time through a port-forward (see singleConnection); otherwise the defaults.
+            .apply { if (singleConnection) setMaxConnPerRoute(1).setMaxConnTotal(1) }
             .setDefaultConnectionConfig(
                 ConnectionConfig.custom()
                     .setConnectTimeout(CONNECT_TIMEOUT)

@@ -82,7 +82,7 @@ class TunnelManager(
         val connectionId: String,
         val managed: Boolean,
         /** The tunnel this lease was counted on — a lease never releases a replacement opened later. */
-        private val entry: Live?,
+        internal val entry: Live?,
     ) : AutoCloseable {
         private val closed = AtomicBoolean(false)
         override fun close() {
@@ -90,8 +90,34 @@ class TunnelManager(
         }
     }
 
-    internal class Live(val process: Process, val log: Path?) {
+    /** A tunnel the launcher runs. The process is replaced in place when a dead forward is reopened, so leases stay valid. */
+    internal class Live(@Volatile var process: Process, @Volatile var log: Path?) {
         var users = 0
+    }
+
+    private class Endpoint(val command: String, val host: String, val port: Int)
+
+    /** The tunnel command and the local end of the forward, or null when the connection has no tunnel. */
+    private fun endpointOf(connection: Connection): Endpoint? {
+        val command = connection.tunnelCommand?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val uri = runCatching { connection.baseUri() }.getOrNull()
+            ?: throw TunnelFailedException("the tunnel needs a usable address: ${connection.serverUrl}")
+        val host = uri.host?.takeIf { it.isNotBlank() }
+            ?: throw TunnelFailedException("the tunnel needs a host in the address: ${connection.serverUrl}")
+        val port = uri.port.takeIf { it > 0 }
+            ?: throw TunnelFailedException("the tunnel needs an explicit port in the address — it is the local end of the forward (for example https://localhost:31065)")
+        return Endpoint(command, host, port)
+    }
+
+    /** Start the command for [endpoint] with a fresh log; the caller waits for the port. */
+    private fun start(connection: Connection, endpoint: Endpoint): Pair<Process, Path?> {
+        val log = ClientLog.openTunnel(logDir, connection, endpoint.command)
+        val process = try {
+            starter.start(commandLine(endpoint.command), workingDirFor(endpoint.command), log)
+        } catch (e: IOException) {
+            throw TunnelFailedException("could not start the tunnel command: ${e.message}", e)
+        }
+        return process to log
     }
 
     private val live = ConcurrentHashMap<String, Live>()
@@ -107,13 +133,9 @@ class TunnelManager(
      */
     @Throws(TunnelFailedException::class, InterruptedException::class)
     fun acquire(connection: Connection, onWaiting: () -> Unit = {}): Lease? {
-        val command = connection.tunnelCommand?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        val uri = runCatching { connection.baseUri() }.getOrNull()
-            ?: throw TunnelFailedException("the tunnel needs a usable address: ${connection.serverUrl}")
-        val host = uri.host?.takeIf { it.isNotBlank() }
-            ?: throw TunnelFailedException("the tunnel needs a host in the address: ${connection.serverUrl}")
-        val port = uri.port.takeIf { it > 0 }
-            ?: throw TunnelFailedException("the tunnel needs an explicit port in the address — it is the local end of the forward (for example https://localhost:31065)")
+        val endpoint = endpointOf(connection) ?: return null
+        val host = endpoint.host
+        val port = endpoint.port
 
         synchronized(lockFor(connection.id)) {
             live[connection.id]?.let { current ->
@@ -128,12 +150,7 @@ class TunnelManager(
                 return Lease(this, connection.id, managed = false, entry = null)
             }
             onWaiting()
-            val log = ClientLog.openTunnel(logDir, connection, command)
-            val process = try {
-                starter.start(commandLine(command), workingDirFor(command), log)
-            } catch (e: IOException) {
-                throw TunnelFailedException("could not start the tunnel command: ${e.message}", e)
-            }
+            val (process, log) = start(connection, endpoint)
             val entry = Live(process, log).also { it.users = 1 }
             try {
                 awaitPort(entry, host, port)
@@ -147,6 +164,46 @@ class TunnelManager(
                 "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
             )
             return Lease(this, connection.id, managed = true, entry = entry)
+        }
+    }
+
+    /**
+     * Just before the Administrator is pointed at the port: make sure it still answers. The launcher's own
+     * connections have just closed, and an older SSM plugin (basic, non-multiplexing forwarding) has been
+     * seen to drop the whole session with them. A dead forward the launcher opened is reopened in place —
+     * same lease, same holders, a fresh process and log; one it didn't open can only be reported.
+     * No-op without a tunnel ([lease] null).
+     */
+    @Throws(TunnelFailedException::class, InterruptedException::class)
+    fun recheck(connection: Connection, lease: Lease?, onWaiting: () -> Unit = {}) {
+        if (lease == null) return
+        val endpoint = endpointOf(connection) ?: return
+        val host = endpoint.host
+        val port = endpoint.port
+        synchronized(lockFor(connection.id)) {
+            if (probe(host, port)) return
+            val entry = lease.entry?.takeIf { live[connection.id] === it }
+                ?: throw TunnelFailedException(
+                    "the port-forward at $host:$port stopped listening after the download, and it was not opened by " +
+                        "the launcher, so it can't be reopened here — open it again and relaunch",
+                )
+            AuditLog.event("tunnel.reopen", "connection" to connection.id, "port" to port, "reason" to "stopped listening after the download")
+            destroy(entry.process)
+            onWaiting()
+            val (process, log) = start(connection, endpoint)
+            entry.process = process
+            entry.log = log
+            try {
+                awaitPort(entry, host, port)
+            } catch (t: Throwable) {
+                destroy(process)
+                live.remove(connection.id) // every lease on it is now stale and releases nothing
+                throw t
+            }
+            AuditLog.event(
+                "tunnel.open", "connection" to connection.id, "port" to port, "reopened" to true,
+                "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
+            )
         }
     }
 
