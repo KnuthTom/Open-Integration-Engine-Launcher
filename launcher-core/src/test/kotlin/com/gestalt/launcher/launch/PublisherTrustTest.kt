@@ -180,6 +180,8 @@ class PublisherTrustTest {
         val store = GestaltTrust.productionTrustStore()
         val bundled = GestaltTrust.publicRoots().anchors.size
         assertTrue(store.anchors.size > bundled + 10) { "expected the JDK cacerts roots among ${store.anchors.size} anchors (bundled: $bundled)" }
-        assertTrue(GestaltTrust.systemRoots().all { it.basicConstraints >= 0 }) { "system anchors are CA certificates" }
+        // (Not every cacerts root carries a basicConstraints extension — some are old V1 certificates — so the
+        // check is on count and self-issuance, not on the extension.)
+        assertTrue(GestaltTrust.systemRoots().all { it.subjectX500Principal == it.issuerX500Principal }) { "system anchors are self-issued roots" }
     }
 }

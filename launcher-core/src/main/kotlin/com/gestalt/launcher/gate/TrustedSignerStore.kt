@@ -41,9 +41,13 @@ data class TrustedSigner(
     /** Base64 DER of the signer certificate, for display without a jar in hand. */
     val der: String? = null,
 ) {
-    /** The publisher as a person would name it: the subject's CN or O, else the full DN. */
+    /** The publisher as a person would name it: the subject's CN, else its O, else the full DN. */
     val displayName: String
-        get() = Regex("(?:^|,)\\s*(?:CN|O)=([^,]+)").find(subject)?.groupValues?.get(1)?.trim() ?: subject
+        get() = rdn("CN") ?: rdn("O") ?: subject
+
+    // RFC 2253 order is most-specific-last in the string (C=…,O=…,CN=…), so look each attribute up by name.
+    private fun rdn(attr: String): String? =
+        Regex("(?:^|,)\\s*$attr=([^,]+)").find(subject)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
 }
 
 @Serializable

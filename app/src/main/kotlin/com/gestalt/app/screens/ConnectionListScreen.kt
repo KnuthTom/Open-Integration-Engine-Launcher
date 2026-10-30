@@ -561,7 +561,7 @@ private fun RowStatus(appState: AppState, conn: Connection) {
     when (launch?.phase) {
         LaunchPhase.Downloading, LaunchPhase.Verifying, LaunchPhase.Launching -> {
             // In flight: click to cancel (takes effect at the next download boundary; nothing is spawned).
-            val label = when (launch?.phase) {
+            val label = when (launch.phase) {
                 LaunchPhase.Downloading -> "Downloading…"
                 LaunchPhase.Verifying -> "Verifying…"
                 else -> "Launching…"
@@ -585,8 +585,7 @@ private fun RowStatus(appState: AppState, conn: Connection) {
                 horizontalArrangement = Arrangement.spacedBy(GestaltTheme.spacing.paddingSmall),
             ) {
                 GestaltStatusDot(StatusLevel.Success)
-                val instances = launch?.instances ?: 0
-                val text = if (instances > 1) "Running ×$instances" else "Running"
+                val text = if (launch.instances > 1) "Running ×${launch.instances}" else "Running"
                 GestaltText(text, role = TextRole.Label, color = GestaltTheme.colors.success)
             }
         }
