@@ -15,6 +15,7 @@ import com.gestalt.launcher.gate.CodebaseVerifier
 import com.gestalt.launcher.gate.GateOutcome
 import com.gestalt.launcher.gate.GestaltTrust
 import com.gestalt.launcher.gate.SignerPin
+import com.gestalt.launcher.gate.TrustedSignerStore
 import com.gestalt.launcher.jnlp.JnlpDescriptor
 import com.gestalt.launcher.jnlp.JnlpParser
 import com.gestalt.launcher.net.ArtifactFetcher
@@ -46,6 +47,14 @@ class ServerCertificateReviewRequiredException(val leaf: X509Certificate, val ho
 /** The server presented a certificate the user has explicitly rejected. */
 class ServerCertificateRejectedException(val leaf: X509Certificate, cause: Throwable?) :
     LaunchAbortedException("server certificate was rejected by the user: ${leaf.subjectX500Principal.name}", cause)
+
+/**
+ * A jar's content is exactly what its signer signed, but the signer is a publisher the launcher doesn't
+ * trust (unknown chain, no codeSigning EKU, or not on the pinned allow-list) and the user hasn't decided
+ * about it. Recorded as PENDING in the publisher store; the launch stopped before any code ran.
+ */
+class PublisherReviewRequiredException(val signer: X509Certificate, val artifactName: String, val reason: String) :
+    LaunchAbortedException("publisher needs review before launching: ${signer.subjectX500Principal.name} (signed '$artifactName'; $reason)")
 
 /**
  * Coarse, observational launch phases for UI progress. Purely informational — emitting them does not
@@ -92,6 +101,8 @@ open class LauncherCore(
     private val commandBuilder: ChildJvmCommandBuilder = ChildJvmCommandBuilder(),
     /** The user's reviewed server certificates; every https fetch is policed against it. */
     private val trustedCerts: TrustedCertStore = TrustedCertStore.shared,
+    /** The user's reviewed jar publishers; the gate consults it for signers the policy doesn't accept. */
+    private val trustedSigners: TrustedSignerStore = TrustedSignerStore.shared,
     private val fetcherFactory: (Connection) -> ArtifactFetcher = { conn ->
         HttpArtifactFetcher(HttpClientFactory.forConnection(conn, trustedCerts))
     },
@@ -173,7 +184,7 @@ open class LauncherCore(
 
             onPhase(LaunchPhase.Verifying)
             // 3-4. Download each jar and run it through the single gate. Fail closed on any miss.
-            val gate = CodebaseVerifier(trustStore, signerPins, gateMode, connection.id)
+            val gate = CodebaseVerifier(trustStore, signerPins, gateMode, connection.id, trustedSigners)
             val admitted = ArrayList<AdmittedJar>(jars.size)
             for (jar in jars) {
                 checkNotCancelled()
@@ -193,6 +204,13 @@ open class LauncherCore(
                 when (val outcome = gate.verify(name, file, manifest)) {
                     is GateOutcome.Admitted -> admitted += outcome.jar
                     is GateOutcome.Rejected -> {
+                        val publisher = outcome.publisherToReview
+                        if (publisher != null) {
+                            // Integrity proven, trust missing: keep the jar (it is exactly what the signer
+                            // signed), record the publisher for review, and stop for the decision.
+                            trustedSigners.markPending(publisher, name, connection.id)
+                            throw PublisherReviewRequiredException(publisher, name, outcome.reason)
+                        }
                         runCatching { Files.deleteIfExists(file) }
                         throw LaunchAbortedException("verification failed for '$name': ${outcome.reason}")
                     }

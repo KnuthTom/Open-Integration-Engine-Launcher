@@ -67,6 +67,8 @@ class LauncherPipelineTest {
             signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS,
             gateMode = mode,
             cacheDir = cacheDir,
+            // A private publisher store so an "unknown signer" case here never pollutes the shared one.
+            trustedSigners = com.gestalt.launcher.gate.TrustedSignerStore(cacheDir.resolveSibling("trusted-signers.json")),
             fetcherFactory = { FakeFetcher(responses) },
         )
     }
@@ -140,12 +142,13 @@ class LauncherPipelineTest {
     }
 
     @Test
-    @DisplayName("unknown signer aborts the launch closed in PIN mode")
+    @DisplayName("unknown signer aborts the launch closed in PIN mode (as a publisher review, never an admission)")
     fun unknownSignerAbortsClosed(@TempDir dir: Path) {
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val jarBytes = signedCoreJar(dir, ca, "CN=Rogue,O=Unknown Vendor,C=US")
         val launcher = launcher(dir.resolve("cache"), ca, jnlp(), manifestForCore(jarBytes), jarBytes)
-        assertThrows(LaunchAbortedException::class.java) { launcher.prepareLaunch(connection()) }
+        val ex = assertThrows(LaunchAbortedException::class.java) { launcher.prepareLaunch(connection()) }
+        assertTrue(ex is PublisherReviewRequiredException) { "an intact jar from an unknown publisher is reviewable: $ex" }
     }
 
     @Test

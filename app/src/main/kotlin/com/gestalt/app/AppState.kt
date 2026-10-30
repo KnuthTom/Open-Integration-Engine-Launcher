@@ -27,6 +27,8 @@ import com.gestalt.launcher.diag.ConnectionTestReport
 import com.gestalt.launcher.diag.DiagnosticsLog
 import com.gestalt.launcher.gate.GestaltTrust
 import com.gestalt.launcher.gate.SignerPin
+import com.gestalt.launcher.gate.TrustedSigner
+import com.gestalt.launcher.gate.TrustedSignerStore
 import com.gestalt.launcher.icon.CustomIcon
 import com.gestalt.launcher.icon.CustomIconStore
 import com.gestalt.launcher.importer.ConnectionImport
@@ -174,8 +176,13 @@ class AppState(
     private val onRequestClose: () -> Unit = {},
     /** The user's reviewed server certificates (trust on first use); shared with the launch pipeline. */
     val trustedCerts: TrustedCertStore = TrustedCertStore.shared,
+    /** The user's reviewed jar publishers (trust on first use for code signers); shared with the gate. */
+    val trustedSigners: TrustedSignerStore = TrustedSignerStore.shared,
     private val launcherFactory: (LauncherConfig) -> LauncherCore = { c ->
-        LauncherCore(trustStore = c.trustStore, signerPins = c.signerPins, gateMode = c.mode, trustedCerts = trustedCerts)
+        LauncherCore(
+            trustStore = c.trustStore, signerPins = c.signerPins, gateMode = c.mode,
+            trustedCerts = trustedCerts, trustedSigners = trustedSigners,
+        )
     },
     private val updateServiceFactory: () -> UpdateService = {
         UpdateService(BuildInfo.version, Platform.osArch(), AppPaths.isPortable)
@@ -935,6 +942,27 @@ class AppState(
         val host = uri.host ?: return null
         return host to (if (uri.port > 0) uri.port else 443)
     }
+
+    // --- publishers (trust on first use for code signers) ----------------------------------------
+
+    /** Publishers awaiting a decision that were met through [connectionId] (most recent launch first). */
+    fun pendingPublishers(connectionId: String): List<TrustedSigner> =
+        trustedSigners.pending().filter { connectionId in it.connectionIds }
+
+    /** Trust every publisher pending for [connectionId]; returns how many. The caller relaunches. */
+    fun trustPendingPublishers(connectionId: String): Int {
+        val pending = pendingPublishers(connectionId)
+        pending.forEach { trustedSigners.trust(it.sha256) }
+        if (pending.isNotEmpty()) {
+            trustNonce++
+            banner = "Trusted ${pending.size} publisher(s): ${pending.joinToString { it.displayName }}."
+        }
+        return pending.size
+    }
+
+    fun trustPublisher(sha256: String) { trustedSigners.trust(sha256); trustNonce++ }
+    fun rejectPublisher(sha256: String) { trustedSigners.reject(sha256); trustNonce++ }
+    fun removePublisher(sha256: String) { trustedSigners.remove(sha256); trustNonce++ }
 
     // --- code-signing trust (posture + custom pins / anchors) -------------------------------------
 

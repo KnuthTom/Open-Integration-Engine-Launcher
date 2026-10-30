@@ -158,7 +158,7 @@ class JarSignatureVerifier(
             } catch (e: Exception) {
                 return VerificationResult.failure(
                     "signer certificate not valid at ${validityDate.toInstant()}: ${e.message}",
-                    mode, signerDN, listOf(leaf), usedTimestamp, ts?.instant,
+                    mode, signerDN, listOf(leaf), usedTimestamp, ts?.instant, integrityVerified = true,
                 )
             }
             validatedChain = listOf(leaf)
@@ -167,7 +167,7 @@ class JarSignatureVerifier(
             if (pathCerts.isEmpty()) {
                 return VerificationResult.failure(
                     "no certification path could be built from the signer to a trust anchor",
-                    mode, signerDN, ordered, usedTimestamp, ts?.instant,
+                    mode, signerDN, ordered, usedTimestamp, ts?.instant, integrityVerified = true,
                 )
             }
             val anchorCert = try {
@@ -175,7 +175,7 @@ class JarSignatureVerifier(
             } catch (e: Exception) {
                 return VerificationResult.failure(
                     "PKIX path validation failed: ${e.message}",
-                    mode, signerDN, ordered, usedTimestamp, ts?.instant,
+                    mode, signerDN, ordered, usedTimestamp, ts?.instant, integrityVerified = true,
                 )
             }
             validatedChain = pathCerts + anchorCert
@@ -186,7 +186,7 @@ class JarSignatureVerifier(
         if (ekus == null || CODE_SIGNING_EKU !in ekus) {
             return VerificationResult.failure(
                 "signer leaf does not assert the codeSigning EKU",
-                mode, signerDN, validatedChain, usedTimestamp, ts?.instant,
+                mode, signerDN, validatedChain, usedTimestamp, ts?.instant, integrityVerified = true,
             )
         }
 
@@ -194,7 +194,7 @@ class JarSignatureVerifier(
         if (mode == TrustMode.PIN_KNOWN_SIGNERS && !matchesPin(leaf)) {
             return VerificationResult.failure(
                 "signer is not on the pinned allow-list: $signerDN",
-                mode, signerDN, validatedChain, usedTimestamp, ts?.instant,
+                mode, signerDN, validatedChain, usedTimestamp, ts?.instant, integrityVerified = true,
             )
         }
 

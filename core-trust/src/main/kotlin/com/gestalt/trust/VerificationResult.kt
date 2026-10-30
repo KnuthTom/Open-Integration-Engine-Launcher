@@ -22,6 +22,11 @@ import java.time.Instant
  * @property timestampInstant  the timestamp's genTime, when [usedTimestamp] is true.
  * @property trustMode         the policy under which this result was produced.
  * @property failureReason     human-readable reason the jar was rejected; null on success.
+ * @property integrityVerified true once the CMS signature over the .SF verified AND every entry's digest
+ *                             matched the signed manifest — i.e. the content is exactly what the signer
+ *                             signed — even if a later TRUST step (chain, EKU, pin) then failed. A caller
+ *                             may admit such a jar on the strength of an explicit decision about that
+ *                             exact signer; a jar with `integrityVerified = false` must never be admitted.
  */
 data class VerificationResult(
     val valid: Boolean,
@@ -31,6 +36,7 @@ data class VerificationResult(
     val timestampInstant: Instant?,
     val trustMode: TrustMode,
     val failureReason: String?,
+    val integrityVerified: Boolean = valid,
 ) {
     /** Leaf certificate of the validated chain, if any. */
     val leaf: X509Certificate? get() = chain.firstOrNull()
@@ -59,6 +65,7 @@ data class VerificationResult(
             chain: List<X509Certificate> = emptyList(),
             usedTimestamp: Boolean = false,
             timestampInstant: Instant? = null,
+            integrityVerified: Boolean = false,
         ) = VerificationResult(
             valid = false,
             signerDN = signerDN,
@@ -67,6 +74,7 @@ data class VerificationResult(
             timestampInstant = timestampInstant,
             trustMode = trustMode,
             failureReason = reason,
+            integrityVerified = integrityVerified,
         )
     }
 }

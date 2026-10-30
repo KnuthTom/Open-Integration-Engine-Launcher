@@ -40,14 +40,29 @@ object GestaltTrust {
             .reduce { a, b -> a + b }
 
     /**
-     * Full production trust store: public roots, the Gestalt self-signed cert if found, and any
-     * [extra] anchors the caller supplies.
+     * Full production trust store: the platform's own root CAs (what `jarsigner` trusts — so a publisher
+     * whose code-signing chain terminates at any public root validates, not only at the two roots
+     * bundled when the OIE chain was last looked at), the bundled public roots, the Gestalt self-signed
+     * cert if found, and any [extra] anchors the caller supplies.
      */
     fun productionTrustStore(extra: Collection<X509Certificate> = emptyList()): TrustStore {
         var store = publicRoots()
+        val system = systemRoots()
+        if (system.isNotEmpty()) store += system
         gestaltCert()?.let { store += listOf(it) }
         if (extra.isNotEmpty()) store += extra
         return store
+    }
+
+    /** The root certificates in the JDK's default trust store (cacerts); empty if it can't be read. */
+    fun systemRoots(): List<X509Certificate> = systemRootsCached
+
+    private val systemRootsCached: List<X509Certificate> by lazy {
+        runCatching {
+            val tmf = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm())
+            tmf.init(null as java.security.KeyStore?)
+            tmf.trustManagers.filterIsInstance<javax.net.ssl.X509TrustManager>().flatMap { it.acceptedIssuers.toList() }
+        }.getOrDefault(emptyList())
     }
 
     /** The Gestalt self-signed cert, from a bundled resource or `<dataDir>/anchors/gestalt-signing.pem`. */

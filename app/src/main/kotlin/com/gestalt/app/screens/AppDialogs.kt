@@ -143,6 +143,10 @@ private fun FixButton(appState: AppState, connectionId: String, action: FixActio
         FixAction.ReviewTrustPosture -> GestaltButton("Review trust settings", style = ButtonStyle.Outlined, onClick = {
             appState.dismissDialog(); appState.route = Route.Trust
         })
+        FixAction.TrustPublisher -> GestaltButton("Trust publisher & launch", onClick = {
+            appState.dismissDialog()
+            if (appState.trustPendingPublishers(connectionId) > 0) appState.launch(connectionId)
+        })
         FixAction.ViewLogs -> GestaltButton("View logs", style = ButtonStyle.Ghost, onClick = appState::openLogsFolder)
         FixAction.None -> Unit
     }

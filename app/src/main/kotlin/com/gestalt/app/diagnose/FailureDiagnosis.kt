@@ -25,6 +25,13 @@ enum class FixAction(val weakensVerification: Boolean = false) {
     /** Open the code-signing trust screen (posture + pinned signers). Not a per-launch bypass. */
     ReviewTrustPosture,
 
+    /**
+     * Trust the publisher(s) recorded for review on this connection and relaunch. Not a bypass: the jar's
+     * integrity was proven and the decision is an explicit, audited, per-signer one — the same shape as
+     * trusting a server certificate.
+     */
+    TrustPublisher,
+
     /** Open the logs folder (audit.log + launcher logs). */
     ViewLogs,
 
@@ -39,6 +46,7 @@ enum class FailureKind {
     NonHttps,
     DigestMismatch,
     SignatureUntrusted,
+    PublisherUntrusted,
     HostUnreachable,
     JnlpInvalid,
     JavaRuntimeMissing,
@@ -86,6 +94,8 @@ object FailureDiagnosis {
             return when {
                 // Trust-on-first-use stop: the server cert is unknown (needs review) or was rejected.
                 msg("certificate needs review", "certificate was rejected") -> serverCertUntrusted(target)
+                // A jar whose integrity is proven but whose publisher is unknown: offer the review.
+                msg("publisher needs review") -> publisherUntrusted(text)
                 // Integrity failures: a digest mismatch, or a signature check that proves the content was
                 // altered after signing (manifest edited, or an entry not covered by the signed manifest).
                 msg("digest mismatch", "altered after signing", "not covered by the signed manifest", "tampered", "integrity") ->
@@ -192,6 +202,16 @@ object FailureDiagnosis {
         nextStep = "Review the code-signing trust posture and pinned signers. Don't lower verification unless " +
             "you genuinely trust the publisher.",
         actions = listOf(FixAction.ReviewTrustPosture, FixAction.ViewLogs),
+    )
+
+    private fun publisherUntrusted(detail: String) = Diagnosis(
+        kind = FailureKind.PublisherUntrusted,
+        title = "A jar is signed by a publisher you haven't approved",
+        explanation = "The code is intact — it is exactly what its signer signed — but that signer isn't one the " +
+            "launcher trusts yet (an in-house or third-party extension, or a publisher whose certificate changed). " +
+            "The launch was stopped before any code ran.\n" + detail.substringAfter("publisher needs review before launching: ").substringBefore(" | "),
+        nextStep = "If you recognise the publisher, trust it and launch again. Trust is per signing certificate and is audited.",
+        actions = listOf(FixAction.TrustPublisher, FixAction.ReviewTrustPosture, FixAction.ViewLogs),
     )
 
     private fun hostUnreachable(target: String) = Diagnosis(
