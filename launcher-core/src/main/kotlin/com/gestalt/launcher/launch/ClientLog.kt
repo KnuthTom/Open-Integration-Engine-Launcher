@@ -43,6 +43,7 @@ internal object ClientLog {
                     "# started: $now",
                     "# server: ${plan.connection.serverUrl}   version: ${plan.version}",
                     "# java: ${plan.command.firstOrNull() ?: "-"}   main: ${plan.mainClass}   jars: ${plan.admitted.size}",
+                    "# jvm options: ${jvmOptions(plan).joinToString(" ").ifBlank { "(none)" }}",
                     "",
                 ),
                 Charsets.UTF_8,
@@ -51,6 +52,14 @@ internal object ClientLog {
             prune(dir, KEEP, keepAlso = file)
             file
         }.getOrNull()
+
+    /**
+     * The JVM options of the command — everything between the java binary and `-cp` (`-Xmx`, `-D…`,
+     * `--add-opens`). Never the application arguments after the main class, which carry the
+     * auto-login credentials.
+     */
+    internal fun jvmOptions(plan: LaunchPlan): List<String> =
+        plan.command.drop(1).takeWhile { it != "-cp" && it != "-classpath" }
 
     /** The connection's name as a file-name stem (its id when the name has nothing usable). */
     internal fun stem(plan: LaunchPlan): String =

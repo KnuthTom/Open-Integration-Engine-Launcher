@@ -36,7 +36,7 @@ class ClientLogTest {
         admitted = emptyList(),
         appArgs = listOf("https://localhost:31065", "4.4.2"),
         // As `commandWithLogin` would spawn it: the credentials ride on the command line.
-        command = listOf("C:\\java\\bin\\javaw.exe", "-cp", "x.jar", "com.mirth.connect.client.ui.Mirth", "https://localhost:31065", "4.4.2", "tech", password),
+        command = listOf("C:\\java\\bin\\javaw.exe", "-Xmx512m", "-Dsun.java2d.uiScale=1.25", "-cp", "x.jar", "com.mirth.connect.client.ui.Mirth", "https://localhost:31065", "4.4.2", "tech", password),
     )
 
     @Test
@@ -53,6 +53,8 @@ class ClientLogTest {
         assertTrue(text.contains("version: 4.4.2")) { text }
         assertTrue(text.contains("com.mirth.connect.client.ui.Mirth")) { text }
         assertTrue(text.contains("javaw.exe")) { text }
+        assertTrue(text.contains("# jvm options: -Xmx512m -Dsun.java2d.uiScale=1.25")) { "the JVM options are the rendering/runtime evidence: $text" }
+        assertFalse(text.contains("x.jar")) { "the classpath is noise, not evidence: $text" }
         assertFalse(text.contains(password)) { "the auto-login password must never reach a log: $text" }
         assertFalse(text.contains("tech")) { "nor the username: $text" }
     }
