@@ -43,6 +43,21 @@ class BundledRuntimeResolutionTest {
     }
 
     @Test
+    @DisplayName("Automatic follows the server's support matrix: Java 8 up to Mirth/OIE 4.6, Java 17 from 4.7")
+    fun automaticVersionBySeverVersion() {
+        for (v in listOf("3.9.1", "3.12.0", "4.0.0", "4.4.2", "4.5.2", "4.6.0", "4.6.9")) {
+            assertEquals("8", ChildJvmCommandBuilder.automaticBundledVersion(v)) { v }
+        }
+        for (v in listOf("4.7.0", "4.7", "4.10.1", "5.0.0")) {
+            assertEquals("17", ChildJvmCommandBuilder.automaticBundledVersion(v)) { v }
+        }
+        // Unknown → 8: what every server in the field runs its client on today.
+        assertEquals("8", ChildJvmCommandBuilder.automaticBundledVersion(null))
+        assertEquals("8", ChildJvmCommandBuilder.automaticBundledVersion("current"))
+        assertEquals("8", ChildJvmCommandBuilder.automaticBundledVersion(""))
+    }
+
+    @Test
     @DisplayName("no override and no staged runtime -> null (caller falls back to the default JVM)")
     fun missingRuntimeIsNull(@TempDir tmp: Path) {
         // resources dir present but runtimes/jre17 not staged

@@ -189,7 +189,7 @@ What it does:
 - **Connection form** — mode radio (Standard host+port; Localhost/port-forward = port only; Custom = full
   URL), each with an **https/http scheme choice** (https default; plain http is allowed for servers like an
   OIE appliance on `http://localhost:8080` and is flagged "NO TLS" on the row/form/diagnosis), icon picker, Java runtime
-  (Default/Bundled[8|17]/Custom path), JavaFX home, max heap, show-console, SSL protocols/ciphers
+  (Automatic/Bundled[8|17]/Custom path), JavaFX home, max heap, show-console, SSL protocols/ciphers
   (Default/Custom), legacy-DH toggle, optional pinned-cert SHA-256, and optional username/password that
   are written **only to the OS keychain** (never to `connections.json`). New / Save / Save As / Delete.
 - **Import / Export** — Import auto-detects the format by JSON root node (a top-level **array** is a legacy

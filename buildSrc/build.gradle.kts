@@ -13,10 +13,10 @@ repositories {
     mavenCentral()
 }
 
-// The packaging helpers (Java2D icon rendering, Temurin runtime download/verify) deliberately use
+// The packaging helpers (Java2D icon rendering, Zulu FX runtime download/verify) deliberately use
 // ONLY the JDK that runs Gradle — java.desktop + javax.imageio for icons, java.net.http for the
 // download, java.security.MessageDigest for the checksum — plus the Groovy bundled with the Gradle
-// API for parsing the Adoptium JSON. No third-party build dependencies, so the build bootstraps on a
+// API for parsing the Azul JSON. No third-party build dependencies, so the build bootstraps on a
 // plain JDK 17 with nothing else installed.
 dependencies {
     implementation(localGroovy())

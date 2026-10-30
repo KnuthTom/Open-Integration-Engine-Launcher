@@ -48,7 +48,9 @@ Full architecture + trust pipeline: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 ./gradlew :app-fx:packageAll             # current-OS installer(s) + portable zip (the JavaFX UI is the product)
 ./gradlew cyclonedxBom                   # SBOM -> build/reports/bom.{json,xml}
 ```
-Packaging bundles Temurin **JRE 8 + 17** (the *client* runtimes), fetched from Adoptium at build time.
+Packaging bundles Azul Zulu **FX** JRE 8 + 17 (the *client* runtimes — JavaFX included, which the
+Administrator needs), fetched from Azul at build time; a connection on Automatic gets 8 for servers up
+to 4.6 and 17 from 4.7.
 `:app-fx` packages through the Compose Gradle plugin used purely as a jpackage wrapper (WiX download,
 app-image, bundled resources); JavaFX runs from the classpath in the packaged app.
 
@@ -86,7 +88,7 @@ secret-scanned on save. The `Gestalt Cloud Connect Code Signing` pin DN is a kep
 ## Dev environment gotchas
 - Gradle isn't on PATH → always use `./gradlew`.
 - Tests redirect the data dir via `-Dgestalt.home=<build dir>` so they never touch a real profile.
-- Packaging needs network (Adoptium) and grows `app/build` to ~1 GB — run `./gradlew clean` after. The
+- Packaging needs network (Azul CDN) and grows `app/build` to ~1 GB — run `./gradlew clean` after. The
   dev box runs tight on disk.
 - `git http.sslVerify` should stay **true** (a prior `false` global setting was removed).
 

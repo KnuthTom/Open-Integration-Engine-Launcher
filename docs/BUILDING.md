@@ -49,7 +49,7 @@ step to be taken **only after** the build is warning-clean (done) **and** the na
 ## Verifying packaging
 
 `./gradlew :app-fx:createDistributable` (jpackage app-image) and `./gradlew :app-fx:packageMsi` are the fast
-and full packaging checks. **Heads-up:** the bundled MSI is large (~170 MB — it carries two Temurin
+and full packaging checks. **Heads-up:** the bundled MSI is large (~170 MB — it carries two Zulu FX
 client JREs + all JDK modules), and WiX's `light.exe` linker needs a couple of **GB of free disk** for
 its temp while building it. If `packageMsi` fails with `light.exe ... exited with 1 code`, check free
 disk first (`df -h`) — that is almost always the cause, not the build config.

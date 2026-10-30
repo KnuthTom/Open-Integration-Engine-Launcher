@@ -77,7 +77,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
     // java card
     private val javaButton: MenuButton = Controls.menuButton("Bundled Java 17") { javaMenuItems() }
-    private val javaNote = Label("Uses the launcher's own runtime").apply { styleClass += "field-note" }
+    private val javaNote = Label("Bundled Java 8 for Mirth / OIE up to 4.6, Java 17 from 4.7").apply { styleClass += "field-note" }
     private val customJavaField = TextField().apply { styleClass += "mono-field"; promptText = "Path to a JDK or JRE" }
     private val browseJava = Controls.button("Browse…") { browseInto(customJavaField) { path -> update { it.copy(javaHome = it.javaHome.copy(mode = JavaHomeMode.Custom, customPath = path)) } } }
     private val javaFxField = TextField().apply { styleClass += "mono-field"; promptText = "Bundled with the launcher" }
@@ -257,7 +257,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             val jh = d.javaHome
             javaButton.setCaption(
                 when (jh.mode) {
-                    JavaHomeMode.Default -> "System default"
+                    JavaHomeMode.Default -> "Automatic"
                     JavaHomeMode.Bundled -> "Bundled Java ${jh.bundledVersion}"
                     JavaHomeMode.Custom -> "Custom path"
                 },
@@ -400,9 +400,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val d = model.draft.get() ?: return emptyList()
         val jh = d.javaHome
         return listOf(
-            Controls.menuItem("System default", checked = jh.mode == JavaHomeMode.Default, hint = "launcher JVM") { update { it.copy(javaHome = it.javaHome.copy(mode = JavaHomeMode.Default)) } },
-            Controls.menuItem("Bundled Java 8", checked = jh.mode == JavaHomeMode.Bundled && jh.bundledVersion == "8", hint = "Temurin 8") { update { it.copy(javaHome = JavaHomeConfig(JavaHomeMode.Bundled, "8", it.javaHome.customPath)) } },
-            Controls.menuItem("Bundled Java 17", checked = jh.mode == JavaHomeMode.Bundled && jh.bundledVersion == "17", hint = "Temurin 17") { update { it.copy(javaHome = JavaHomeConfig(JavaHomeMode.Bundled, "17", it.javaHome.customPath)) } },
+            Controls.menuItem("Automatic", checked = jh.mode == JavaHomeMode.Default, hint = "by server version") { update { it.copy(javaHome = it.javaHome.copy(mode = JavaHomeMode.Default)) } },
+            Controls.menuItem("Bundled Java 8", checked = jh.mode == JavaHomeMode.Bundled && jh.bundledVersion == "8", hint = "Zulu FX 8") { update { it.copy(javaHome = JavaHomeConfig(JavaHomeMode.Bundled, "8", it.javaHome.customPath)) } },
+            Controls.menuItem("Bundled Java 17", checked = jh.mode == JavaHomeMode.Bundled && jh.bundledVersion == "17", hint = "Zulu FX 17") { update { it.copy(javaHome = JavaHomeConfig(JavaHomeMode.Bundled, "17", it.javaHome.customPath)) } },
             Controls.menuSeparator(),
             Controls.menuItem("Custom path…", checked = jh.mode == JavaHomeMode.Custom) { update { it.copy(javaHome = it.javaHome.copy(mode = JavaHomeMode.Custom)) } },
         )

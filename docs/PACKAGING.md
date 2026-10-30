@@ -10,9 +10,14 @@ It produces, from one Gradle config:
 - **A portable app-image zip** that runs unzipped with no install and keeps all of its state beside
   the app.
 
-Every artifact **bundles two client JREs** (Eclipse Temurin 8 + 17) for launching the OIE / Mirth
-Administrator, and carries the Gestalt **GD app icon**. The launcher itself runs on its own
+Every artifact **bundles two client JREs** (Azul Zulu **FX** 8 + 17 — builds that include JavaFX) for
+launching the OIE / Mirth Administrator, and carries the app icon. The launcher itself runs on its own
 Compose/jpackage runtime (JDK 17).
+
+> Why JavaFX-bearing JREs: the Administrator's tag editor is a JavaFX `JFXPanel`, and the `openjfx.jar`
+> a server publishes carries the JavaFX classes but **no native libraries**. On a plain OpenJDK build the
+> client logs in and then dies ("Graphics Device initialization failed … no suitable pipeline" on 17;
+> `UnsupportedClassVersionError` on 8). The original launcher shipped a JavaFX JRE for the same reason.
 
 > jpackage is **per-host**: each OS's installers can only be built *on* that OS. The Gradle config is
 > identical on every host — building the macOS/Linux artifacts is just a matter of running the same
@@ -25,7 +30,7 @@ Compose/jpackage runtime (JDK 17).
 | Need | Why | Notes |
 |------|-----|-------|
 | **JDK 17 with `jpackage`** | Compose's `nativeDistributions` wraps `jpackage` (and `jlink`). | The Gradle toolchain is pinned to 17. A full JDK (not a JRE) is required — `jpackage` ships in the JDK `bin`. |
-| **Network access** | The two client JREs are downloaded from Adoptium at package time. | Not committed to the repo; see *Bundled runtimes* below. |
+| **Network access** | The two client JREs are downloaded from Azul's CDN at package time. | Not committed to the repo; see *Bundled runtimes* below. |
 | **WiX Toolset v3** (Windows only) | `jpackage` shells out to WiX to build the `.msi` / `.exe`. | Only needed for the **installers**. The **portable app-image** and `createDistributable` do **not** need WiX. Install from https://wixtoolset.org/ (v3.x) and ensure `candle`/`light` are on `PATH`. |
 
 > Gradle is not on `PATH` on the dev box; use the wrapper (`./gradlew`, bootstraps Gradle 8.14.5) or
@@ -50,7 +55,7 @@ Compose/jpackage runtime (JDK 17).
 ./gradlew :app-fx:createDistributable
 
 # Building blocks (run automatically by the above; useful in isolation):
-./gradlew :app:stageClientRuntimes   # download + checksum-verify + stage Temurin 8 & 17
+./gradlew :app:stageClientRuntimes   # download + checksum-verify + stage Zulu FX 8 & 17
 ./gradlew :app:generateAppIcons      # render .ico/.icns/.png from the GD mark
 ```
 
@@ -71,8 +76,8 @@ GestaltCloudConnect/            <- app-image root (the .exe sits here on Windows
 ├─ app/                         <- the launcher jars + resources
 │  └─ resources/                <- appResources, exposed at runtime as compose.application.resources.dir
 │     └─ runtimes/
-│        ├─ jre8/               <- bundled Temurin JRE 8  (bin/java…)
-│        └─ jre17/              <- bundled Temurin JRE 17 (bin/java…)
+│        ├─ jre8/               <- bundled Zulu FX JRE 8  (bin/java…)
+│        └─ jre17/              <- bundled Zulu FX JRE 17 (bin/java…)
 └─ (portable zip only) gestalt-portable.txt   <- the portable sentinel
 ```
 
@@ -80,7 +85,8 @@ GestaltCloudConnect/            <- app-image root (the .exe sits here on Windows
 
 `./gradlew :app:stageClientRuntimes` is the **runtime-acquisition build step**:
 
-1. Asks the Adoptium API for the latest GA **Temurin JRE 8** and **JRE 17** for the host OS/arch.
+1. Asks the Azul metadata API for the latest GA **Zulu FX JRE 8** and **JRE 17** for the host OS/arch
+   (`javafx_bundled=true`; the detail record carries the official checksum).
 2. Downloads each and **verifies the publisher's SHA-256** before staging (a mismatch fails the build).
 3. Normalizes the layout (strips the leading version dir / the macOS `Contents/Home` nesting) so every
    runtime has the uniform shape `runtimes/jre<N>/bin/java[.exe]`.
@@ -88,16 +94,18 @@ GestaltCloudConnect/            <- app-image root (the .exe sits here on Windows
    right-architecture runtimes.
 
 JRE binaries are **never committed** to the repo. The staging task is idempotent — an already-staged
-runtime is reused.
+runtime is reused, unless it has no JavaFX (a runtime staged by an earlier build), in which case it is
+replaced.
 
 **How a connection resolves `Bundled(8|17)`** (Phase-1 hook, wired here):
 `ChildJvmCommandBuilder` resolves the child-JVM `java` from `runtimes/jre<version>` **relative to**
 `compose.application.resources.dir`. Compose/jpackage sets that property to the app's resources dir at
 runtime, tracking the launcher's own location — so it resolves correctly for **both** the installed app
-and a portable app-image that has been moved/unzipped anywhere. `Default` and `Custom` Java homes are
-unchanged. For a dev run without a packaged image, set `-Dgestalt.java.8.home` / `-Dgestalt.java.17.home`
-(or `GESTALT_JAVA_8_HOME` / `GESTALT_JAVA_17_HOME`); if no bundled runtime is found, the launcher falls
-back to its own JVM.
+and a portable app-image that has been moved/unzipped anywhere. A connection left on **Automatic** (the
+default) picks the bundled runtime by the server's version — Java 8 for Mirth / OIE up to 4.6, Java 17
+from 4.7, the servers' own support matrix; `Custom` is unchanged. For a dev run without a packaged
+image, set `-Dgestalt.java.8.home` / `-Dgestalt.java.17.home` (or `GESTALT_JAVA_8_HOME` /
+`GESTALT_JAVA_17_HOME`); if no bundled runtime is found, the launcher falls back to its own JVM.
 
 ### App icon
 

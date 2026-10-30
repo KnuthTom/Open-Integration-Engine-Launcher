@@ -39,7 +39,7 @@ jobs:
 
       - name: Package installer + portable image
         # :app-fx:packageAll builds the current-OS installer(s) AND the portable app-image zip of the
-        # JavaFX product UI, each bundling the Temurin 8 + 17 client runtimes (fetched +
+        # JavaFX product UI, each bundling the Zulu FX 8 + 17 client runtimes (fetched +
         # checksum-verified at build time).
         run: ./gradlew :app-fx:packageAll --no-daemon --stacktrace
         shell: bash

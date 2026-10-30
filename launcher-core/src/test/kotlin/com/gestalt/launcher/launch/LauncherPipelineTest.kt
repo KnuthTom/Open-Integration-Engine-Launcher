@@ -311,6 +311,66 @@ class LauncherPipelineTest {
     }
 
     @Test
+    @DisplayName("Automatic runtime: the bundled Java 8 for a 4.4 server, the bundled Java 17 for 4.7, an explicit Bundled choice as chosen, the launcher's JVM when nothing is staged")
+    fun automaticRuntimeFollowsServerVersion(@TempDir dir: Path) {
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca, "CN=OIE,O=BrightCodeCompany OÜ,C=EE")
+        // Two staged runtimes, the way a packaged install carries them.
+        val resources = dir.resolve("resources")
+        val jre8 = resources.resolve("runtimes").resolve("jre8")
+        val jre17 = resources.resolve("runtimes").resolve("jre17")
+        for ((home, v) in listOf(jre8 to "1.8.0_504", jre17 to "17.0.20.1")) {
+            Files.createDirectories(home.resolve("bin"))
+            Files.writeString(home.resolve("release"), "JAVA_VERSION=\"$v\"\n")
+        }
+        val launcherJdk = dir.resolve("launcher-jdk").resolve("bin").resolve("java")
+        fun launcherFor(version: String, resourcesDir: Path?): LauncherCore {
+            val responses = mapOf(
+                "${base}webstart" to jnlpWithArgs(version, sha256Base64(jarBytes)).toByteArray(),
+                "${base}core.jar" to jarBytes,
+            )
+            // The builder reads the packaged-resources property; point it at this test's staging (or nowhere).
+            if (resourcesDir != null) System.setProperty("compose.application.resources.dir", resourcesDir.toString())
+            else System.clearProperty("compose.application.resources.dir")
+            return LauncherCore(
+                trustStore = TrustStore.of(ca.cert),
+                signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS,
+                gateMode = TrustMode.PIN_KNOWN_SIGNERS,
+                cacheDir = dir.resolve("cache-$version-${resourcesDir != null}"),
+                commandBuilder = ChildJvmCommandBuilder(javaExe = launcherJdk.toString()),
+                trustedSigners = com.gestalt.launcher.gate.TrustedSignerStore(dir.resolve("trusted-signers.json")),
+                fetcherFactory = { FakeFetcher(responses) },
+            )
+        }
+        fun javaDirOf(command: List<String>) = Path.of(command[0]).parent.parent
+        val previous = System.getProperty("compose.application.resources.dir")
+        try {
+            assertEquals(jre8, javaDirOf(launcherFor("4.4.2", resources).prepareLaunch(connection()).command)) { "4.4.2 → Java 8" }
+            assertEquals(jre8, javaDirOf(launcherFor("4.6.1", resources).prepareLaunch(connection()).command)) { "4.6 → still Java 8" }
+            assertEquals(jre17, javaDirOf(launcherFor("4.7.0", resources).prepareLaunch(connection()).command)) { "4.7 → Java 17" }
+            val explicit17 = connection().copy(javaHome = com.gestalt.launcher.model.JavaHomeConfig(com.gestalt.launcher.model.JavaHomeMode.Bundled, "17"))
+            assertEquals(jre17, javaDirOf(launcherFor("4.4.2", resources).prepareLaunch(explicit17).command)) { "an explicit choice is honoured" }
+            assertEquals(launcherJdk.parent.parent, javaDirOf(launcherFor("4.4.2", null).prepareLaunch(connection()).command)) { "nothing staged → the launcher's own JVM" }
+        } finally {
+            if (previous == null) System.clearProperty("compose.application.resources.dir") else System.setProperty("compose.application.resources.dir", previous)
+        }
+    }
+
+    /** A JNLP with the stock two arguments — the server's URL and its version — and an inline digest. */
+    private fun jnlpWithArgs(version: String, sha256Base64: String): String = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <jnlp spec="1.0+">
+          <resources>
+            <jar href="core.jar" main="true" sha256="$sha256Base64"/>
+          </resources>
+          <application-desc main-class="com.mirth.connect.client.ui.Mirth">
+            <argument>https://launcher.example.com:8443</argument>
+            <argument>$version</argument>
+          </application-desc>
+        </jnlp>
+    """.trimIndent()
+
+    @Test
     @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale, anything else is dropped, null leaves the JVM's choice")
     fun displayScaleIsPerConnection(@TempDir dir: Path) {
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")

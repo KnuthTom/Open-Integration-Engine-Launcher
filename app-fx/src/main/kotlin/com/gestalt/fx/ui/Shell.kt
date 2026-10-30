@@ -305,7 +305,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
             val java = when (conn.javaHome.mode) {
                 com.gestalt.launcher.model.JavaHomeMode.Bundled -> "Java ${conn.javaHome.bundledVersion}"
                 com.gestalt.launcher.model.JavaHomeMode.Custom -> "Custom Java"
-                com.gestalt.launcher.model.JavaHomeMode.Default -> "System Java"
+                com.gestalt.launcher.model.JavaHomeMode.Default -> "Automatic Java"
             }
             toast.show("Administrator started", listOfNotNull(java, conn.heapSize?.let { "$it heap" }).joinToString(" · "), ToastHost.Kind.Success)
         }

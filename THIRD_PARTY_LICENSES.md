@@ -80,18 +80,21 @@ specific build. See `docs/ICON_PACKS.md`.
 
 ## Bundled client runtimes (Phase 4a packaging)
 
-### Eclipse Temurin JRE 8 + JRE 17
+### Azul Zulu FX JRE 8 + JRE 17 (OpenJDK + OpenJFX)
 - **Location (in the package):** `runtimes/jre8` and `runtimes/jre17` under the app resources.
-- **Source:** Eclipse Adoptium — https://adoptium.net (binaries fetched at build time from the
-  Adoptium API; **not** committed to this repo).
-- **License:** **GPL v2 with the Classpath Exception (GPLv2+CE)** — the OpenJDK license. The Classpath
-  Exception permits bundling and redistributing the unmodified runtime alongside independent
-  application code without that code becoming subject to the GPL.
-- **Use:** the two selectable client JVMs the launcher uses to run the OIE / Mirth **Administrator**
-  (a connection's `Bundled(8|17)` Java home). They are **not** the launcher's own runtime (jpackage
-  jlinks a separate JDK-17 runtime for the launcher itself).
+- **Source:** Azul Zulu Builds of OpenJDK, the "FX" bundles that include OpenJFX —
+  https://www.azul.com/downloads/?package=jre#zulu (binaries fetched at build time from the Azul
+  metadata API; **not** committed to this repo).
+- **License:** **GPL v2 with the Classpath Exception (GPLv2+CE)** — the OpenJDK license, and OpenJFX's.
+  The Classpath Exception permits bundling and redistributing the unmodified runtime alongside
+  independent application code without that code becoming subject to the GPL. Zulu's community (CA)
+  builds carry no additional terms.
+- **Use:** the two client JVMs the launcher uses to run the OIE / Mirth **Administrator** (a
+  connection's Automatic choice, or its explicit `Bundled(8|17)` Java home). The Administrator needs
+  JavaFX from the JRE itself, which is why these are the FX bundles. They are **not** the launcher's own
+  runtime (jpackage jlinks a separate JDK-17 runtime for the launcher itself).
 - **Note:** the runtimes are redistributed **unmodified**. The full OpenJDK license text and source
-  offer are available from Adoptium; see https://openjdk.org/legal/gplv2+ce.html.
+  offer are available from Azul; see https://openjdk.org/legal/gplv2+ce.html.
 
 ## Notes
 - The bundled `branding/gestalt-wordmark.svg` (header wordmark) and

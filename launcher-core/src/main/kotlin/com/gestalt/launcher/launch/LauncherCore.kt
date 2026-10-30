@@ -251,6 +251,7 @@ open class LauncherCore(
                 connection, mainClass, admitted, appArgs,
                 serverJvmArgs = jnlp.untrustedJvmArgs,
                 reachedAddress = reachedAt,
+                serverVersion = version,
             )
             AuditLog.childLaunched(connection.id, mainClass, admitted.size, reachedAt?.hostAddress)
             return LaunchPlan(connection, version, mainClass, admitted, appArgs, command)
@@ -664,14 +665,21 @@ open class LauncherCore(
         }
 
         /**
-         * Rewrite the **first** http(s)-URL application argument so its scheme + host + port become those
-         * of [serverUrl] (the connection's own address), preserving any path/query/fragment. If [serverUrl]
-         * carries no explicit port, the argument's own port is kept (never dropped to the default). This makes
-         * the launched client connect back through — and show on its login screen — the same address the
-         * user typed, rather than the server's self-reported URL in the JNLP (which differs behind a
-         * port-forward, a reverse proxy, a VPN name, or simply another port). Applied to every connection.
-         * Non-URL arguments (e.g. the version) are passed through untouched, and only the first URL argument
-         * is rewritten so a later URL argument (should one ever appear) is left alone. A no-op when
+         * Rewrite the **first** http(s)-URL application argument — the address the Administrator connects
+         * to and shows on its login screen — so it reaches the server by the address the user typed.
+         *
+         * The JNLP carries the server's OWN idea of that address (`https://<host>:<https.port>`, or its
+         * `server.url` property), which is wrong behind a port-forward / SSM tunnel (`https://localhost:31065`
+         * for the server's `:8443`), a reverse proxy, or a VPN name. The user's address is, by definition,
+         * the one the launcher just fetched everything from, so its **host** always wins, and so do its
+         * scheme and port — with one exception. Mirth and OIE serve the Administrator's API over **https
+         * only**: the plain-http port (`http://host:8080`) serves the launcher files and nothing else, and
+         * a client sent there answers every call with a 405. So when the user typed an http address and
+         * the server names an https one, the server's scheme and port stand (`http://localhost:8080` →
+         * `https://localhost:8443`); typed https, or http on both sides (a server whose `server.url` is
+         * http), keeps the typed scheme and port. If [serverUrl] carries no port the argument's own port is
+         * kept, never dropped to the default. Path/query/fragment are preserved. Only the first URL
+         * argument is rewritten; non-URL arguments (the version, `-ssl`, …) pass through. A no-op when
          * [serverUrl] is unparseable or the argument already matches.
          */
         internal fun rewriteServerUrlArg(serverUrl: String, args: List<String>): List<String> {
@@ -683,11 +691,17 @@ open class LauncherCore(
                 val scheme = u?.scheme?.lowercase()
                 if (u != null && (scheme == "https" || scheme == "http") && u.host != null) {
                     rewrote = true
-                    // Use the connection's port; if it has none (a port-less serverUrl), keep the arg's own
-                    // port rather than dropping it (which would send the client to the default 443/80).
-                    val port = if (base.port != -1) base.port else u.port
+                    val typedHttp = base.scheme.equals("http", ignoreCase = true)
+                    // The http port never serves the API: when the user typed http and the server says
+                    // https, the client goes where the server says (its https port), on the typed host.
+                    val (newScheme, newPort) = if (typedHttp && scheme == "https") {
+                        u.scheme to u.port
+                    } else {
+                        // Typed port; if the typed address has none, the arg's own port (never dropped).
+                        base.scheme to (if (base.port != -1) base.port else u.port)
+                    }
                     runCatching {
-                        URI(base.scheme, base.userInfo, base.host, port, u.path?.ifBlank { null }, u.query, u.fragment).toString()
+                        URI(newScheme, base.userInfo, base.host, newPort, u.path?.ifBlank { null }, u.query, u.fragment).toString()
                     }.getOrElse { arg }
                 } else {
                     arg

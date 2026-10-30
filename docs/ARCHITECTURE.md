@@ -44,8 +44,11 @@ spawns it):
    builder accepts, so nothing unverified can reach the classpath. Any rejection throws
    `LaunchAbortedException`.
 5. **Build the child-JVM command.** `ChildJvmCommandBuilder` assembles a default-secure command:
-   modern TLS only, the classpath from `AdmittedJar`s, the selected bundled runtime (Java 8 or 17),
+   modern TLS only, the classpath from `AdmittedJar`s, the bundled runtime (Automatic: Java 8 for
+   servers up to 4.6, Java 17 from 4.7 — or the connection's explicit choice),
    and — only on Java 9+ — a *curated allow-list* of module flags from the JNLP (`--add-opens` etc.).
+   The client's server-URL argument is rewritten to the typed host, keeping the typed scheme and port
+   except that a plain-http address is sent to the server's https port, the only one that serves the API.
    Server-provided `-D`/`-javaagent`/`-X` are dropped. For a pinned server, the leaf is written to a
    per-connection PKCS12 truststore and passed to the child so its own TLS connection succeeds.
 6. **Spawn.** `LauncherCore.launch` is the only place a process starts (`ProcessBuilder(...).start()`),
@@ -112,8 +115,9 @@ the channel. See [UPDATES.md](UPDATES.md).
 `:app-fx` uses the Compose Gradle plugin as a jpackage wrapper to produce per-OS installers and a
 portable app-image (state under `./data` beside the executable, via a sentinel file); JavaFX runs from
 the classpath in the packaged app, started by a plain `main`. Each package bundles **two client runtimes**
-(Temurin JRE 8 + 17, fetched from Adoptium at build time, not committed) for launching the
-Administrator; the launcher itself runs on its own jlinked JDK-17 runtime. See [PACKAGING.md](PACKAGING.md)
+(Zulu FX JRE 8 + 17 — JavaFX included, which the Administrator needs — fetched from Azul at build time,
+not committed) for launching the Administrator; the launcher itself runs on its own jlinked JDK-17
+runtime. See [PACKAGING.md](PACKAGING.md)
 and [BUILDING.md](BUILDING.md).
 
 ## Theming & branding

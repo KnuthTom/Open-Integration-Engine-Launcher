@@ -32,8 +32,9 @@ trust path — without you hand-managing Java Web Start, keystores, or JVM flags
 - **TLS that fits the field** — full chain + hostname verification for public-CA servers; exact
   server-leaf certificate **pinning** (trust-on-first-use) for self-signed engines and SSH/SSM
   tunnels, with a re-pin prompt when a server's certificate rotates.
-- **Bundled client runtimes** — launches the Administrator on a bundled Temurin **JRE 8 or 17**
-  per connection, so you don't need a system Java.
+- **Bundled client runtimes** — launches the Administrator on a bundled Zulu FX **JRE 8 or 17**
+  (JavaFX included, which the Administrator needs), chosen by the server's version or per
+  connection, so you don't need a system Java.
 - **Credentials stay in the OS keychain** (Windows DPAPI / macOS Keychain / Linux libsecret) —
   never written to `connections.json` or any log. A saved password signs you in to the Administrator
   automatically, the way MCAL did.
@@ -79,7 +80,7 @@ Requires **JDK 17** (the Gradle toolchain pins it; no system Java needed beyond 
 
 Packaging an installer / portable image for the current OS is documented in
 [docs/PACKAGING.md](docs/PACKAGING.md); the toolchain notes are in [docs/BUILDING.md](docs/BUILDING.md).
-The build fetches the bundled Temurin runtimes from Adoptium at package time (not committed).
+The build fetches the bundled Zulu FX runtimes from Azul at package time (not committed).
 
 ## Updates (optional)
 

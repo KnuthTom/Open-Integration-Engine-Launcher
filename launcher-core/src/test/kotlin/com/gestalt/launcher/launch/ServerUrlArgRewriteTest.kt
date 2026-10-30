@@ -66,6 +66,39 @@ class ServerUrlArgRewriteTest {
     }
 
     @Test
+    @DisplayName("typed http, server says https: the client goes to the server's https port on the typed host (the http port has no API)")
+    fun httpTypedGoesToTheServersHttpsPort() {
+        // A local Mirth reached at its plain-http launcher port: the API answers only on 8443.
+        assertEquals(
+            listOf("https://localhost:8443", "4.5.2"),
+            LauncherCore.rewriteServerUrlArg("http://localhost:8080", listOf("https://localhost:8443", "4.5.2")),
+        )
+        // Same through a VPN name the server doesn't know: the typed host, the server's https port.
+        assertEquals(
+            listOf("https://mirth.vpn.example.internal:8443", "4.4.2"),
+            LauncherCore.rewriteServerUrlArg("http://mirth.vpn.example.internal:8080", listOf("https://mirth-01:8443", "4.4.2")),
+        )
+    }
+
+    @Test
+    @DisplayName("http on both sides (a server whose server.url is http) keeps the typed scheme and port")
+    fun httpBothSidesKeepsTyped() {
+        assertEquals(
+            listOf("http://localhost:9912", "4.5.2"),
+            LauncherCore.rewriteServerUrlArg("http://localhost:9912", listOf("http://appliance.example.internal:8080", "4.5.2")),
+        )
+    }
+
+    @Test
+    @DisplayName("typed https always wins, even when the server names an http address")
+    fun httpsTypedWinsOverHttpArg() {
+        assertEquals(
+            listOf("https://localhost:31065", "4.4.2"),
+            LauncherCore.rewriteServerUrlArg("https://localhost:31065", listOf("http://appliance.example.internal:8080", "4.4.2")),
+        )
+    }
+
+    @Test
     @DisplayName("no URL arguments, or an unparseable connection URL, passes args through unchanged")
     fun passthroughCases() {
         assertEquals(listOf("4.4.2"), LauncherCore.rewriteServerUrlArg("https://localhost:31065", listOf("4.4.2")))

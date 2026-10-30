@@ -55,7 +55,7 @@ tasks.test {
 // Phase 4a — packaging
 //
 // Produces (on the current host; jpackage is per-host): per-user installers and a portable
-// app-image, each bundling TWO client JREs (Temurin 8 + 17) and carrying the GD app icon. The
+// app-image, each bundling TWO client JREs (Zulu FX 8 + 17) and carrying the GD app icon. The
 // launcher itself runs on its own Compose/jpackage runtime (JDK 17, the toolchain above).
 // =================================================================================================
 
@@ -77,7 +77,7 @@ val buildOps = objects.newInstance<InjectedBuildOps>()
 val bundledJavaVersions = listOf(8, 17)
 
 // Host OS/arch, mapped to the two naming schemes we need: Compose appResources subfolders and the
-// Adoptium API tokens.
+// Azul metadata API tokens.
 private val hostOs = System.getProperty("os.name").orEmpty().lowercase()
 private val hostArch = System.getProperty("os.arch").orEmpty().lowercase()
 val composeOs = when {
@@ -87,7 +87,7 @@ val composeOs = when {
 }
 val composeArch = if (hostArch.contains("aarch64") || hostArch.contains("arm64")) "arm64" else "x64"
 val osArchToken = "$composeOs-$composeArch"
-val temurinOs = when (composeOs) { "macos" -> "mac"; else -> composeOs }
+val temurinOs = composeOs // Azul names the platforms windows | macos | linux
 val temurinArch = if (composeArch == "arm64") "aarch64" else "x64"
 
 val appResourcesDir = layout.buildDirectory.dir("appResources")
@@ -218,14 +218,17 @@ val stageIconPack by tasks.registering {
 sourceSets.main { resources.srcDir(iconPackStageDir) }
 tasks.named("processResources") { dependsOn(stageIconPack) }
 
-// --- Bundle two client JREs: download Temurin, verify checksum, stage into appResources ----------
+// --- Bundle two client JREs: download Zulu FX, verify checksum, stage into appResources ----------
 // Staged under the Compose appResources OS+arch folder so the jpackage image carries exactly the
 // right-architecture runtimes, reachable at runtime via compose.application.resources.dir.
 val stageClientRuntimes by tasks.registering {
     group = "distribution"
-    description = "Download + verify Temurin JRE ${bundledJavaVersions.joinToString(" + ")} for " +
+    description = "Download + verify Zulu FX JRE ${bundledJavaVersions.joinToString(" + ")} (with JavaFX) for " +
         "$temurinOs/$temurinArch and stage them into the package."
     val runtimesRoot = appResourcesDir.map { it.dir("$osArchToken/runtimes") }
+    // The vendor is an input so a switch of runtime (plain → JavaFX-bearing) re-runs the staging.
+    inputs.property("runtimeFlavour", "zulu-fx")
+    inputs.property("versions", bundledJavaVersions.joinToString(","))
     outputs.dir(runtimesRoot)
     val downloadDir = layout.buildDirectory.dir("runtimes-download")
     doLast {
@@ -234,17 +237,22 @@ val stageClientRuntimes by tasks.registering {
         for (v in bundledJavaVersions) {
             val staged = File(root, "jre$v")
             if (File(staged, "release").isFile || File(staged, "bin").isDirectory) {
-                logger.lifecycle("JRE $v already staged at $staged — skipping download.")
-                continue
+                if (gestalt.ClientRuntimes.hasJavaFx(staged)) {
+                    logger.lifecycle("JRE $v already staged at $staged — skipping download.")
+                    continue
+                }
+                // A runtime staged by an earlier build without JavaFX: the Administrator can't run on it.
+                logger.lifecycle("JRE $v at $staged has no JavaFX — replacing it.")
+                staged.deleteRecursively()
             }
-            logger.lifecycle("Resolving Temurin JRE $v for $temurinOs/$temurinArch …")
-            val asset = gestalt.TemurinRuntimes.resolveAsset(v, temurinOs, temurinArch)
+            logger.lifecycle("Resolving Zulu FX JRE $v for $temurinOs/$temurinArch …")
+            val asset = gestalt.ClientRuntimes.resolveAsset(v, temurinOs, temurinArch)
             val archive = File(dl, asset.name)
-            if (!archive.isFile || gestalt.TemurinRuntimes.sha256(archive) != asset.sha256) {
+            if (!archive.isFile || gestalt.ClientRuntimes.sha256(archive) != asset.sha256) {
                 logger.lifecycle("Downloading ${asset.link}")
-                gestalt.TemurinRuntimes.download(asset, archive)
+                gestalt.ClientRuntimes.download(asset, archive)
             }
-            gestalt.TemurinRuntimes.verify(archive, asset.sha256)
+            gestalt.ClientRuntimes.verify(archive, asset.sha256)
             logger.lifecycle("Verified ${asset.name} (sha256 ✓)")
 
             val tmp = File(dl, "extract-jre$v").apply { deleteRecursively(); mkdirs() }
@@ -252,8 +260,8 @@ val stageClientRuntimes by tasks.registering {
                 from(if (asset.name.endsWith(".zip")) buildOps.archives.zipTree(archive) else buildOps.archives.tarTree(resources.gzip(archive)))
                 into(tmp)
             }
-            val home = gestalt.TemurinRuntimes.findJavaHome(tmp)
-                ?: error("could not locate bin/java in the extracted Temurin JRE $v")
+            val home = gestalt.ClientRuntimes.findJavaHome(tmp)
+                ?: error("could not locate bin/java in the extracted Zulu FX JRE $v")
             staged.deleteRecursively()
             buildOps.fs.copy { from(home); into(staged) }
             logger.lifecycle("Staged JRE $v -> $staged")

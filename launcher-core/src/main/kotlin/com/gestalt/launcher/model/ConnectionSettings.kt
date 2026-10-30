@@ -38,10 +38,11 @@ enum class CloseAfterLaunch { Inherit, On, Off }
 /**
  * Java runtime selection for the child JVM.
  *
- *  - [JavaHomeMode.Default]: the launcher's own JVM.
- *  - [JavaHomeMode.Bundled]: a runtime shipped with the app, identified by [bundledVersion] ("8"|"17").
- *    (The bundled runtimes themselves are a Phase-4 packaging concern; until then this resolves to the
- *    default JVM if no bundled runtime is found.)
+ *  - [JavaHomeMode.Default]: *Automatic* — the bundled runtime the server's version calls for (Java 8
+ *    for Mirth / OIE up to 4.6, Java 17 from 4.7), falling back to the launcher's own JVM when no
+ *    bundled runtime is present.
+ *  - [JavaHomeMode.Bundled]: a runtime shipped with the app, identified by [bundledVersion] ("8"|"17");
+ *    resolves to the launcher's own JVM if that runtime isn't found.
  *  - [JavaHomeMode.Custom]: the JDK/JRE at [customPath].
  */
 @Serializable

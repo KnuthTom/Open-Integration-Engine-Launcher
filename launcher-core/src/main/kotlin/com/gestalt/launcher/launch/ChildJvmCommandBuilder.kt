@@ -39,6 +39,15 @@ import java.nio.file.Path
  * ([Connection.heapSize]), the show-console choice ([Connection.showJavaConsole] → `java` vs `javaw` on
  * Windows), and optional SSL protocol/cipher overrides. A connection left at defaults produces exactly
  * the original default-secure command.
+ *
+ * **Which Java runs the Administrator.** The client is a Swing application that also needs **JavaFX**
+ * (its tag editor is a `JFXPanel`); the `openjfx.jar` the server ships carries the JavaFX classes but
+ * no native libraries, so JavaFX must come from the JRE itself — a plain OpenJDK build fails right after
+ * login with "no suitable pipeline". The bundled runtimes are therefore JavaFX-bearing JREs. With the
+ * runtime left at *Automatic* ([JavaHomeMode.Default]) the version follows the server's own support
+ * matrix: **Java 8** for Mirth / OIE up to 4.6 (the client is built for 8, and 8 is what the original
+ * launcher ran it on), **Java 17** from 4.7 on (where 17 became the minimum). A bundled runtime that
+ * isn't present (a dev run without staging) falls back to the launcher's own JVM, as before.
  */
 class ChildJvmCommandBuilder(
     private val javaExe: String = defaultJavaExe(),
@@ -52,11 +61,13 @@ class ChildJvmCommandBuilder(
         serverJvmArgs: List<String> = emptyList(),
         /** The address the launcher's own fetches reached the server on, when the transport could tell. */
         reachedAddress: InetAddress? = null,
+        /** The server's version ("4.4.2"), which picks the bundled runtime when the connection says Automatic. */
+        serverVersion: String? = null,
     ): List<String> {
         require(classpath.isNotEmpty()) { "refusing to launch with an empty (unverified) classpath" }
         require(mainClass.isNotBlank()) { "refusing to launch without a main class" }
 
-        val javaHome = resolveJavaHome(connection)
+        val javaHome = resolveJavaHome(connection, serverVersion)
         val cmd = mutableListOf(javaExeIn(javaHome, connection))
 
         // Max heap (-Xmx) — only a well-formed size is honored, as a guard against argument injection.
@@ -115,14 +126,15 @@ class ChildJvmCommandBuilder(
         LocalhostResolver.isLoopbackHost(runCatching { connection.baseUri().host }.getOrNull())
 
     /**
-     * The effective Java home for [connection]: the requested runtime (Default = the launcher's own JVM;
-     * Custom = the configured path; Bundled = a shipped runtime if locatable), falling back to the
-     * launcher's own JVM when the requested one isn't a usable directory.
+     * The effective Java home for [connection]: the requested runtime (Default = *Automatic*: the bundled
+     * runtime [automaticBundledVersion] picks for [serverVersion], else the launcher's own JVM; Custom =
+     * the configured path; Bundled = a shipped runtime if locatable), falling back to the launcher's own
+     * JVM when the requested one isn't a usable directory.
      */
-    private fun resolveJavaHome(connection: Connection): Path? {
+    private fun resolveJavaHome(connection: Connection, serverVersion: String?): Path? {
         val defaultHome = Path.of(javaExe).parent?.parent // <home>/bin/java(.exe) -> <home>
         val requestedHome: Path? = when (connection.javaHome.mode) {
-            JavaHomeMode.Default -> defaultHome
+            JavaHomeMode.Default -> resolveBundledHome(automaticBundledVersion(serverVersion)) ?: defaultHome
             JavaHomeMode.Custom -> connection.javaHome.customPath?.takeIf { it.isNotBlank() }?.let { Path.of(it) }
             JavaHomeMode.Bundled -> resolveBundledHome(connection.javaHome.bundledVersion)
         }
@@ -216,6 +228,18 @@ class ChildJvmCommandBuilder(
                 }
             }
             return out
+        }
+
+        /**
+         * *Automatic* runtime choice: the server's own support matrix. Mirth / OIE up to **4.6** run their
+         * client on Java 8 (the minimum they support, and what the original launcher shipped); **4.7**
+         * made Java 17 the minimum. Unparseable or missing → 8 (every server in the field today).
+         */
+        internal fun automaticBundledVersion(serverVersion: String?): String {
+            val parts = serverVersion?.trim()?.split('.', '-', '_')?.map { it.toIntOrNull() } ?: return "8"
+            val major = parts.getOrNull(0) ?: return "8"
+            val minor = parts.getOrNull(1) ?: 0
+            return if (major > 4 || (major == 4 && minor >= 7)) "17" else "8"
         }
 
         /** Major Java version from a version string ("1.8.0_412" -> 8, "17.0.11" -> 17). Null if unparseable. */

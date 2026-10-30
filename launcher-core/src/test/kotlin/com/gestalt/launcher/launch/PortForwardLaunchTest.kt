@@ -187,8 +187,8 @@ class PortForwardLaunchTest {
     }
 
     @Test
-    @DisplayName("plain-http forwarded port: scheme AND port the user typed reach the client (http://localhost:9912)")
-    fun plainHttpForwardKeepsSchemeAndPort(@TempDir dir: Path) {
+    @DisplayName("plain-http launcher port: the client is sent to the server's https port on the typed host (the http port has no API)")
+    fun plainHttpGoesToTheServersHttpsPort(@TempDir dir: Path) {
         val base = "http://localhost:9912/"
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val jarBytes = signedCoreJar(dir, ca)
@@ -197,8 +197,8 @@ class PortForwardLaunchTest {
 
         val plan = launcher(dir, ca, fetcher, leaf = null).prepareLaunch(conn)
 
-        assertEquals(listOf("http://localhost:9912", "1.0.0"), plan.appArgs) {
-            "http and the forwarded port must survive; the JNLP said https://localhost:8443"
+        assertEquals(listOf("https://localhost:8443", "1.0.0"), plan.appArgs) {
+            "the launcher files came over http:9912, but Mirth/OIE answer the API only on https — the JNLP's https://localhost:8443"
         }
     }
 
