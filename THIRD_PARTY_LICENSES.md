@@ -38,6 +38,12 @@ OF THIS SOFTWARE.
 - **Use:** every functional glyph of the JavaFX window and the built-in connection icon library
   (Healthcare, Lab, Cloud, SaaS categories).
 
+### Application icon (`:app-fx`)
+- **Location:** `app-fx/src/main/resources/com/gestalt/fx/icon/` (PNG 16–512 px + the SVG source) and
+  `app-fx/packaging/app.ico` / `app.icns` for the installers.
+- **Source:** the project's own mark (an open ring and a dot on a graphite tile), supplied by the
+  maintainer; provenance metadata stripped from the SVGs. Project-owned, MPL-2.0 like the rest.
+
 ### Health Icons — connection icon library (pathology-lab set)
 - **Location:** `design-system/src/main/resources/icons/connection/*.svg`
 - **Source:** https://healthicons.org — https://github.com/resolvetosavelives/healthicons

@@ -29,6 +29,7 @@ class LauncherApp : Application() {
         val shell = Shell(model, stage, icons).also { this.shell = it }
 
         stage.title = "$APP_NAME ${version()}".trim()
+        stage.icons.setAll(appIcons())
         stage.scene = shell.scene
         stage.minWidth = 720.0
         stage.minHeight = 560.0
@@ -58,6 +59,12 @@ class LauncherApp : Application() {
 
     companion object {
         const val APP_NAME = "Open Integration Engine Launcher"
+
+        /** The window / taskbar icon at every size the platform may ask for. */
+        fun appIcons(): List<javafx.scene.image.Image> =
+            listOf(16, 24, 32, 48, 64, 128, 256).mapNotNull { size ->
+                LauncherApp::class.java.getResourceAsStream("/com/gestalt/fx/icon/app-$size.png")?.use { javafx.scene.image.Image(it) }
+            }
 
         /** The build's version, from the resource Gradle expands; empty when running unpackaged. */
         fun version(): String = runCatching {
