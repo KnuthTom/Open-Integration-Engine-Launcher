@@ -258,6 +258,87 @@ class ExtensionDescriptorTest {
     }
 
     @Test
+    @DisplayName("real extension shape: codebase …/webstart/extensions with jars listed as libs/<name>/<jar> — resolved against the descriptor's codebase path, on the TYPED origin")
+    fun extensionCodebasePathIsHonouredOnTheTypedOrigin(@TempDir dir: Path) {
+        // A stock Mirth extension descriptor. Note the codebase names the server's OWN address
+        // (localhost:8443 — what the server thinks it is), while the user reaches it through a forward on
+        // another port: only the codebase PATH is used, the origin is the connection's.
+        val typed = "https://localhost:31065"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val core = signedJar(dir, ca, "core.jar", "mirth/Main.class")
+        val shared = signedJar(dir, ca, "scriptfilestep-shared.jar", "sfs/Shared.class")
+        val client = signedJar(dir, ca, "scriptfilestep-client.jar", "sfs/Client.class")
+        val root = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <jnlp spec="1.0+" codebase="https://localhost:8443" href="webstart.jnlp">
+              <resources>
+                <jar href="webstart/client-lib/mirth-client.jar" main="true" sha256="${b64Sha256(core)}"/>
+                <extension href="webstart/extensions/scriptfilestep.jnlp"/>
+              </resources>
+              <application-desc main-class="com.mirth.connect.client.ui.Mirth">
+                <argument>https://localhost:8443</argument><argument>4.4.2</argument>
+              </application-desc>
+            </jnlp>
+        """.trimIndent()
+        val extension = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <jnlp spec="1.0+" codebase="https://localhost:8443/webstart/extensions" href="scriptfilestep.jnlp">
+              <resources>
+                <jar href="libs/scriptfilestep/scriptfilestep-shared.jar" sha256="${b64Sha256(shared)}"/>
+                <jar href="libs/scriptfilestep/scriptfilestep-client.jar" sha256="${b64Sha256(client)}"/>
+              </resources>
+              <component-desc/>
+            </jnlp>
+        """.trimIndent()
+        val responses = mapOf(
+            "$typed/webstart" to root.toByteArray(),
+            "$typed/webstart/extensions/scriptfilestep.jnlp" to extension.toByteArray(),
+            "$typed/webstart/client-lib/mirth-client.jar" to core,
+            "$typed/webstart/extensions/libs/scriptfilestep/scriptfilestep-shared.jar" to shared,
+            "$typed/webstart/extensions/libs/scriptfilestep/scriptfilestep-client.jar" to client,
+        )
+        val fetcher = FakeFetcher(responses)
+
+        val plan = launcher(dir.resolve("cache"), ca, fetcher).prepareLaunch(Connection(id = "fwd", name = "Forwarded", serverUrl = typed))
+
+        assertEquals(
+            listOf("webstart/client-lib/mirth-client.jar", "webstart/extensions/libs/scriptfilestep/scriptfilestep-shared.jar", "webstart/extensions/libs/scriptfilestep/scriptfilestep-client.jar"),
+            plan.admitted.map { it.artifactName },
+        ) { fetcher.fetched.toString() }
+        assertTrue(fetcher.fetched.none { it.contains("localhost:8443") }) { "nothing is fetched from the server's self-reported address: ${fetcher.fetched}" }
+        assertTrue(fetcher.fetched.none { it == "$typed/libs/scriptfilestep/scriptfilestep-shared.jar" }) { "the extension jar is not resolved against the root" }
+    }
+
+    @Test
+    @DisplayName("a path-bearing connection keeps its prefix under an extension codebase the server reports without it")
+    fun extensionCodebaseUnderAProxyPrefix(@TempDir dir: Path) {
+        val proxied = "https://proxy.example.com/mirth"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val core = signedJar(dir, ca, "core.jar", "mirth/Main.class")
+        val ext = signedJar(dir, ca, "ext.jar", "e/E.class")
+        val root = rootJnlp(b64Sha256(core), listOf("webstart/extensions/e.jnlp"))
+        val extension = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <jnlp spec="1.0+" codebase="https://mirth.example.com:8443/webstart/extensions">
+              <resources><jar href="libs/e/ext.jar" sha256="${b64Sha256(ext)}"/></resources>
+              <component-desc/>
+            </jnlp>
+        """.trimIndent()
+        val responses = mapOf(
+            "$proxied/webstart" to root.toByteArray(),
+            "$proxied/webstart/extensions/e.jnlp" to extension.toByteArray(),
+            "$proxied/webstart/client-lib/mirth-client.jar" to core,
+            "$proxied/webstart/extensions/libs/e/ext.jar" to ext,
+        )
+        val fetcher = FakeFetcher(responses)
+
+        val plan = launcher(dir.resolve("cache"), ca, fetcher).prepareLaunch(Connection(id = "px", name = "Proxied", serverUrl = proxied))
+
+        assertEquals(listOf("webstart/client-lib/mirth-client.jar", "webstart/extensions/libs/e/ext.jar"), plan.admitted.map { it.artifactName }) { fetcher.fetched.toString() }
+        assertTrue(fetcher.fetched.contains("$proxied/webstart/extensions/libs/e/ext.jar")) { fetcher.fetched.toString() }
+    }
+
+    @Test
     @DisplayName("serverVersionOf: second argument wins, then the jnlp version attribute, else 'current'")
     fun serverVersionRule() {
         fun parse(args: List<String>, attr: String?): String = LauncherCore.serverVersionOf(

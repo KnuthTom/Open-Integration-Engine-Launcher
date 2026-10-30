@@ -69,6 +69,13 @@ object TreeRows {
         return out
     }
 
+    /**
+     * The children of [parentId] (folders and connections together) in the order the sidebar shows them
+     * for [sort] / [foldersFirst], as row keys — what a drag-and-drop reorder edits.
+     */
+    fun childKeys(parentId: String?, connections: List<Connection>, folders: List<Folder>, sort: SortMode, foldersFirst: Boolean): List<String> =
+        Ctx(connections, folders, sort, foldersFirst, "").childKeys(parentId)
+
     /** Connections anywhere below [folderId] (direct and in subfolders). */
     fun descendantConnections(folderId: String, connections: List<Connection>, folders: List<Folder>): List<Connection> {
         val ids = HashSet<String>().apply { add(folderId) }
@@ -159,6 +166,10 @@ object TreeRows {
             val cs = connections.filter { it.folderId == parentId }.map { Node.C(it) }
             return if (foldersFirst) fs.sortedWith(comparator) + cs.sortedWith(comparator)
             else (fs + cs).sortedWith(comparator)
+        }
+
+        fun childKeys(parentId: String?): List<String> = kids(parentId).map { n ->
+            when (n) { is Node.F -> "f:${n.folder.id}"; is Node.C -> "c:${n.conn.id}" }
         }
 
         fun walk(parentId: String?, depth: Int, out: MutableList<TreeRow>) {

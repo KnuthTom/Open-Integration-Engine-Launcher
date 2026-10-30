@@ -57,8 +57,9 @@ object JnlpParser {
         }
 
         // Component descriptors (`<extension href="webstart/extensions/foo.jnlp"/>`): one per installed
-        // Mirth extension. Only the href is read; the launcher resolves it against the CONNECTION's base
-        // (never the JNLP codebase), fetches it with the same transport, and parses it with this parser.
+        // Mirth extension. Only the href is read; the launcher resolves it against this descriptor's
+        // codebase PATH on the connection's own origin, fetches it with the same transport, and parses it
+        // with this parser.
         val extensions = elementsNamed(root, "extension")
             .map { it.getAttribute("href").trim() }
             .filter { it.isNotEmpty() }

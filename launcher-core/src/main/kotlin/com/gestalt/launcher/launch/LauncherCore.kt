@@ -353,16 +353,19 @@ open class LauncherCore(
      * skipped; the same artifact listed twice with DIFFERENT digests aborts (the server contradicts
      * itself — nothing to trust).
      *
-     * Every href — descriptor or jar — resolves against the CONNECTION's base, never a JNLP `codebase`:
-     * Mirth sets the codebase of every descriptor it emits to the server root, which is exactly what the
-     * connection points at, and ignoring the server-supplied value keeps the same-host / no-downgrade
-     * rules authoritative.
+     * Each descriptor's relative hrefs resolve against THAT descriptor's base ([descriptorBase]): the
+     * path of its `codebase` on the connection's own origin, else the directory the descriptor was
+     * fetched from. Mirth's main `webstart.jnlp` has a root codebase and root-relative hrefs
+     * (`webstart/client-lib/…`, `webstart/extensions/<name>.jnlp`); each extension descriptor has
+     * codebase `…/webstart/extensions` and lists its jars as `libs/<name>/<jar>` — resolving those
+     * against the root is a 404 on every extension. Scheme, host and port always come from the typed
+     * address (the same-host / no-downgrade rules stay authoritative); only the path is the server's.
      */
     private fun collectJars(connection: Connection, fetcher: ArtifactFetcher, root: JnlpDescriptor): List<PlannedJar> {
         val planned = LinkedHashMap<String, PlannedJar>()
-        fun addJars(desc: JnlpDescriptor) {
+        fun addJars(desc: JnlpDescriptor, base: URI) {
             for (jar in desc.jars) {
-                val uri = requireSupportedScheme(resolveArtifactUri(connection, jar.href))
+                val uri = requireSupportedScheme(resolveArtifactUri(connection, base, jar.href))
                 val name = artifactNameFor(connection, uri)
                 val existing = planned[name]
                 if (existing == null) {
@@ -373,14 +376,15 @@ open class LauncherCore(
                 if (planned.size > MAX_JARS) throw LaunchAbortedException("descriptors list more than $MAX_JARS jars")
             }
         }
-        addJars(root)
+        val rootBase = descriptorBase(connection, connection.webstartUri(), root)
+        addJars(root, rootBase)
 
         val visited = HashSet<URI>()
-        val queue = ArrayDeque<Pair<String, Int>>()
-        root.extensions.forEach { queue.addLast(it to 1) }
+        val queue = ArrayDeque<Triple<String, URI, Int>>()
+        root.extensions.forEach { queue.addLast(Triple(it, rootBase, 1)) }
         while (queue.isNotEmpty()) {
-            val (href, depth) = queue.removeFirst()
-            val uri = requireSupportedScheme(resolveArtifactUri(connection, href))
+            val (href, parentBase, depth) = queue.removeFirst()
+            val uri = requireSupportedScheme(resolveArtifactUri(connection, parentBase, href))
             if (!visited.add(uri)) continue // already walked (a cycle or a shared dependency) — never re-fetched
             if (depth > MAX_EXTENSION_DEPTH) {
                 throw LaunchAbortedException("extension descriptors nest deeper than $MAX_EXTENSION_DEPTH: $href")
@@ -390,28 +394,52 @@ open class LauncherCore(
             }
             checkNotCancelled()
             val ext = JnlpParser.parse(withConnectRetry(connection) { fetcher.fetchText(uri) })
-            addJars(ext)
-            ext.extensions.forEach { queue.addLast(it to depth + 1) }
+            val extBase = descriptorBase(connection, uri, ext)
+            addJars(ext, extBase)
+            ext.extensions.forEach { queue.addLast(Triple(it, extBase, depth + 1)) }
         }
         return planned.values.toList()
     }
 
     /**
-     * Resolve a jar / descriptor href against the **connection's** base URL — deliberately NOT the JNLP's
-     * own `codebase`, which is server-controlled and untrusted. A href that resolves to a different host
-     * than the configured connection is rejected (SSRF / artifact substitution), and an https connection
-     * is never downgraded to an http artifact by a crafted absolute href. The gate would still reject a
-     * foreign or tampered jar, but we fail even earlier and closed.
+     * Where a descriptor's relative hrefs resolve. The JNLP `codebase` is honoured for its PATH only —
+     * the server's own idea of its scheme/host/port is ignored in favour of the address the user typed
+     * (a port-forward or proxy reaches the same server by another name) — and that path is kept under
+     * the connection's base path when the connection has one (a reverse proxy adds a prefix the server
+     * doesn't know about). With no codebase, the JNLP rule applies: the descriptor's own directory.
      */
-    private fun resolveArtifactUri(connection: Connection, href: String): URI {
-        val base = connection.baseDirUri()
-        val resolved = base.resolve(href)
-        val baseHost = base.host?.lowercase()
+    internal fun descriptorBase(connection: Connection, descriptorUri: URI, desc: JnlpDescriptor): URI {
+        val connBase = connection.baseDirUri()
+        val dir = descriptorUri.resolve(".")
+        val codebase = desc.codebase?.trim()?.takeIf { it.isNotEmpty() } ?: return dir
+        val cb = runCatching { URI(codebase) }.getOrNull() ?: return dir
+        val rawCodebasePath = (if (cb.isAbsolute) cb.path else dir.resolve(cb).path).orEmpty()
+        val codebasePath = if (rawCodebasePath.endsWith("/")) rawCodebasePath else "$rawCodebasePath/"
+        val connPath = connBase.path.orEmpty().ifEmpty { "/" }
+        val path = when {
+            connPath == "/" -> codebasePath
+            codebasePath.startsWith(connPath) -> codebasePath
+            else -> connPath + codebasePath.trimStart('/')
+        }
+        return URI(connBase.scheme, connBase.authority, path, null, null)
+    }
+
+    /**
+     * Resolve a jar / descriptor href against [base] (its descriptor's base, which already sits on the
+     * connection's origin). A href that resolves to a different host than the configured connection is
+     * rejected (SSRF / artifact substitution), and an https connection is never downgraded to an http
+     * artifact by a crafted absolute href. The gate would still reject a foreign or tampered jar, but
+     * we fail even earlier and closed.
+     */
+    private fun resolveArtifactUri(connection: Connection, base: URI, href: String): URI {
+        val connBase = connection.baseDirUri()
+        val resolved = base.resolve(href.trim())
+        val baseHost = connBase.host?.lowercase()
         val resolvedHost = resolved.host?.lowercase()
         if (baseHost != null && resolvedHost != null && baseHost != resolvedHost) {
             throw LaunchAbortedException("artifact URL host '$resolvedHost' differs from the connection host '$baseHost'")
         }
-        if (base.scheme.equals("https", ignoreCase = true) && resolved.scheme.equals("http", ignoreCase = true)) {
+        if (connBase.scheme.equals("https", ignoreCase = true) && resolved.scheme.equals("http", ignoreCase = true)) {
             throw LaunchAbortedException("refusing to downgrade artifact transport from https to http: $resolved")
         }
         return resolved

@@ -339,6 +339,77 @@ class LauncherModel(
         refresh()
     }
 
+    // --- drag-and-drop: move into a folder, or reorder before a sibling -----------------------------
+
+    /** `f:<id>` → the folder's parent; `c:<id>` → the connection's folder. */
+    private fun parentOf(key: String): String? = when {
+        key.startsWith("c:") -> store.get(key.substring(2))?.folderId
+        key.startsWith("f:") -> store.getFolder(key.substring(2))?.parentId
+        else -> null
+    }
+
+    private fun exists(key: String): Boolean = when {
+        key.startsWith("c:") -> store.get(key.substring(2)) != null
+        key.startsWith("f:") -> store.getFolder(key.substring(2)) != null
+        else -> false
+    }
+
+    /** True when [folderId] is [key]'s own folder or lies below it (a folder can't move into itself). */
+    private fun wouldCycle(key: String, folderId: String?): Boolean {
+        if (!key.startsWith("f:") || folderId == null) return false
+        val id = key.substring(2)
+        return folderId == id || folderId in store.descendantFolderIds(id)
+    }
+
+    /** Move the row [key] into [folderId] (null = top level), last among its new siblings. */
+    fun moveInto(key: String, folderId: String?): Boolean {
+        if (!exists(key) || wouldCycle(key, folderId)) return false
+        if (folderId != null && store.getFolder(folderId) == null) return false
+        val siblings = TreeRows.childKeys(folderId, connections, folders, sort.get(), foldersFirst.get()).filter { it != key }
+        return reorder(siblings + key, folderId)
+    }
+
+    /**
+     * Put the row [key] immediately before [beforeKey], among that row's siblings. A reorder is a
+     * manual-order gesture, so the sort switches to Manual when it isn't already.
+     */
+    fun moveBefore(key: String, beforeKey: String): Boolean {
+        if (key == beforeKey || !exists(key) || !exists(beforeKey)) return false
+        val parent = parentOf(beforeKey)
+        if (wouldCycle(key, parent)) return false
+        val siblings = TreeRows.childKeys(parent, connections, folders, sort.get(), foldersFirst.get()).filter { it != key }.toMutableList()
+        val idx = siblings.indexOf(beforeKey).takeIf { it >= 0 } ?: siblings.size
+        siblings.add(idx, key)
+        if (sort.get() != SortMode.Manual) sort.set(SortMode.Manual)
+        return reorder(siblings, parent)
+    }
+
+    /** Assign [keys] their positions under [parent], moving each in as needed. All or nothing. */
+    private fun reorder(keys: List<String>, parent: String?): Boolean {
+        val before = store.list().associateBy { it.id } to store.folders().associateBy { it.id }
+        try {
+            keys.forEachIndexed { i, k ->
+                if (k.startsWith("c:")) {
+                    val c = store.get(k.substring(2)) ?: return@forEachIndexed
+                    if (c.folderId != parent || c.sortOrder != i) store.update(c.copy(folderId = parent, sortOrder = i), persist = false)
+                } else if (k.startsWith("f:")) {
+                    val f = store.getFolder(k.substring(2)) ?: return@forEachIndexed
+                    if (f.parentId != parent || f.sortOrder != i) store.updateFolder(f.copy(parentId = parent, sortOrder = i), persist = false)
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            // A refused move (cycle): put back what was changed so far.
+            before.first.values.forEach { store.update(it, persist = false) }
+            before.second.values.forEach { runCatching { store.updateFolder(it, persist = false) } }
+            return false
+        }
+        activeId.get()?.let { id -> store.get(id)?.let { c -> draft.set(draft.get()?.copy(folderId = c.folderId, sortOrder = c.sortOrder)) } }
+        if (parent != null) expandAncestors(parent)
+        schedulePersist()
+        refresh()
+        return true
+    }
+
     // --- folders ----------------------------------------------------------------------------------
 
     fun newFolder(parentId: String? = null, name: String = "New folder"): Folder {
