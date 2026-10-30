@@ -309,6 +309,8 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
                     add(Controls.menuItem("Launch", "play", hint = "Enter") { host.requestSelect(c.id) { host.launch(c.id) } })
                     add(Controls.menuItem("Rename", "pencil", hint = "F2") { startRename(row.key) })
                     add(Controls.menuItem("Duplicate", "copy") { model.duplicate(c.id)?.let { host.requestSelect(it.id) } })
+                    add(Controls.menuSeparator())
+                    addAll(moveUpDown(row.key))
                     add(moveToMenu(row.key, c.folderId))
                     add(Controls.menuSeparator())
                     add(Controls.menuItem("Delete", "trash-2", hint = "Del", danger = true) { host.deleteConnection(c.id) })
@@ -321,6 +323,8 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
                     Controls.menuItem("New subfolder", "folder-plus") { host.newFolder(f.id) },
                     Controls.menuItem("Rename", "pencil", hint = "F2") { startRename(row.key) },
                     Controls.menuItem(if (f.expanded) "Collapse" else "Expand", if (f.expanded) "chevrons-down-up" else "chevrons-up-down") { model.toggleFolder(f.id) },
+                    Controls.menuSeparator(),
+                ) + moveUpDown(row.key) + listOf(
                     moveToMenu(row.key, f.parentId),
                     Controls.menuSeparator(),
                     Controls.menuItem("Delete folder", "trash-2", hint = "Del", danger = true) { host.deleteFolder(f.id) },
@@ -336,6 +340,15 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         }
         menu.items.setAll(items)
         menu.show(list, x, y)
+    }
+
+    /** "Move up" / "Move down" among the row's siblings; the one that can't move is greyed out. */
+    private fun moveUpDown(key: String): List<MenuItem> {
+        val siblings = model.siblingKeys(key)
+        val i = siblings.indexOf(key)
+        val up = Controls.menuItem("Move up", "chevron-up") { model.moveUp(key); selectRow(key) }.apply { isDisable = i <= 0 }
+        val down = Controls.menuItem("Move down", "chevron-down") { model.moveDown(key); selectRow(key) }.apply { isDisable = i < 0 || i >= siblings.size - 1 }
+        return listOf(up, down)
     }
 
     /** "Move to ▸": the top level and every folder (indented), except the moved folder's own subtree. */

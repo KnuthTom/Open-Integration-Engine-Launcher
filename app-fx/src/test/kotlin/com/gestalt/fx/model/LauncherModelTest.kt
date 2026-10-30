@@ -212,6 +212,30 @@ class LauncherModelTest {
     }
 
     @Test
+    @DisplayName("move up / move down step a row among its siblings, stop at the ends, and switch to manual order")
+    fun moveUpDown(@TempDir dir: Path) {
+        val m = model(dir)
+        val f = m.newFolder(null, "Clients")
+        val a = m.newConnection(f.id); m.rename(a.id, "A")
+        val b = m.newConnection(f.id); m.rename(b.id, "B")
+        val c = m.newConnection(f.id); m.rename(c.id, "C")
+        fun order() = m.siblingKeys("c:${a.id}").map { it.substring(2) }
+
+        assertEquals(listOf(a.id, b.id, c.id), order())
+        assertFalse(m.moveUp("c:${a.id}")) { "the first row can't move up" }
+        assertFalse(m.moveDown("c:${c.id}")) { "the last row can't move down" }
+
+        m.sort.set(SortMode.NameDesc)
+        assertEquals(listOf(c.id, b.id, a.id), order()) { "siblings follow the current sort" }
+        assertTrue(m.moveDown("c:${c.id}"))
+        assertEquals(SortMode.Manual, m.sort.get())
+        assertEquals(listOf(b.id, c.id, a.id), order())
+        assertTrue(m.moveUp("c:${a.id}"))
+        assertEquals(listOf(b.id, a.id, c.id), order())
+        assertEquals(1, m.siblingIndex("c:${a.id}"))
+    }
+
+    @Test
     @DisplayName("auto-approve and the icon apply to the saved connection at once, and the draft keeps its unsaved edits")
     fun immediateSwitches(@TempDir dir: Path) {
         val m = model(dir)

@@ -412,6 +412,29 @@ class LauncherModel(
         return reorder(siblings, parent)
     }
 
+    /** The row's siblings in display order (folders and connections of its parent), as keys. */
+    fun siblingKeys(key: String): List<String> =
+        TreeRows.childKeys(parentOf(key), connections, folders, sort.get(), foldersFirst.get())
+
+    /** Position of [key] among its siblings in display order, or -1. */
+    fun siblingIndex(key: String): Int = siblingKeys(key).indexOf(key)
+
+    /** Swap the row with the sibling above it (a manual-order gesture: the sort switches to Manual). */
+    fun moveUp(key: String): Boolean {
+        val siblings = siblingKeys(key)
+        val i = siblings.indexOf(key)
+        if (i <= 0) return false
+        return moveBefore(key, siblings[i - 1])
+    }
+
+    /** Swap the row with the sibling below it. */
+    fun moveDown(key: String): Boolean {
+        val siblings = siblingKeys(key)
+        val i = siblings.indexOf(key)
+        if (i < 0 || i >= siblings.size - 1) return false
+        return moveAfter(key, siblings[i + 1])
+    }
+
     /** Assign [keys] their positions under [parent], moving each in as needed. All or nothing. */
     private fun reorder(keys: List<String>, parent: String?): Boolean {
         val before = store.list().associateBy { it.id } to store.folders().associateBy { it.id }
