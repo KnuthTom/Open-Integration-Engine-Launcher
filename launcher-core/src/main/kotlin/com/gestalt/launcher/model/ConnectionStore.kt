@@ -397,6 +397,8 @@ class ConnectionStore(
             "autoApproveCertificates",
             // Schema 2: the folder tree and the two timestamps (non-secret):
             "folderId", "addedAt", "lastLaunchedAt",
+            // The Administrator's display scale (a number as text, non-secret):
+            "uiScale",
         )
 
         // Nested config objects are also allow-listed one level deep, so a secret cannot be smuggled

@@ -45,9 +45,10 @@ class ServerTrustFlowTest {
         private val leaf: X509Certificate,
         private val responses: Map<String, ByteArray>,
     ) : ArtifactFetcher {
-        var attempts = 0
+        private val counter = java.util.concurrent.atomic.AtomicInteger()
+        val attempts: Int get() = counter.get()
         override fun fetchBytes(uri: URI): ByteArray {
-            attempts++
+            counter.incrementAndGet()
             if (trusted.statusOf(leaf) != CertTrustStatus.TRUSTED) {
                 throw SSLHandshakeException("PKIX path building failed").apply { initCause(UnknownServerCertificateException(listOf(leaf))) }
             }

@@ -32,6 +32,11 @@ import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.cert.X509Certificate
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 /** Raised whenever any verification step fails. The launch is aborted; nothing is executed. */
 open class LaunchAbortedException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -132,6 +137,12 @@ open class LauncherCore(
     },
     /** Sleep between connect retries (injected so the port-forward retry path is testable without waits). */
     private val sleeper: (Long) -> Unit = { if (it > 0) Thread.sleep(it) },
+    /**
+     * Descriptor fetches and jar download+verify run this many at a time. A stock Mirth server has ~40
+     * extension descriptors and ~150 jars; one at a time over a port-forward is a long wait, and the gate
+     * (SHA-256 + CMS/PKIX per jar) is CPU work that parallelises cleanly. 1 makes everything sequential.
+     */
+    private val parallelism: Int = DEFAULT_PARALLELISM,
 ) {
     /**
      * Verify everything and produce the launch plan. Does NOT spawn the process.
@@ -165,6 +176,7 @@ open class LauncherCore(
 
     private fun prepareLaunchOnce(connection: Connection, onPhase: (LaunchPhase) -> Unit): LaunchPlan {
         val fetcher = fetcherFactory(connection)
+        val startedAt = System.currentTimeMillis()
         try {
             onPhase(LaunchPhase.Downloading)
 
@@ -192,40 +204,27 @@ open class LauncherCore(
             val manifest = inlineDigestManifest(jars)
                 ?: DigestManifest.parse(withConnectRetry(connection) { fetcher.fetchText(requireSupportedScheme(connection.digestUri(version))) })
 
+            val descriptorsMs = System.currentTimeMillis() - startedAt
             onPhase(LaunchPhase.Verifying)
-            // 3-4. Download each jar and run it through the single gate. Fail closed on any miss.
+            // 3-4. Download each jar and run it through the single gate, [parallelism] jars at a time.
+            //      Fail closed on any miss: the first rejection cancels the rest and aborts the launch.
             val gate = CodebaseVerifier(trustStore, signerPins, gateMode, connection.id, trustedSigners)
             val admitted = ArrayList<AdmittedJar>(jars.size)
-            for (jar in jars) {
-                checkNotCancelled()
-                val name = jar.artifactName
-                val file = cacheFile(connection.id, version, name)
-
-                // Reuse an already-downloaded jar whose bytes still match the digest the server published
-                // THIS launch (the manifest is re-fetched every time). This skips the slow re-download of
-                // unchanged jars — the dominant cost over a low-bandwidth port-forward / SSM tunnel. The jar
-                // is still digest + signature verified at the gate below either way, so a stale or tampered
-                // cache file simply misses the digest match here (or is rejected at the gate) and re-downloads.
-                if (!cachedJarMatches(file, manifest, name)) {
-                    val bytes = withConnectRetry(connection) { fetcher.fetchBytes(jar.uri) }
-                    Files.write(file, bytes)
+            val verifyStarted = System.currentTimeMillis()
+            parallel { pool ->
+                val futures = jars.map { jar ->
+                    pool.submit(Callable { downloadAndGate(connection, fetcher, gate, manifest, version, jar) })
                 }
-
-                when (val outcome = gate.verify(name, file, manifest)) {
-                    is GateOutcome.Admitted -> admitted += outcome.jar
-                    is GateOutcome.Rejected -> {
-                        val publisher = outcome.publisherToReview
-                        if (publisher != null) {
-                            // Integrity proven, trust missing: keep the jar (it is exactly what the signer
-                            // signed), record the publisher for review, and stop for the decision.
-                            trustedSigners.markPending(publisher, name, connection.id)
-                            throw PublisherReviewRequiredException(publisher, name, outcome.reason)
-                        }
-                        runCatching { Files.deleteIfExists(file) }
-                        throw LaunchAbortedException("verification failed for '$name': ${outcome.reason}")
-                    }
+                for (future in futures) {
+                    checkNotCancelled()
+                    admitted += await(future, futures)
                 }
             }
+            val verifyMs = System.currentTimeMillis() - verifyStarted
+            AuditLog.event(
+                "launch.timing", "connection" to connection.id, "jars" to jars.size,
+                "descriptorsMs" to descriptorsMs, "downloadVerifyMs" to verifyMs, "parallelism" to parallelism,
+            )
 
             // Bound the on-disk cache: now that this version is verified, drop any other-version jars for
             // this connection (keeps the cache-reuse speed-up for the current version, no unbounded growth).
@@ -379,26 +378,65 @@ open class LauncherCore(
         val rootBase = descriptorBase(connection, connection.webstartUri(), root)
         addJars(root, rootBase)
 
+        // Breadth-first, one level at a time: every descriptor of a level is fetched concurrently, then
+        // parsed and added in the order it was listed, so the jar order is as deterministic as before.
         val visited = HashSet<URI>()
-        val queue = ArrayDeque<Triple<String, URI, Int>>()
-        root.extensions.forEach { queue.addLast(Triple(it, rootBase, 1)) }
-        while (queue.isNotEmpty()) {
-            val (href, parentBase, depth) = queue.removeFirst()
-            val uri = requireSupportedScheme(resolveArtifactUri(connection, parentBase, href))
-            if (!visited.add(uri)) continue // already walked (a cycle or a shared dependency) — never re-fetched
-            if (depth > MAX_EXTENSION_DEPTH) {
-                throw LaunchAbortedException("extension descriptors nest deeper than $MAX_EXTENSION_DEPTH: $href")
+        var level: List<Pair<String, URI>> = root.extensions.map { it to rootBase }
+        var depth = 1
+        parallel { pool ->
+            while (level.isNotEmpty()) {
+                if (depth > MAX_EXTENSION_DEPTH) {
+                    throw LaunchAbortedException("extension descriptors nest deeper than $MAX_EXTENSION_DEPTH: ${level.first().first}")
+                }
+                val toFetch = ArrayList<URI>()
+                for ((href, parentBase) in level) {
+                    val uri = requireSupportedScheme(resolveArtifactUri(connection, parentBase, href))
+                    if (!visited.add(uri)) continue // already walked (a cycle or a shared dependency) — never re-fetched
+                    if (visited.size > MAX_EXTENSION_DESCRIPTORS) {
+                        throw LaunchAbortedException("more than $MAX_EXTENSION_DESCRIPTORS extension descriptors")
+                    }
+                    toFetch += uri
+                }
+                checkNotCancelled()
+                val fetched = toFetch.map { uri -> pool.submit(Callable { JnlpParser.parse(withConnectRetry(connection) { fetcher.fetchText(uri) }) }) }
+                val next = ArrayList<Pair<String, URI>>()
+                for ((i, future) in fetched.withIndex()) {
+                    val ext = await(future, fetched)
+                    val extBase = descriptorBase(connection, toFetch[i], ext)
+                    addJars(ext, extBase)
+                    ext.extensions.forEach { next += it to extBase }
+                }
+                level = next
+                depth++
             }
-            if (visited.size > MAX_EXTENSION_DESCRIPTORS) {
-                throw LaunchAbortedException("more than $MAX_EXTENSION_DESCRIPTORS extension descriptors")
-            }
-            checkNotCancelled()
-            val ext = JnlpParser.parse(withConnectRetry(connection) { fetcher.fetchText(uri) })
-            val extBase = descriptorBase(connection, uri, ext)
-            addJars(ext, extBase)
-            ext.extensions.forEach { queue.addLast(Triple(it, extBase, depth + 1)) }
         }
         return planned.values.toList()
+    }
+
+    /** Run [block] with a bounded pool that is always shut down afterwards (in-flight work is interrupted). */
+    private fun <T> parallel(block: (ExecutorService) -> T): T {
+        val pool = Executors.newFixedThreadPool(parallelism.coerceAtLeast(1)) { r -> Thread(r, "launch-fetch").apply { isDaemon = true } }
+        try {
+            return block(pool)
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    /**
+     * Wait for one task; a failure anywhere cancels the rest and surfaces as the original exception, and
+     * an interrupt of the waiting (launch) thread — a cancel — propagates as [InterruptedException].
+     */
+    private fun <T> await(future: Future<T>, all: List<Future<*>>): T {
+        try {
+            return future.get()
+        } catch (e: ExecutionException) {
+            all.forEach { it.cancel(true) }
+            throw e.cause ?: e
+        } catch (e: InterruptedException) {
+            all.forEach { it.cancel(true) }
+            throw e
+        }
     }
 
     /**
@@ -462,6 +500,34 @@ open class LauncherCore(
     }
 
     /**
+     * One jar's trip through the pipeline: reuse the cached copy when its bytes still match the digest
+     * the server published THIS launch (the manifest is re-fetched every time), else download; then the
+     * single gate. Runs on a pool thread; the gate is stateless per call. A publisher the gate doesn't
+     * know stops the launch for review with the jar kept (it is exactly what the signer signed); any
+     * other rejection deletes the cached file and aborts.
+     */
+    private fun downloadAndGate(connection: Connection, fetcher: ArtifactFetcher, gate: CodebaseVerifier, manifest: DigestManifest, version: String, jar: PlannedJar): AdmittedJar {
+        val name = jar.artifactName
+        val file = cacheFile(connection.id, version, name)
+        if (!cachedJarMatches(file, manifest, name)) {
+            val bytes = withConnectRetry(connection) { fetcher.fetchBytes(jar.uri) }
+            Files.write(file, bytes)
+        }
+        return when (val outcome = gate.verify(name, file, manifest)) {
+            is GateOutcome.Admitted -> outcome.jar
+            is GateOutcome.Rejected -> {
+                val publisher = outcome.publisherToReview
+                if (publisher != null) {
+                    trustedSigners.markPending(publisher, name, connection.id)
+                    throw PublisherReviewRequiredException(publisher, name, outcome.reason)
+                }
+                runCatching { Files.deleteIfExists(file) }
+                throw LaunchAbortedException("verification failed for '$name': ${outcome.reason}")
+            }
+        }
+    }
+
+    /**
      * True when [file] already holds bytes whose SHA-256 matches the digest [manifest] expects for [name] —
      * i.e. a cached jar that is byte-identical to what the server would serve this launch. Uses the SAME
      * hex comparison the gate uses, so "cache hit here" and "passes the digest gate" never disagree.
@@ -507,6 +573,9 @@ open class LauncherCore(
         /** Bounds on the extension-descriptor walk (a stock Mirth server has ~40 extensions, 1 level deep). */
         private const val MAX_EXTENSION_DEPTH = 3
         private const val MAX_EXTENSION_DESCRIPTORS = 256
+
+        /** Concurrent descriptor fetches / jar download+verify: bounded by cores, never a flood on the tunnel. */
+        val DEFAULT_PARALLELISM: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
         private const val MAX_JARS = 4096
 
         /** Shape of the Administrator's version argument (`4.4.2`, `4.5.2`, `3.12.0-SNAPSHOT`). */

@@ -36,7 +36,7 @@ class ExtensionDescriptorTest {
     private val base = "https://mirth.example.com:8443"
 
     private class FakeFetcher(private val responses: Map<String, ByteArray>) : ArtifactFetcher {
-        val fetched = mutableListOf<String>()
+        val fetched: MutableList<String> = java.util.Collections.synchronizedList(ArrayList())
         override fun fetchBytes(uri: URI): ByteArray {
             fetched += uri.toString()
             return responses[uri.toString()] ?: throw java.io.IOException("no canned response for $uri")

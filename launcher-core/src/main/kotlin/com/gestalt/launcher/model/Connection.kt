@@ -35,6 +35,9 @@ import java.net.URI
  *   "Date added" sort. Null for rows that predate the field — sorted as oldest.
  * @property lastLaunchedAt ISO-8601 instant of the last launch this launcher started for it; the
  *   "Last launched" sort and the header's "Launched 12 min ago". Null = never launched from here.
+ * @property uiScale the Administrator's display scale ("1.0", "1.25", "1.5", "2.0" — `sun.java2d.uiScale`),
+ *   or null for the JVM's own choice. Java 9+ scales Swing by the monitor's DPI, which the Mirth client's
+ *   older Swing UI renders blurry; "1.0" is the crisp, unscaled look of MCAL on Java 8.
  */
 @Serializable
 data class Connection(
@@ -63,6 +66,7 @@ data class Connection(
     val folderId: String? = null,
     val addedAt: String? = null,
     val lastLaunchedAt: String? = null,
+    val uiScale: String? = null,
 ) {
     val isPinned: Boolean get() = !pinnedCertSha256.isNullOrBlank()
 

@@ -51,8 +51,8 @@ class PortForwardLaunchTest {
         val calls = HashMap<String, Int>()
         override fun fetchBytes(uri: URI): ByteArray {
             val k = uri.toString()
-            val n = (calls[k] ?: 0) + 1
-            calls[k] = n
+            // Jars are fetched on a pool now; the count must be atomic per uri.
+            val n = synchronized(calls) { val next = (calls[k] ?: 0) + 1; calls[k] = next; next }
             if (n <= failFirst) throw error()
             return responses[k] ?: throw IOException("no canned response for $uri")
         }

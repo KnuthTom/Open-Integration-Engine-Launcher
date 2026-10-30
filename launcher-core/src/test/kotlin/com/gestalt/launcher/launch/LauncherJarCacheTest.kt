@@ -34,7 +34,7 @@ class LauncherJarCacheTest {
     private val base = "https://host:8443/"
 
     private class CountingFetcher(private val responses: Map<String, ByteArray>) : ArtifactFetcher {
-        val fetched = ArrayList<String>()
+        val fetched: MutableList<String> = java.util.Collections.synchronizedList(ArrayList())
         override fun fetchBytes(uri: URI): ByteArray {
             fetched += uri.toString()
             return responses[uri.toString()] ?: throw IOException("refused/absent: $uri")

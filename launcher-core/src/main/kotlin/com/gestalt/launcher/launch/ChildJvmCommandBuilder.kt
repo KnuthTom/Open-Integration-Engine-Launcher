@@ -80,6 +80,10 @@ class ChildJvmCommandBuilder(
             cmd += "-Djdk.tls.ephemeralDHKeySize=legacy"
         }
 
+        // Display scale (sun.java2d.uiScale): only a well-formed factor is honoured. Java 8 ignores the
+        // property; on Java 9+ it replaces the DPI-derived scale the JVM would otherwise apply to Swing.
+        connection.uiScale?.trim()?.takeIf { it.matches(UI_SCALE_PATTERN) }?.let { cmd += "-Dsun.java2d.uiScale=$it" }
+
         extraSystemProperties.forEach { (k, v) -> cmd += "-D$k=$v" }
 
         // The modern Mirth client needs JPMS module-encapsulation flags to run on Java 9+. Pass ONLY the
@@ -172,6 +176,8 @@ class ChildJvmCommandBuilder(
 
     companion object {
         private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
+        /** 0.5 … 4, optionally with two decimals: "1", "1.0", "1.25", "1.5", "2". */
+        private val UI_SCALE_PATTERN = Regex("^(0\\.[5-9]\\d?|[1-3](\\.\\d{1,2})?|4(\\.0{1,2})?)$")
         private const val MAX_MODULE_ARGS = 256
 
         /** The only JVM-arg flags the launcher will accept from a (untrusted) server JNLP. */

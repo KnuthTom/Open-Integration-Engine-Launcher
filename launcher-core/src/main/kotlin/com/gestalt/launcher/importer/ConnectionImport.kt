@@ -336,5 +336,6 @@ object ConnectionImport {
         sslProtocols = incoming.sslProtocols,
         sslCipherSuites = incoming.sslCipherSuites,
         legacyTlsCompatibility = incoming.legacyTlsCompatibility,
+        uiScale = incoming.uiScale ?: existing.uiScale,
     )
 }

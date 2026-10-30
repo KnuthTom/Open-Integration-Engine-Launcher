@@ -309,4 +309,17 @@ class LauncherPipelineTest {
         val plan = launcher.prepareLaunch(connection(legacyTls = true))
         assertTrue(plan.command.contains("-Djdk.tls.ephemeralDHKeySize=legacy")) { "opt-in flag should appear" }
     }
+
+    @Test
+    @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale, anything else is dropped, null leaves the JVM's choice")
+    fun displayScaleIsPerConnection(@TempDir dir: Path) {
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca, "CN=OIE,O=BrightCodeCompany OÜ,C=EE")
+        val launcher = launcher(dir.resolve("cache"), ca, jnlp(), manifestForCore(jarBytes), jarBytes)
+
+        assertFalse(launcher.prepareLaunch(connection()).command.any { it.startsWith("-Dsun.java2d.uiScale") }) { "no scale by default" }
+        assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "1.0")).command.contains("-Dsun.java2d.uiScale=1.0"))
+        assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "1.25")).command.contains("-Dsun.java2d.uiScale=1.25"))
+        assertFalse(launcher.prepareLaunch(connection().copy(uiScale = "9; -javaagent:x")).command.any { it.contains("uiScale") }) { "junk never reaches the command line" }
+    }
 }
