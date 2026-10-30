@@ -289,7 +289,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
 
     // --- launch prompts ----------------------------------------------------------------------------
 
-    private val launchPrompts = object : LaunchEvents {
+    private val launchPrompts: LaunchEvents = object : LaunchEvents {
         override fun onPhase(id: String, phase: LaunchPhase) = Unit
 
         override fun onRunning(id: String, instances: Int) {

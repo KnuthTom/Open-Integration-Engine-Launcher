@@ -106,7 +106,9 @@ class LauncherModel(
     /** What the launch controller reports; the window layers its prompts on these. */
     var launchListener: LaunchEvents? = null
 
-    private val launchEvents = object : LaunchEvents {
+    // Explicit types on these two: the events object refers back to the controller, and inference
+    // otherwise chases its own tail ("type checking has run into a recursive problem").
+    private val launchEvents: LaunchEvents = object : LaunchEvents {
         override fun onPhase(id: String, phase: LaunchPhase) {
             launches[id] = LaunchState(phase, instances = launchController.runningInstances(id))
             launchListener?.onPhase(id, phase)
@@ -158,7 +160,7 @@ class LauncherModel(
     }
 
     private val makeLauncher: (LauncherModel) -> LauncherCore = launcherFactory ?: { m -> m.defaultLauncher() }
-    val launchController = LaunchController({ makeLauncher(this) }, launchEvents, ui)
+    val launchController: LaunchController = LaunchController({ makeLauncher(this) }, launchEvents, ui)
 
     /** The launcher for the current trust posture and the operator's extra pins / anchors. */
     fun defaultLauncher(): LauncherCore = LauncherCore(
