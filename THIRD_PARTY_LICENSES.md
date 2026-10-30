@@ -31,6 +31,13 @@ NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE US
 OF THIS SOFTWARE.
 ```
 
+### Lucide — the `:app-fx` icon set (chrome + connection library)
+- **Location:** `app-fx/src/main/kotlin/com/gestalt/fx/ui/Lucide.kt` (path data on a 24-grid, drawn
+  as stroked `SVGPath`s and tinted at render time)
+- **Source / License:** as above — Lucide, ISC. The same notice applies.
+- **Use:** every functional glyph of the JavaFX window and the built-in connection icon library
+  (Healthcare, Lab, Cloud, SaaS categories).
+
 ### Health Icons — connection icon library (pathology-lab set)
 - **Location:** `design-system/src/main/resources/icons/connection/*.svg`
 - **Source:** https://healthicons.org — https://github.com/resolvetosavelives/healthicons

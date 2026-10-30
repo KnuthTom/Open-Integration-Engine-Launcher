@@ -1,0 +1,165 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+package com.gestalt.fx.ui
+
+import javafx.animation.PauseTransition
+import javafx.animation.RotateTransition
+import javafx.animation.Animation
+import javafx.geometry.Insets
+import javafx.geometry.Pos
+import javafx.scene.Node
+import javafx.scene.control.Label
+import javafx.scene.control.TextField
+import javafx.scene.input.KeyCode
+import javafx.scene.layout.HBox
+import javafx.scene.layout.StackPane
+import javafx.scene.layout.VBox
+import javafx.util.Duration
+
+/** One button of a modal. */
+data class ModalAction(val label: String, val kind: Controls.ButtonKind = Controls.ButtonKind.Secondary, val isDefault: Boolean = false, val onClick: () -> Unit)
+
+/**
+ * The window's modal layer: a scrim over the whole window with one card in the middle, like the
+ * design's dialogs. Only one modal shows at a time; Esc closes it, Enter runs the default action.
+ * Lives in the root StackPane so it covers the sidebar, the detail pane and the toast.
+ */
+class ModalHost(private val root: StackPane) {
+
+    private var current: StackPane? = null
+    private var onEscape: (() -> Unit)? = null
+    private var onEnter: (() -> Unit)? = null
+
+    val isShowing: Boolean get() = current != null
+
+    /** Show [card] (already styled) at [width]; [escape] runs on Esc, [enter] on Enter. */
+    fun show(card: Node, width: Double, escape: (() -> Unit)? = { close() }, enter: (() -> Unit)? = null) {
+        close()
+        val holder = VBox(card).apply {
+            maxWidth = width
+            minWidth = 0.0
+            isFillWidth = true
+            alignment = Pos.CENTER
+        }
+        val scrim = StackPane(holder).apply {
+            styleClass += "modal-scrim"
+            alignment = Pos.CENTER
+            padding = Insets(16.0)
+            isFocusTraversable = true
+            // Swallow clicks on the scrim so nothing underneath reacts; the card's own handlers run first.
+            setOnMouseClicked { it.consume() }
+            setOnKeyPressed { e ->
+                when (e.code) {
+                    KeyCode.ESCAPE -> { onEscape?.invoke(); e.consume() }
+                    KeyCode.ENTER -> { onEnter?.let { it(); e.consume() } }
+                    else -> Unit
+                }
+            }
+        }
+        StackPane.setAlignment(holder, Pos.CENTER)
+        onEscape = escape
+        onEnter = enter
+        current = scrim
+        root.children += scrim
+        scrim.requestFocus()
+    }
+
+    fun close() {
+        current?.let { root.children.remove(it) }
+        current = null
+        onEscape = null
+        onEnter = null
+    }
+
+    /** A title, a body paragraph and a row of actions (the design's modal). */
+    fun confirm(title: String, body: String, actions: List<ModalAction>) {
+        val card = VBox().apply {
+            styleClass += "modal-card"
+            children += Label(title).apply { styleClass += "card-title" }
+            children += Label(body).apply { styleClass += "modal-body"; isWrapText = true; VBox.setMargin(this, Insets(8.0, 0.0, 0.0, 0.0)) }
+            children += HBox().apply {
+                styleClass += "modal-actions"
+                for (a in actions) children += Controls.button(a.label, a.kind) { close(); a.onClick() }
+            }
+        }
+        val default = actions.firstOrNull { it.isDefault }
+        show(card, 400.0, escape = { close() }, enter = default?.let { d -> { close(); d.onClick() } })
+    }
+
+    /** A single text prompt (rename). */
+    fun prompt(title: String, initial: String, okLabel: String = "OK", onOk: (String) -> Unit) {
+        val field = TextField(initial)
+        val card = VBox().apply {
+            styleClass += "modal-card"
+            children += Label(title).apply { styleClass += "card-title" }
+            children += field.apply { VBox.setMargin(this, Insets(14.0, 0.0, 0.0, 0.0)) }
+            children += HBox().apply {
+                styleClass += "modal-actions"
+                children += Controls.button("Cancel", Controls.ButtonKind.Secondary) { close() }
+                children += Controls.button(okLabel, Controls.ButtonKind.Primary) { val v = field.text; close(); onOk(v) }
+            }
+        }
+        // The field consumes Enter itself (its action event), so the OK path is wired to it directly too.
+        field.setOnAction { val v = field.text; close(); onOk(v) }
+        show(card, 400.0, escape = { close() }, enter = { val v = field.text; close(); onOk(v) })
+        field.requestFocus()
+        field.selectAll()
+    }
+}
+
+/** A transient notice in the window's bottom-right corner. */
+class ToastHost(private val root: StackPane) {
+
+    enum class Kind { Info, Success, Error, Progress }
+
+    private var current: HBox? = null
+    private var hide: PauseTransition? = null
+
+    fun show(title: String, detail: String?, kind: Kind, millis: Long = 3400) {
+        dismiss()
+        val icon: Node = when (kind) {
+            Kind.Progress -> Icons.glyph("loader-circle", 16.0, "-text-muted").also { spin(it) }
+            Kind.Error -> Icons.glyph("circle-alert", 16.0, "-danger")
+            Kind.Success -> Icons.glyph("circle-check", 16.0, "-ok")
+            Kind.Info -> Icons.glyph("circle-check", 16.0, "-text-muted")
+        }
+        val text = VBox(2.0).apply {
+            children += Label(title).apply { styleClass += "toast-title" }
+            if (!detail.isNullOrBlank()) children += Label(detail).apply { styleClass += "toast-sub" }
+            minWidth = 0.0
+        }
+        val toast = HBox(icon, text).apply {
+            styleClass += "toast"
+            isPickOnBounds = false
+            maxWidth = 380.0
+            maxHeight = HBox.USE_PREF_SIZE
+            setOnMouseClicked { dismiss() }
+        }
+        StackPane.setAlignment(toast, Pos.BOTTOM_RIGHT)
+        StackPane.setMargin(toast, Insets(0.0, 24.0, 64.0, 0.0))
+        current = toast
+        root.children += toast
+        if (kind != Kind.Progress) {
+            hide = PauseTransition(Duration.millis(millis.toDouble())).apply { setOnFinished { if (current === toast) dismiss() }; play() }
+        }
+    }
+
+    fun dismiss() {
+        hide?.stop(); hide = null
+        current?.let { root.children.remove(it) }
+        current = null
+    }
+
+    private fun spin(node: Node) {
+        RotateTransition(Duration.millis(900.0), node).apply {
+            byAngle = 360.0
+            cycleCount = Animation.INDEFINITE
+            interpolator = javafx.animation.Interpolator.LINEAR
+            play()
+        }
+    }
+}

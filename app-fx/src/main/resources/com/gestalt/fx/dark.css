@@ -1,0 +1,47 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+/* Dark theme — the design's graphite "operator" register: silver accent, color only for state. */
+.root {
+    -surface: #0A0A0B;
+    -surface-raised: #141416;
+    -surface-sunken: #1B1B1E;
+    -surface-overlay: rgba(0, 0, 0, 0.66);
+    -text: #F2F3F5;
+    -text-muted: #A6A7AD;
+    -border: #1C1C1F;
+    -border-strong: #626268;
+    -accent: #E9EAEC;
+    -accent-hover: #FFFFFF;
+    -accent-active: #E9EAEC;
+    -accent-contrast: #0A0A0B;
+    -accent-soft: #1C1D20;
+    -btn-secondary: #1B1B1E;
+    -btn-secondary-hover: #232327;
+    -hover: #181819;
+    -hover-strong: #1D1D1F;
+    -selected: #2E2E2F;
+    -focus-ring: #E9EAEC;
+    -ok: #6EE7A0;
+    -warn: #F0B84A;
+    -danger: #EF6B6B;
+    -danger-contrast: #160404;
+    -lc-blue: #7AA9D6;
+    -lc-teal: #5CC8BE;
+    -lc-violet: #A98BEB;
+    -lc-rose: #EC8DB2;
+    -lc-green: #6EE7A0;
+    -lc-ink: #F2F3F5;
+    -shadow: rgba(0, 0, 0, 0.7);
+}
+
+/* The operator register is squarer (radius scale 0.62 against the light register's 1.6). */
+.card { -fx-background-radius: 7; -fx-border-radius: 7; }
+.btn { -fx-background-radius: 5; -fx-border-radius: 5; }
+.text-input, .menu-button.btn, .segmented { -fx-background-radius: 3; -fx-border-radius: 3; }
+.segmented .seg-button { -fx-background-radius: 2; -fx-border-radius: 2; }
+.icon-button, .tree-row, .filter-wrap .text-input { -fx-background-radius: 3; -fx-border-radius: 3; }
+.modal-card, .toast, .context-menu { -fx-background-radius: 5; -fx-border-radius: 5; }

@@ -72,7 +72,8 @@ Requires **JDK 17** (the Gradle toolchain pins it; no system Java needed beyond 
 
 ```bash
 ./gradlew build            # compile + run all tests
-./gradlew :app:run         # launch the product UI
+./gradlew :app:run         # launch the product UI (Compose, being replaced)
+./gradlew :app-fx:run      # launch the redesigned product UI (JavaFX)
 ./gradlew :app:run --args="--gallery"   # the design-system component gallery
 ```
 

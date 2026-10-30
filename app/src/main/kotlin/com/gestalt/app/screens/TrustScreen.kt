@@ -23,7 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.gestalt.app.AppState
 import com.gestalt.app.StatusBanner
-import com.gestalt.app.trust.CertDetails
+import com.gestalt.launcher.tls.CertDetails
 import com.gestalt.app.ui.HDivider
 import com.gestalt.app.ui.InlineNote
 import com.gestalt.app.ui.SectionCard

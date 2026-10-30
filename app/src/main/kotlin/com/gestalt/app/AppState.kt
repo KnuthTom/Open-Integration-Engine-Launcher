@@ -13,9 +13,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.toMutableStateList
-import com.gestalt.app.diagnose.Diagnosis
-import com.gestalt.app.diagnose.FailureDiagnosis
-import com.gestalt.app.trust.CertDetails
+import com.gestalt.launcher.diag.Diagnosis
+import com.gestalt.launcher.diag.FailureDiagnosis
+import com.gestalt.launcher.tls.CertDetails
 import com.gestalt.design.theme.Density
 import com.gestalt.design.theme.Mode
 import com.gestalt.design.theme.Skin

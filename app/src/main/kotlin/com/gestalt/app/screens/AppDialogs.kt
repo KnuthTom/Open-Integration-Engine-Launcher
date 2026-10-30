@@ -10,9 +10,9 @@ import androidx.compose.runtime.Composable
 import com.gestalt.app.AppDialog
 import com.gestalt.app.AppState
 import com.gestalt.app.Route
-import com.gestalt.app.diagnose.Diagnosis
-import com.gestalt.app.diagnose.FailureKind
-import com.gestalt.app.diagnose.FixAction
+import com.gestalt.launcher.diag.Diagnosis
+import com.gestalt.launcher.diag.FailureKind
+import com.gestalt.launcher.diag.FixAction
 import com.gestalt.app.ui.CertDetailsView
 import com.gestalt.app.ui.InlineNote
 import com.gestalt.app.ui.KeyValueRow

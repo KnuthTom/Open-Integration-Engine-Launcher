@@ -127,6 +127,23 @@ class TrustedCertStore(private val file: Path = AppPaths.dataDir.resolve(FILE_NA
         updated
     }
 
+    /** Decide about an entry already on file by its fingerprint (the Certificates dialog acts on listed rows). */
+    fun trustListed(sha256: String): TrustedCert? = decideListed(sha256, CertTrustStatus.TRUSTED)
+    fun rejectListed(sha256: String): TrustedCert? = decideListed(sha256, CertTrustStatus.REJECTED)
+
+    private fun decideListed(sha256: String, status: CertTrustStatus): TrustedCert? = synchronized(lock) {
+        val fp = CertFingerprint.normalize(sha256)
+        val existing = entries[fp] ?: return@synchronized null
+        val updated = existing.copy(status = status, decidedAt = now(), autoApproved = false)
+        entries[fp] = updated
+        save()
+        AuditLog.event(
+            if (status == CertTrustStatus.TRUSTED) "servercert.trust" else "servercert.reject",
+            "host" to (updated.hosts.firstOrNull() ?: "-"), "sha256" to fp, "auto" to false, "subject" to (updated.subject ?: "-"),
+        )
+        updated
+    }
+
     /** Trust by fingerprint alone (legacy pin migration); details arrive on the next observation. */
     fun trustFingerprint(sha256: String, host: String? = null, connectionId: String? = null): TrustedCert = synchronized(lock) {
         val fp = CertFingerprint.normalize(sha256)

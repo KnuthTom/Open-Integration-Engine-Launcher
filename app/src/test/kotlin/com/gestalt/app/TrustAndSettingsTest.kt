@@ -6,7 +6,7 @@
 
 package com.gestalt.app
 
-import com.gestalt.app.trust.CertDetails
+import com.gestalt.launcher.tls.CertDetails
 import com.gestalt.launcher.AppPaths
 import com.gestalt.launcher.credential.InMemoryCredentialStore
 import com.gestalt.launcher.gate.GestaltTrust

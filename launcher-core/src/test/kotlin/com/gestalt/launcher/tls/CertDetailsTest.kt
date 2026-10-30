@@ -4,9 +4,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-package com.gestalt.app.trust
+package com.gestalt.launcher.tls
 
-import com.gestalt.launcher.tls.CertFingerprint
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

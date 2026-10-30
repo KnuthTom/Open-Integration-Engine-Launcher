@@ -12,6 +12,7 @@ plugins {
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.compose) apply false
+    alias(libs.plugins.javafx) apply false
 
     // CycloneDX SBOM — `./gradlew cyclonedxBom` writes build/reports/bom.{json,xml}.
     alias(libs.plugins.cyclonedx)

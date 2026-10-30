@@ -29,7 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
-import com.gestalt.app.trust.CertDetails
+import com.gestalt.launcher.tls.CertDetails
 import com.gestalt.design.components.GestaltCard
 import com.gestalt.design.components.GestaltIcon
 import com.gestalt.design.components.GestaltText

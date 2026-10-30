@@ -24,14 +24,15 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
 - **268 tests pass** (`./gradlew build`).
 
 ## Stack & modules
-Kotlin 2.4 · Compose Multiplatform 1.9.3 · Gradle 8.14.5 (wrapper) · JDK 17.
+Kotlin 2.4 · Compose Multiplatform 1.9.3 (`:app`, retiring) · JavaFX 21 (`:app-fx`) · Gradle 8.14.5 (wrapper) · JDK 17.
 
 | module | responsibility |
 |---|---|
 | `:core-trust` | Pure jar-signature verification (CMS/PKIX/EKU/RFC-3161). No UI/network. |
 | `:launcher-core` | The fail-closed launch path: verification gate, JNLP parse, TLS + pinning, connection model/store/import, credentials, audit, self-update. |
 | `:design-system` | Token-driven Compose theming, components, icon + branding shells. |
-| `:app` | Compose Desktop product UI (list / form / import-export / launch); `--gallery`, `--cli`, `--test`. |
+| `:app` | Compose Desktop product UI (list / form / import-export / launch); `--gallery`, `--cli`, `--test`. **Being replaced by `:app-fx`.** |
+| `:app-fx` | The product UI rebuilt on **JavaFX 21** (runs on the JDK 17 runtime) to the 2026 redesign: folder tree sidebar, detail pane with one Launch, trusted-certificate review. `./gradlew :app-fx:run`. |
 
 Full architecture + trust pipeline: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Threat model:
 [`SECURITY.md`](SECURITY.md).
@@ -39,7 +40,8 @@ Full architecture + trust pipeline: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.m
 ## Build / run / test / package
 ```bash
 ./gradlew build                          # compile + run ALL tests (needs JDK 17)
-./gradlew :app:run                       # product UI
+./gradlew :app:run                       # product UI (Compose, retiring)
+./gradlew :app-fx:run                    # product UI (JavaFX redesign)
 ./gradlew :app:run --args="--gallery"    # design-system component gallery
 ./gradlew :app:run --args="--test https://host:8443"   # headless connection diagnostic
 ./gradlew :app:packageMsi                # Windows installer -> app/build/compose/binaries/main/msi/

@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-package com.gestalt.app.diagnose
+package com.gestalt.launcher.diag
 
 import com.gestalt.launcher.launch.LaunchAbortedException
 import com.gestalt.launcher.model.Connection

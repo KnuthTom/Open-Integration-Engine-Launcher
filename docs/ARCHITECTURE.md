@@ -23,7 +23,8 @@ verified, never redistributed.
 | `:core-trust`    | Pure jar-signature verification (`JarSignatureVerifier`): CMS/PKCS#7 parsing, manifest integrity, PKIX path validation, codeSigning EKU, RFC-3161 timestamp awareness. No UI, no networking. Returns a rich `VerificationResult`. |
 | `:launcher-core` | The launch path and everything around it: the verification **gate**, JNLP parsing, artifact fetch, TLS + pinning, the connection model + store + importer, credentials, audit log, and self-update. No Compose UI. |
 | `:design-system` | A token-driven Compose theming engine (skins/modes/density), themed base components, an icon registry, and the branding shell (`Branding`). |
-| `:app`           | The Compose Desktop product UI (connection list / form / import-export / launch) plus the `--gallery` and `--cli` entry points, built entirely on `:design-system` + `:launcher-core`. |
+| `:app`           | The Compose Desktop product UI (connection list / form / import-export / launch) plus the `--gallery` and `--cli` entry points, built entirely on `:design-system` + `:launcher-core`. Being replaced by `:app-fx`; retires at parity. |
+| `:app-fx`        | The product UI rebuilt on JavaFX 21 (JDK 17 runtime) to the 2026 redesign, on `:launcher-core` only. `LauncherModel` (JavaFX properties over the store; headless-testable), `LaunchController` (one launch in flight per connection, cancel by interrupt, prompts routed as events), `TreeRows` (the sidebar's sort / filter / folder walk), and stock controls styled by `base.css` + a light / dark colour sheet swapped on the Scene. Icons are Lucide path data drawn as `SVGPath`s. |
 
 ## The launch pipeline (fail-closed)
 

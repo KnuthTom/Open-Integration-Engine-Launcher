@@ -9,6 +9,10 @@ httpclient5 = "5.4.1"
 log4j = "2.24.3"
 jna = "5.16.0"
 kotlinxSerialization = "1.7.3"
+# JavaFX for the :app-fx product UI. 21.x is the last line that runs on a JDK 17 runtime
+# (JavaFX 23+ needs JDK 21); the plugin resolves the platform-specific artifacts.
+javafx = "21.0.10"
+javafxPlugin = "0.1.0"
 # Supply-chain tooling
 cyclonedx = "1.10.0"
 owaspDepCheck = "11.1.1"
@@ -42,6 +46,7 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 compose = { id = "org.jetbrains.compose", version.ref = "compose" }
+javafx = { id = "org.openjfx.javafxplugin", version.ref = "javafxPlugin" }
 # CycloneDX SBOM as a build artifact.
 cyclonedx = { id = "org.cyclonedx.bom", version.ref = "cyclonedx" }
 # OWASP dependency-check (CI gating on high severity; needs an NVD API key to run).

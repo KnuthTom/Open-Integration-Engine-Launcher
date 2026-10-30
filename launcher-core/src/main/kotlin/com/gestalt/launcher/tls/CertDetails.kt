@@ -4,9 +4,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-package com.gestalt.app.trust
+package com.gestalt.launcher.tls
 
-import com.gestalt.launcher.tls.CertFingerprint
 import java.io.InputStream
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate

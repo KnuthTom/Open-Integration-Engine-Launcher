@@ -1,0 +1,40 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+/* Light theme — the design's neutral "admin" register. Only looked-up colors and the radius scale live
+   here; base.css holds every structural rule and reads these by name. */
+.root {
+    -surface: #F7F7F8;
+    -surface-raised: #FFFFFF;
+    -surface-sunken: #ECEDEF;
+    -surface-overlay: rgba(18, 19, 22, 0.40);
+    -text: #1C1D20;
+    -text-muted: #5F6168;
+    -border: #E3E4E7;
+    -border-strong: #8C8E95;
+    -accent: #2E3035;
+    -accent-hover: #1F2024;
+    -accent-active: #141518;
+    -accent-contrast: #FFFFFF;
+    -accent-soft: #ECEDEF;
+    -btn-secondary: #ECEDEF;
+    -btn-secondary-hover: #E2E3E6;
+    -hover: #EAEAEB;          /* text 6% over surface */
+    -hover-strong: #E4E4E6;   /* text 8% over surface */
+    -selected: #D7D7D9;       /* accent 16% over surface */
+    -focus-ring: #2E3035;
+    -ok: #237A47;
+    -warn: #9A5F00;
+    -danger: #B23B2E;
+    -danger-contrast: #FFFFFF;
+    -lc-blue: #1F66B3;
+    -lc-teal: #127A72;
+    -lc-violet: #6B45B5;
+    -lc-rose: #B23A69;
+    -lc-green: #237A47;
+    -lc-ink: #1C1D20;
+    -shadow: rgba(0, 0, 0, 0.35);
+}
