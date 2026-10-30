@@ -57,7 +57,7 @@ object HttpClientFactory {
     ): CloseableHttpClient {
         val ctx = SSLContext.getInstance("TLS")
         ctx.init(null, arrayOf<TrustManager>(TrustedOrPkixTrustManager(trusted, rejected)), null)
-        return build(ctx, HostnameVerificationPolicy.CLIENT, TrustedOrDefaultHostnameVerifier(trusted), protocols, ciphers)
+        return build(ctx, HostnameVerificationPolicy.CLIENT, TrustedOrDefaultHostnameVerifier(trusted), protocols, ciphers, propagateTrustFailures = true)
     }
 
     /** True when the connection is https AND carries a (legacy, not yet migrated) 64-hex pin. */
@@ -123,10 +123,11 @@ object HttpClientFactory {
         hostnameVerifier: HostnameVerifier,
         protocols: Array<String>,
         ciphers: Array<String>?,
+        propagateTrustFailures: Boolean = false,
     ): CloseableHttpClient {
         // DefaultClientTlsStrategy IS a TlsSocketStrategy. Protocols/ciphers come from the connection
         // (modern-only defaults when unset); a null cipher list means the JDK defaults (strong).
-        val tlsSocketStrategy = DefaultClientTlsStrategy(
+        val defaultStrategy = DefaultClientTlsStrategy(
             sslContext,
             protocols,
             ciphers,
@@ -134,6 +135,9 @@ object HttpClientFactory {
             policy,
             hostnameVerifier,
         )
+        // A trust failure must stop the connect loop (see ServerTrustFailureSignal), or on a dual-stack
+        // localhost it is masked by the next address's "connection refused".
+        val tlsSocketStrategy = if (propagateTrustFailures) TrustFailurePropagatingTlsStrategy(defaultStrategy) else defaultStrategy
         val connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
             .setTlsSocketStrategy(tlsSocketStrategy)
             // IPv4-first for localhost (with fall-back across all resolved addresses); identical to the

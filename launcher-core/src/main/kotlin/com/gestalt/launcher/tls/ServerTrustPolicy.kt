@@ -7,12 +7,17 @@
 package com.gestalt.launcher.tls
 
 import org.apache.hc.client5.http.ssl.DefaultHostnameVerifier
+import org.apache.hc.client5.http.ssl.TlsSocketStrategy
+import org.apache.hc.core5.http.protocol.HttpContext
+import java.io.IOException
+import java.net.Socket
 import java.security.KeyStore
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLSession
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
@@ -85,6 +90,29 @@ class TrustedOrDefaultHostnameVerifier(trusted: Set<String>) : HostnameVerifier 
         if (CertFingerprint.sha256Hex(leaf) in trusted) return true
         return default.verify(hostname, session)
     }
+}
+
+/**
+ * Carries a server-trust failure out of HttpClient's connect loop intact.
+ *
+ * HttpClient tries every address a host resolves to and moves on to the next one on ANY IOException —
+ * a TLS trust failure included. On a dual-stack `localhost` (Windows resolves it to 127.0.0.1 and ::1)
+ * against a server listening on IPv4 only — Mirth's Jetty, an SSM/SSH port-forward — that turns
+ * "certificate needs review" on 127.0.0.1 into "connection refused" on ::1, and the user can never reach
+ * the review prompt. The loop rethrows a RuntimeException immediately, so the TLS upgrade raises this one
+ * (with the original failure as its cause) for trust failures only; everything else keeps HttpClient's
+ * own behaviour.
+ */
+class ServerTrustFailureSignal(cause: Throwable) : RuntimeException(cause.message, cause)
+
+/** Wraps a [TlsSocketStrategy] so a trust failure during the TLS upgrade surfaces as [ServerTrustFailureSignal]. */
+class TrustFailurePropagatingTlsStrategy(private val delegate: TlsSocketStrategy) : TlsSocketStrategy {
+    override fun upgrade(socket: Socket, target: String, port: Int, attachment: Any?, context: HttpContext?): SSLSocket =
+        try {
+            delegate.upgrade(socket, target, port, attachment, context)
+        } catch (e: IOException) {
+            if (ServerTrustFailure.kindOf(e) != null) throw ServerTrustFailureSignal(e) else throw e
+        }
 }
 
 /** Classifies a fetch failure as a server-trust problem the user could resolve by reviewing the certificate. */
