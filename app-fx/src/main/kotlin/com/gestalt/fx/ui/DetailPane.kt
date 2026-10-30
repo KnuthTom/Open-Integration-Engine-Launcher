@@ -245,6 +245,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             lastLabel.text = TreeRows.launchedLabel(d.lastLaunchedAt)
             if (addressField.text != d.serverUrl) addressField.text = d.serverUrl
             folderButton.setCaption(model.pathOf(d.folderId))
+            // Menus are rebuilt when they open; seed them here too so the first click never finds them empty.
+            folderButton.items.setAll(folderMenuItems())
+            javaButton.items.setAll(javaMenuItems())
 
             val jh = d.javaHome
             javaButton.setCaption(

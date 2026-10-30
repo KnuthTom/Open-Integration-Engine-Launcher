@@ -384,6 +384,18 @@ class LauncherModel(
         return reorder(siblings, parent)
     }
 
+    /** Put the row [key] immediately after [afterKey], among that row's siblings (manual order). */
+    fun moveAfter(key: String, afterKey: String): Boolean {
+        if (key == afterKey || !exists(key) || !exists(afterKey)) return false
+        val parent = parentOf(afterKey)
+        if (wouldCycle(key, parent)) return false
+        val siblings = TreeRows.childKeys(parent, connections, folders, sort.get(), foldersFirst.get()).filter { it != key }.toMutableList()
+        val idx = siblings.indexOf(afterKey).let { if (it >= 0) it + 1 else siblings.size }
+        siblings.add(idx, key)
+        if (sort.get() != SortMode.Manual) sort.set(SortMode.Manual)
+        return reorder(siblings, parent)
+    }
+
     /** Assign [keys] their positions under [parent], moving each in as needed. All or nothing. */
     private fun reorder(keys: List<String>, parent: String?): Boolean {
         val before = store.list().associateBy { it.id } to store.folders().associateBy { it.id }

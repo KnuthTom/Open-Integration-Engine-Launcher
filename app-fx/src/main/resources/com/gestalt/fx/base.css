@@ -90,6 +90,17 @@
 .tree-row .row-count { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
 .tree-row .row-icon-button { -fx-background-color: transparent; -fx-padding: 0; -fx-background-radius: 3; -fx-cursor: hand; }
 .tree-row .row-icon-button:hover { -fx-border-color: -accent; -fx-border-width: 2; -fx-border-radius: 3; -fx-border-insets: -2; }
+.tree-row.drop-before, .list-view.tree-list .list-cell:filled:hover .tree-row.drop-before { -fx-border-color: -accent transparent transparent transparent; -fx-border-width: 2 1 1 1; -fx-border-radius: 0; }
+.tree-row.drop-after, .list-view.tree-list .list-cell:filled:hover .tree-row.drop-after { -fx-border-color: transparent transparent -accent transparent; -fx-border-width: 1 1 2 1; -fx-border-radius: 0; }
+.list-view.tree-list.drop-root { -fx-border-color: -accent; -fx-border-width: 1; -fx-border-insets: 0 6 0 6; }
+.tree-row .rename-field {
+    -fx-pref-height: 20; -fx-min-height: 20; -fx-max-height: 20;
+    -fx-padding: 0 4 0 4;
+    -fx-background-color: -surface-raised;
+    -fx-background-radius: 3; -fx-border-radius: 3;
+    -fx-border-color: -focus-ring;
+    -fx-font-size: 13px;
+}
 .tree-empty { -fx-padding: 14 16 14 16; -fx-font-size: 12px; -fx-text-fill: -text-muted; -fx-wrap-text: true; }
 
 .split-handle { -fx-cursor: h-resize; -fx-min-width: 7; -fx-pref-width: 7; -fx-max-width: 7; }

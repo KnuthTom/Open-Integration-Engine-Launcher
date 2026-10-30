@@ -173,20 +173,19 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     }
 
     override fun newFolder(parentId: String?) {
-        modal.prompt("New folder", "New folder", okLabel = "Create") { name ->
-            val f = model.newFolder(parentId, name.trim().ifEmpty { "New folder" })
-            sidebar.selectRow("f:${f.id}")
-        }
+        val f = model.newFolder(parentId)
+        sidebar.selectRow("f:${f.id}")
+        sidebar.startRename("f:${f.id}")
     }
 
     override fun renameConnection(id: String) {
-        val conn = model.store.get(id) ?: return
-        modal.prompt("Rename connection", conn.name, okLabel = "Rename") { name -> model.rename(id, name) }
+        if (model.store.get(id) == null) return
+        sidebar.startRename("c:$id")
     }
 
     override fun renameFolder(id: String) {
-        val folder = model.store.getFolder(id) ?: return
-        modal.prompt("Rename folder", folder.name, okLabel = "Rename") { name -> model.renameFolder(id, name) }
+        if (model.store.getFolder(id) == null) return
+        sidebar.startRename("f:$id")
     }
 
     override fun deleteConnection(id: String) {

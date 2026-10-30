@@ -14,16 +14,21 @@ import javafx.collections.ListChangeListener
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.Node
+import javafx.application.Platform
 import javafx.scene.control.ContextMenu
 import javafx.scene.control.Label
 import javafx.scene.control.ListCell
 import javafx.scene.control.ListView
+import javafx.scene.control.Menu
 import javafx.scene.control.MenuItem
 import javafx.scene.control.TextField
 import javafx.scene.control.Tooltip
+import javafx.scene.input.ClipboardContent
+import javafx.scene.input.DataFormat
 import javafx.scene.input.KeyCode
 import javafx.scene.input.KeyEvent
 import javafx.scene.input.MouseButton
+import javafx.scene.input.TransferMode
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Priority
 import javafx.scene.layout.Region
@@ -63,6 +68,9 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
     /** The row the keyboard cursor is on, kept across row rebuilds. */
     private var focusKey: String? = null
     private var restoring = false
+
+    /** The row being renamed inline (its cell shows a text field), if any. */
+    private var renamingKey: String? = null
 
     init {
         styleClass += "sidebar"
@@ -129,6 +137,23 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         list.addEventFilter(KeyEvent.KEY_PRESSED) { e -> onKey(e) }
         list.setOnContextMenuRequested { e -> showMenuFor(null, e.screenX, e.screenY); e.consume() }
 
+        // A drag that ends on the empty part of the list drops at the top level.
+        list.setOnDragOver { e ->
+            if (e.dragboard.hasContent(ROW_FORMAT)) {
+                e.acceptTransferModes(TransferMode.MOVE)
+                if ("drop-root" !in list.styleClass) list.styleClass += "drop-root"
+            }
+            e.consume()
+        }
+        list.setOnDragExited { list.styleClass.remove("drop-root") }
+        list.setOnDragDropped { e ->
+            val key = e.dragboard.getContent(ROW_FORMAT) as? String
+            val ok = key != null && model.moveInto(key, null)
+            list.styleClass.remove("drop-root")
+            e.isDropCompleted = ok
+            e.consume()
+        }
+
         children.addAll(header, filterWrap, emptyLabel, list)
         countLabel.text = model.connections.size.toString()
         refreshToggleAll()
@@ -149,6 +174,30 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
     }
 
     fun focusTree() = list.requestFocus()
+
+    /** Rename [key] in place: its cell turns into a text field (Enter commits, Esc cancels). */
+    fun startRename(key: String) {
+        renamingKey = key
+        focusKey = key
+        restoreCursor()
+        list.refresh()
+        list.scrollTo(model.rows.indexOfFirst { it.key == key }.coerceAtLeast(0))
+    }
+
+    private fun commitRename(key: String, text: String) {
+        if (renamingKey != key) return
+        renamingKey = null
+        if (key.startsWith("c:")) model.rename(key.substring(2), text) else if (key.startsWith("f:")) model.renameFolder(key.substring(2), text)
+        list.refresh()
+        list.requestFocus()
+    }
+
+    private fun cancelRename() {
+        if (renamingKey == null) return
+        renamingKey = null
+        list.refresh()
+        list.requestFocus()
+    }
 
     private fun restoreCursor() {
         val key = focusKey ?: return
@@ -183,6 +232,7 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
     // --- keyboard ---------------------------------------------------------------------------------
 
     private fun onKey(e: KeyEvent) {
+        if (renamingKey != null) return // the rename field owns the keyboard
         val row = list.selectionModel.selectedItem
         when (e.code) {
             KeyCode.ENTER -> {
@@ -257,9 +307,9 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
                 val c = row.connection
                 buildList {
                     add(Controls.menuItem("Launch", "play", hint = "Enter") { host.requestSelect(c.id) { host.launch(c.id) } })
-                    add(Controls.menuItem("Rename…", "pencil", hint = "F2") { host.renameConnection(c.id) })
+                    add(Controls.menuItem("Rename", "pencil", hint = "F2") { startRename(row.key) })
                     add(Controls.menuItem("Duplicate", "copy") { model.duplicate(c.id)?.let { host.requestSelect(it.id) } })
-                    if (c.folderId != null) add(Controls.menuItem("Move to top level", "corner-left-up") { model.moveConnection(c.id, null) })
+                    add(moveToMenu(row.key, c.folderId))
                     add(Controls.menuSeparator())
                     add(Controls.menuItem("Delete", "trash-2", hint = "Del", danger = true) { host.deleteConnection(c.id) })
                 }
@@ -269,8 +319,9 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
                 listOf(
                     Controls.menuItem("New connection here", "plus") { host.newConnection(f.id) },
                     Controls.menuItem("New subfolder", "folder-plus") { host.newFolder(f.id) },
-                    Controls.menuItem("Rename…", "pencil", hint = "F2") { host.renameFolder(f.id) },
+                    Controls.menuItem("Rename", "pencil", hint = "F2") { startRename(row.key) },
                     Controls.menuItem(if (f.expanded) "Collapse" else "Expand", if (f.expanded) "chevrons-down-up" else "chevrons-up-down") { model.toggleFolder(f.id) },
+                    moveToMenu(row.key, f.parentId),
                     Controls.menuSeparator(),
                     Controls.menuItem("Delete folder", "trash-2", hint = "Del", danger = true) { host.deleteFolder(f.id) },
                 )
@@ -287,15 +338,35 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         menu.show(list, x, y)
     }
 
+    /** "Move to ▸": the top level and every folder (indented), except the moved folder's own subtree. */
+    private fun moveToMenu(key: String, currentParent: String?): Menu {
+        val menu = Menu("Move to")
+        val self = if (key.startsWith("f:")) key.substring(2) else null
+        val excluded: Set<String> = self?.let { model.store.descendantFolderIds(it) + it } ?: emptySet()
+        menu.items += Controls.menuItem("Top level", checked = currentParent == null) { model.moveInto(key, null) }
+        fun walk(parentId: String?, depth: Int) {
+            model.folders.filter { it.parentId == parentId && it.id !in excluded }.sortedBy { it.name.lowercase() }.forEach { f ->
+                menu.items += Controls.menuItem(f.name, checked = currentParent == f.id, indent = depth + 1) { model.moveInto(key, f.id) }
+                walk(f.id, depth + 1)
+            }
+        }
+        walk(null, 0)
+        return menu
+    }
+
     // --- cells ------------------------------------------------------------------------------------
+
+    private enum class DropMode { Into, Before, After }
 
     private inner class RowCell : ListCell<TreeRow>() {
         private val chevron = StackPane().apply { minWidth = 14.0; prefWidth = 14.0; maxWidth = 14.0; minHeight = 16.0; prefHeight = 16.0 }
         private val iconSlot = StackPane().apply { styleClass += "row-icon-button"; minWidth = 16.0; prefWidth = 16.0; maxWidth = 16.0; minHeight = 16.0; prefHeight = 16.0; maxHeight = 16.0 }
         private val name = Label().apply { styleClass += "row-name"; minWidth = 0.0; maxWidth = Double.MAX_VALUE; HBox.setHgrow(this, Priority.ALWAYS) }
+        private val renameField = TextField().apply { styleClass += "rename-field"; minWidth = 0.0; maxWidth = Double.MAX_VALUE; HBox.setHgrow(this, Priority.ALWAYS); isVisible = false; isManaged = false }
         private val count = Label().apply { styleClass += "row-count" }
-        private val row = HBox(chevron, iconSlot, name, count).apply { styleClass += "tree-row"; alignment = Pos.CENTER_LEFT }
+        private val row = HBox(chevron, iconSlot, name, renameField, count).apply { styleClass += "tree-row"; alignment = Pos.CENTER_LEFT }
         private var current: TreeRow? = null
+        private var renameArmedFor: String? = null
 
         init {
             styleClass += "tree-cell"
@@ -314,6 +385,68 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
             setOnContextMenuRequested { e ->
                 current?.let { r -> showMenuFor(r, e.screenX, e.screenY); e.consume() }
             }
+
+            // Inline rename: Enter commits, Esc cancels, leaving the field commits.
+            renameField.setOnAction { current?.let { r -> commitRename(r.key, renameField.text) } }
+            renameField.addEventFilter(KeyEvent.KEY_PRESSED) { e -> if (e.code == KeyCode.ESCAPE) { cancelRename(); e.consume() } }
+            renameField.focusedProperty().addListener { _, _, focused -> if (!focused) current?.let { r -> if (renamingKey == r.key) commitRename(r.key, renameField.text) } }
+            renameField.setOnMouseClicked { it.consume() }
+
+            // Drag a row to reorder it (manual order) or to move it into a folder; the list's empty area
+            // means the top level.
+            setOnDragDetected { e ->
+                val r = current ?: return@setOnDragDetected
+                if (renamingKey != null || e.button != MouseButton.PRIMARY) return@setOnDragDetected
+                val db = startDragAndDrop(TransferMode.MOVE)
+                db.setContent(ClipboardContent().apply { put(ROW_FORMAT, r.key) })
+                db.dragView = row.snapshot(null, null)
+                e.consume()
+            }
+            setOnDragOver { e ->
+                val r = current
+                val src = e.dragboard.getContent(ROW_FORMAT) as? String
+                if (r != null && src != null) {
+                    val mode = dropMode(src, r, e.y)
+                    if (mode != null) { e.acceptTransferModes(TransferMode.MOVE); showDrop(mode) } else clearDrop()
+                }
+                e.consume()
+            }
+            setOnDragExited { clearDrop() }
+            setOnDragDropped { e ->
+                val r = current
+                val src = e.dragboard.getContent(ROW_FORMAT) as? String
+                var ok = false
+                if (r != null && src != null) {
+                    ok = when (dropMode(src, r, e.y)) {
+                        DropMode.Into -> model.moveInto(src, (r as TreeRow.FolderRow).folder.id)
+                        DropMode.Before -> model.moveBefore(src, r.key)
+                        DropMode.After -> model.moveAfter(src, r.key)
+                        null -> false
+                    }
+                }
+                clearDrop()
+                e.isDropCompleted = ok
+                e.consume()
+            }
+        }
+
+        /** Where a drop on this row would land: into a folder (its lower three quarters), before / after (connections, or a folder's top quarter). */
+        private fun dropMode(src: String, target: TreeRow, y: Double): DropMode? {
+            if (src == target.key) return null
+            val h = height.takeIf { it > 0 } ?: 24.0
+            return when (target) {
+                is TreeRow.FolderRow -> if (y < h * 0.25) DropMode.Before else DropMode.Into
+                is TreeRow.ConnectionRow -> if (y < h * 0.5) DropMode.Before else DropMode.After
+            }
+        }
+
+        private fun showDrop(mode: DropMode) {
+            clearDrop()
+            row.styleClass += when (mode) { DropMode.Into -> "drop-into"; DropMode.Before -> "drop-before"; DropMode.After -> "drop-after" }
+        }
+
+        private fun clearDrop() {
+            row.styleClass.removeAll("drop-into", "drop-before", "drop-after")
         }
 
         override fun updateItem(item: TreeRow?, empty: Boolean) {
@@ -328,6 +461,18 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
             row.padding = Insets(0.0, 8.0, 0.0, 4.0 + item.depth * 16.0)
             name.text = item.name
             row.styleClass.removeAll("folder", "active")
+            val renaming = renamingKey == item.key
+            name.isVisible = !renaming; name.isManaged = !renaming
+            renameField.isVisible = renaming; renameField.isManaged = renaming
+            if (renaming) {
+                if (renameArmedFor != item.key) {
+                    renameArmedFor = item.key
+                    renameField.text = item.name
+                    Platform.runLater { renameField.requestFocus(); renameField.selectAll() }
+                }
+            } else {
+                renameArmedFor = null
+            }
             when (item) {
                 is TreeRow.FolderRow -> {
                     row.styleClass += "folder"
@@ -361,3 +506,5 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         }
     }
 }
+
+private val ROW_FORMAT: DataFormat = DataFormat.lookupMimeType("application/x-oie-launcher-row") ?: DataFormat("application/x-oie-launcher-row")

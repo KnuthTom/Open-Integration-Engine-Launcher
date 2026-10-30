@@ -176,6 +176,42 @@ class LauncherModelTest {
     }
 
     @Test
+    @DisplayName("drag-and-drop: into a folder appends there; before/after reorders among siblings and switches to manual order; a folder can't be dropped into itself")
+    fun dragAndDrop(@TempDir dir: Path) {
+        val m = model(dir)
+        val clients = m.newFolder(null, "Clients")
+        val slu = m.newFolder(clients.id, "SLU")
+        val a = m.newConnection(null); m.rename(a.id, "A")
+        val b = m.newConnection(null); m.rename(b.id, "B")
+        val c = m.newConnection(null); m.rename(c.id, "C")
+        fun keys() = m.rows.map { it.key }
+
+        assertTrue(m.moveInto("c:${a.id}", clients.id))
+        assertEquals(clients.id, m.store.get(a.id)!!.folderId)
+        assertEquals(listOf("f:${clients.id}", "f:${slu.id}", "c:${a.id}", "c:${b.id}", "c:${c.id}"), keys()) { "A lands last among Clients' children" }
+
+        m.sort.set(SortMode.NameDesc)
+        assertTrue(m.moveBefore("c:${c.id}", "c:${b.id}"))
+        assertEquals(SortMode.Manual, m.sort.get()) { "a reorder is a manual-order gesture" }
+        assertEquals(listOf("f:${clients.id}", "f:${slu.id}", "c:${a.id}", "c:${c.id}", "c:${b.id}"), keys())
+
+        assertTrue(m.moveAfter("f:${slu.id}", "c:${b.id}"))
+        assertNull(m.store.getFolder(slu.id)!!.parentId) { "SLU moved to the top level, after B" }
+        assertEquals(listOf("f:${clients.id}", "c:${a.id}", "c:${c.id}", "c:${b.id}", "f:${slu.id}"), keys())
+
+        assertTrue(m.moveInto("f:${slu.id}", clients.id))
+        assertFalse(m.moveInto("f:${clients.id}", slu.id)) { "a folder never moves into its own subtree" }
+        assertFalse(m.moveInto("f:${clients.id}", clients.id))
+        assertEquals(clients.id, m.store.getFolder(slu.id)!!.parentId)
+        assertNull(m.store.getFolder(clients.id)!!.parentId)
+
+        m.select(a.id)
+        assertTrue(m.moveInto("c:${a.id}", null))
+        assertNull(m.draft.get()!!.folderId) { "the active connection's draft follows its move" }
+        assertFalse(m.dirty.get())
+    }
+
+    @Test
     @DisplayName("sort, folders-first and the theme are remembered in the preferences")
     fun prefsFollowProperties(@TempDir dir: Path) {
         val m = model(dir)
