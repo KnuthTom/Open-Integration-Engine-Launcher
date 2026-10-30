@@ -96,6 +96,13 @@ and torn down (the command and everything it spawned) when the last one exits, o
 closes. The command's output goes to `logs/client/<connection>-<stamp>-tunnel.log`; a tunnel that
 fails reports the command's exit code and the log's last lines in the launch failure.
 
+"When the Administrator exits" means the Administrator, not the first JVM: the client checks the heap
+it was started with against the heap size saved in its own preferences and, when they differ,
+**relaunches itself** in a new JVM and exits within a second. The launcher follows that hand-over
+(`ProcessTree`): the row stays Running, close-after-launch and the tunnel wait for the JVM the client
+actually runs in. (Before this, the forward was torn down under the relaunched client — "Connection
+refused" on its login screen a second after it appeared.)
+
 Through a port-forward (a loopback address, or any connection with a tunnel command) the launcher
 fetches over **one** TCP connection at a time: an SSM forward without TCP multiplexing (the plugin's
 basic mode, used when the instance's SSM agent is older) services a single connection and parks the

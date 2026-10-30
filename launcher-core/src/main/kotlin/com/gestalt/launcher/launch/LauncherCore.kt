@@ -278,7 +278,9 @@ open class LauncherCore(
      * them on. Only if that file can't be created does the child inherit the launcher's console.
      *
      * A connection with a tunnel command has its port-forward opened first ([TunnelManager]) and held
-     * until the Administrator exits; a launch that fails after opening it releases it at once.
+     * until the Administrator exits; a launch that fails after opening it releases it at once. The
+     * returned [Process] is tree-aware ([ProcessTree]): it reports the Administrator as running until the
+     * JVM the client relaunched itself into — not just the one spawned here — has exited.
      */
     open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}, autoLogin: AutoLogin? = null): Process {
         try {
@@ -300,7 +302,10 @@ open class LauncherCore(
                 } else {
                     builder.inheritIO()
                 }
-                val process = builder.start()
+                // The Administrator relaunches itself when its saved heap preference differs from -Xmx: the
+                // process the launcher started exits within a second and a child JVM is the real client. Track
+                // the tree, so Running, close-after-launch and the port-forward follow the client, not the stub.
+                val process = ProcessTree.track(builder.start(), fingerprint = listOf(plan.mainClass) + plan.appArgs.take(1))
                 if (lease != null) process.onExit().thenRun { runCatching { lease.close() } }
                 onPhase(LaunchPhase.Running)
                 return process

@@ -79,6 +79,10 @@ runs headlessly in tests without real networking or spawning a process.
 - **Client output** — the spawned Administrator's stdout/stderr go to `logs/client/<connection>-<stamp>.log`
   (newest 20 kept; header without the command line), so a login that fails inside the client is
   diagnosable from a windowless launcher.
+- **The Administrator is a process tree** — `ProcessTree.track` wraps the spawned JVM so `isAlive` /
+  `onExit` answer for the whole tree: the client relaunches itself with its preferred heap and exits
+  within a second, and its Java children (seen while it lived, or found by the launch's command-line
+  fingerprint) are adopted and awaited. Running, close-after-launch and the tunnel lease all hang off it.
 - **Tunnels** — `TunnelManager` opens a connection's port-forward before the launch (its *tunnel
   command*, run through the platform shell with the user's own environment), waits for the address's
   port, and holds the process per connection with a lease count: shared by concurrent launches of the
