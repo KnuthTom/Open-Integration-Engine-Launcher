@@ -45,6 +45,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     private val sidebar = Sidebar(model, this, icons)
     private val detail = DetailPane(model, this, icons)
     private val certificates = CertificatesDialog(model, modal) { detail.refreshCertificates() }
+    private val iconDialog = IconDialog(modal, icons) { stage }
     val scene: Scene
 
     init {
@@ -279,7 +280,15 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     override fun openCertificates() = certificates.show(model.active)
 
     override fun changeIcon() {
-        toast.show("Icon library", "Choosing icons arrives with the next patch", ToastHost.Kind.Info, 2400)
+        val id = model.activeId.get() ?: return
+        val conn = model.store.get(id) ?: return
+        iconDialog.show(model.draft.get()?.name ?: conn.name, conn.icon) { key -> model.setIcon(id, key) }
+    }
+
+    override fun setAutoApprove(on: Boolean) {
+        val id = model.activeId.get() ?: return
+        model.setAutoApprove(id, on)
+        detail.refreshCertificates()
     }
 
     override fun toggleTheme() {

@@ -321,6 +321,22 @@ class LauncherModel(
         refresh()
     }
 
+    /**
+     * Change a saved connection at once — the trust and identity switches (auto-approve, the icon) apply
+     * without a Save. The draft gets the same change so unsaved edits elsewhere in the form survive.
+     */
+    fun applyToSaved(id: String, transform: (Connection) -> Connection) {
+        val conn = store.get(id) ?: return
+        store.update(transform(conn), persist = false)
+        if (activeId.get() == id) draft.get()?.let { draft.set(transform(it)) }
+        schedulePersist()
+        refresh()
+    }
+
+    fun setAutoApprove(id: String, on: Boolean) = applyToSaved(id) { it.copy(autoApproveCertificates = on) }
+
+    fun setIcon(id: String, key: String) = applyToSaved(id) { it.copy(icon = key) }
+
     fun rename(id: String, name: String) {
         val conn = store.get(id) ?: return
         val trimmed = name.trim().ifEmpty { return }

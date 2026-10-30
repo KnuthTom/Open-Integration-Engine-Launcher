@@ -47,6 +47,8 @@ interface DetailActions {
     fun openCertificates()
     fun changeIcon()
     fun toggleTheme()
+    /** Auto-approve is a trust switch, not a form field: it applies to the saved connection at once. */
+    fun setAutoApprove(on: Boolean)
 }
 
 /**
@@ -84,6 +86,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val heapSeg = Controls.Segmented(listOf("512m" to "512m", "1g" to "1g", "2g" to "2g", "4g" to "4g"), mono = true) { v -> update { it.copy(heapSize = v) } }
     private val heapError = Label("Use a size like 1024m or 2g").apply { styleClass += "field-error"; isVisible = false; isManaged = false }
     private val consoleSwitch = Controls.Switch { on -> update { it.copy(showJavaConsole = on) } }
+    private val scaleSeg = Controls.Segmented<String?>(listOf(null to "System", "1.0" to "100%", "1.25" to "125%", "1.5" to "150%", "2.0" to "200%")) { v -> update { it.copy(uiScale = v) } }
 
     // certificates card
     private val reviewBadge = Label().apply { styleClass += "badge-warn"; isVisible = false; isManaged = false }
@@ -91,7 +94,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val certIcon = StackPane()
     private val certLabel = Label().apply { styleClass += "strong" }
     private val certDetail = Label().apply { styleClass += "small"; styleClass += "muted"; minWidth = 0.0 }
-    private val autoApprove = Controls.CheckRow("Auto-approve new certificates") { on -> update { it.copy(autoApproveCertificates = on) } }
+    private val autoApprove = Controls.CheckRow("Auto-approve new certificates") { on -> host.setAutoApprove(on) }
 
     // tls card
     private val tlsBody = VBox()
@@ -125,7 +128,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         // --- header ---
         val iconHolder = StackPane().apply {
             children += iconButton
-            val pencil = Button().apply { styleClass += "header-pencil"; graphic = Icons.glyph("pencil", 10.0, "-text-muted", 2.0); setOnAction { host.changeIcon() } }
+            val pencil = Button().apply { styleClass += "header-pencil"; graphic = Icons.glyph("pencil", 12.0, "-text", 2.5); tooltip = javafx.scene.control.Tooltip("Change icon"); setOnAction { host.changeIcon() } }
             children += pencil
             StackPane.setAlignment(pencil, Pos.BOTTOM_RIGHT)
             StackPane.setMargin(pencil, Insets(0.0, -6.0, -6.0, 0.0))
@@ -149,11 +152,13 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val fxRow = HBox(8.0, javaFxField, browseFx).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(javaFxField, Priority.ALWAYS); javaFxField.minWidth = 0.0 }
         val heapRow = VBox(4.0, HBox(8.0, heapField, heapSeg).apply { alignment = Pos.CENTER_LEFT }, heapError)
         val consoleRow = HBox(10.0, consoleSwitch, Label("Open a console window alongside the Administrator").apply { styleClass += "field-note"; minWidth = 0.0 }).apply { alignment = Pos.CENTER_LEFT }
+        val scaleRow = HBox(8.0, scaleSeg, Label("100% is the crisp, unscaled look of Java 8").apply { styleClass += "field-note"; minWidth = 0.0 }).apply { alignment = Pos.CENTER_LEFT }
         val javaCard = Controls.card("Java runtime", Controls.fieldGrid().apply {
             row(0, "Java home", javaRow)
             row(1, "JavaFX home", fxRow)
             row(2, "Max heap", heapRow)
             row(3, "Java console", consoleRow)
+            row(4, "Display scale", scaleRow)
         })
         customJavaField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(javaHome = it.javaHome.copy(customPath = v)) } }
         javaFxField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(javaFxHome = v?.takeIf { s -> s.isNotBlank() }) } }
@@ -269,6 +274,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             val heapOk = heap.isEmpty() || HEAP_PATTERN.matches(heap)
             heapError.isVisible = !heapOk; heapError.isManaged = !heapOk
             consoleSwitch.on = d.showJavaConsole
+            scaleSeg.value = d.uiScale?.trim()?.takeIf { it.isNotEmpty() }
 
             renderCertificates(d)
             autoApprove.on = d.autoApproveCertificates

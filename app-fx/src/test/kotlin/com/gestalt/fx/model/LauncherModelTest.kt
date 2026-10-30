@@ -212,6 +212,27 @@ class LauncherModelTest {
     }
 
     @Test
+    @DisplayName("auto-approve and the icon apply to the saved connection at once, and the draft keeps its unsaved edits")
+    fun immediateSwitches(@TempDir dir: Path) {
+        val m = model(dir)
+        val c = m.newConnection(null)
+        m.updateDraft { it.copy(heapSize = "2g") } // an unsaved edit
+        assertTrue(m.dirty.get())
+
+        m.setAutoApprove(c.id, true)
+        m.setIcon(c.id, "flask-conical")
+
+        assertTrue(m.store.get(c.id)!!.autoApproveCertificates) { "saved without a Save" }
+        assertEquals("flask-conical", m.store.get(c.id)!!.icon)
+        assertTrue(m.draft.get()!!.autoApproveCertificates) { "the draft got the same change" }
+        assertEquals("flask-conical", m.draft.get()!!.icon)
+        assertEquals("2g", m.draft.get()!!.heapSize) { "the unsaved edit survived" }
+        assertTrue(m.dirty.get()) { "still dirty for the unsaved edit only" }
+        m.save()
+        assertEquals("2g", m.store.get(c.id)!!.heapSize)
+    }
+
+    @Test
     @DisplayName("sort, folders-first and the theme are remembered in the preferences")
     fun prefsFollowProperties(@TempDir dir: Path) {
         val m = model(dir)

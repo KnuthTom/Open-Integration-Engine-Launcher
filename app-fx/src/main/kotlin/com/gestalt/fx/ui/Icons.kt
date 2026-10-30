@@ -111,6 +111,16 @@ object IconLibrary {
         else -> "-text-muted"
     }
 
+    /** The tint as a literal colour for a given theme (previews that show both themes at once). */
+    fun tintHex(tint: String, dark: Boolean): String = when (tint) {
+        "blue" -> if (dark) "#7AA9D6" else "#1F66B3"
+        "teal" -> if (dark) "#5CC8BE" else "#127A72"
+        "violet" -> if (dark) "#A98BEB" else "#6B45B5"
+        "rose" -> if (dark) "#EC8DB2" else "#B23A69"
+        "green" -> if (dark) "#6EE7A0" else "#237A47"
+        else -> if (dark) "#A6A7AD" else "#5F6168"
+    }
+
     /** True for a user-imported image key. */
     fun isCustom(key: String): Boolean = key.startsWith("custom:")
 

@@ -395,3 +395,23 @@
 .cert-detail .label { -fx-font-size: 12px; }
 .cert-host { -fx-font-size: 12.5px; }
 .cert-empty { -fx-padding: 28 16 28 16; -fx-alignment: center; -fx-text-fill: -text-muted; }
+
+/* Icon dialog */
+.drop-zone { -fx-padding: 14 16 14 16; -fx-border-color: -border-strong; -fx-border-style: dashed; -fx-border-width: 1; -fx-border-radius: 6; -fx-background-radius: 6; -fx-background-color: transparent; -fx-cursor: hand; }
+.drop-zone.over { -fx-border-color: -accent; -fx-background-color: -accent-soft; }
+.drop-zone-icon { -fx-background-color: -surface-sunken; -fx-background-radius: 6; -fx-min-width: 44; -fx-pref-width: 44; -fx-max-width: 44; -fx-min-height: 44; -fx-pref-height: 44; -fx-max-height: 44; }
+.link { -fx-text-fill: -accent; -fx-underline: true; -fx-font-weight: bold; }
+.icon-tile {
+    -fx-background-color: -surface;
+    -fx-background-insets: 0;
+    -fx-background-radius: 6;
+    -fx-border-color: -border;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
+    -fx-padding: 0;
+    -fx-min-width: 34; -fx-pref-width: 34; -fx-max-width: 34;
+    -fx-min-height: 34; -fx-pref-height: 34; -fx-max-height: 34;
+    -fx-cursor: hand;
+}
+.icon-tile:hover { -fx-border-color: -border-strong; }
+.icon-tile.on { -fx-border-color: -accent; -fx-border-width: 2; -fx-border-insets: -1; }
