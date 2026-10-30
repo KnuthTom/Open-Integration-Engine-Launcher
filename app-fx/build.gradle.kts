@@ -21,6 +21,7 @@ import javax.inject.Inject
 // from the classpath in the packaged app (a plain `main` starts it; see Main.kt).
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    // Applied only because the Compose GRADLE plugin below refuses to configure without it (Kotlin >= 2.0).
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose)
     alias(libs.plugins.javafx)
@@ -28,6 +29,14 @@ plugins {
 
 kotlin {
     jvmToolchain(17)
+}
+
+// Keep the Compose COMPILER out of every compilation in this module. Left on, it aborts the build because
+// the Compose runtime is (deliberately) not on the classpath: "The Compose Compiler requires the Compose
+// Runtime to be on the class path". With no target platform it is never attached to compileKotlin or
+// compileTestKotlin, so no Compose artifact enters :app-fx at all.
+composeCompiler {
+    targetKotlinPlatforms.empty()
 }
 
 javafx {
