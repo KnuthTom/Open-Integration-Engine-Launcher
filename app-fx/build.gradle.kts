@@ -9,6 +9,7 @@ import org.gradle.api.file.ArchiveOperations
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.process.ExecOperations
 import java.io.File
+import java.util.zip.ZipFile
 import javax.inject.Inject
 
 // The product UI, rebuilt on JavaFX (the design's build notes target "Java 17+ / JavaFX 17+": stock
@@ -295,8 +296,9 @@ val verifyNoProfileData by tasks.registering {
                 }
                 check(f.name, f.path)
                 if (f.name.endsWith(".jar")) {
+                    // (Imported at the top: inside a build script `java` is the JavaPluginExtension, not the package.)
                     runCatching {
-                        java.util.zip.ZipFile(f).use { zip ->
+                        ZipFile(f).use { zip ->
                             for (e in zip.entries()) check(e.name.substringAfterLast('/'), "${f.path}!${e.name}")
                         }
                     }
