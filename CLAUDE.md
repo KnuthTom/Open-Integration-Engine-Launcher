@@ -13,15 +13,15 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
 > Not affiliated with / endorsed by the OIE project, NextGen Healthcare, or Mirth Connect. Those names
 > are used descriptively. Originally built by **Gestalt Diagnostics**, released to the community.
 
-## Status (2026-06-19)
+## Status (2026-10-30)
 - **Repo (source of truth):** `github.com/KnuthTom/Open-Integration-Engine-Launcher`, branch `main` —
   currently **PRIVATE** (flip to public when ready).
 - Default branding is **vendor-neutral** (`Branding.Default`); the original Gestalt identity is an
   **optional** pack (`Branding.Gestalt`). Final product name is the maintainer's call — see the
   `TODO(maintainer)` in `Branding.Default`.
-- Release binaries are **UNSIGNED** (community). A **v1.0.1** Windows MSI exists; publishing it as a
-  GitHub Release (web upload or the tag-driven CI workflow) is in progress.
-- **268 tests pass** (`./gradlew build`).
+- Release binaries are **UNSIGNED** (community). A **v1.0.1** Windows MSI (the Compose UI) exists;
+  **v1.1.0** is the first release of the JavaFX UI (`:app-fx`), built with `./gradlew :app-fx:packageMsi`.
+- **300+ tests pass** (`./gradlew build`).
 
 ## Stack & modules
 Kotlin 2.4 · Compose Multiplatform 1.9.3 (`:app`, retiring) · JavaFX 21 (`:app-fx`) · Gradle 8.14.5 (wrapper) · JDK 17.

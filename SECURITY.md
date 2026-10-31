@@ -27,6 +27,16 @@ The trust-critical surface is the most valuable to scrutinize:
 - **JNLP parsing** — it is untrusted input (XXE / directive injection / argument injection).
 - **Credential handling** — keychain storage; ensuring secrets never reach `connections.json` or logs.
 - **Self-update** — Ed25519 manifest verification and artifact SHA-256 checks.
+- **The admission cache** (`cache/admissions.json`) — a record of jar bytes (by SHA-256) the gate
+  admitted under a trust-policy fingerprint, so a relaunch skips the CMS / PKIX / timestamp work for
+  bytes it verified before. The digest the server publishes is still checked on every launch, so a
+  changed jar is never admitted from the cache; a change of posture, pins, anchors or publisher
+  decisions invalidates every entry. The cache lives in the user's own profile: someone who can write
+  there can already replace the launcher, so it is not a trust boundary — but a way to admit a jar
+  through it without that access would be in scope.
+- **Local state the launcher runs from** — the tunnel command (never imported from a file), the
+  single-instance lock and its loopback hand-over (`instance.lock`: a per-run secret, loopback only,
+  the only action is "show your window").
 
 ## Supported versions
 

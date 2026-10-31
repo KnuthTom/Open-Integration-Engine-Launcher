@@ -101,9 +101,10 @@ object Controls {
             val row = HBox(8.0).apply {
                 alignment = Pos.CENTER_LEFT
                 padding = Insets(0.0, 0.0, 0.0, indent * 14.0)
+                // Literal colours: a menu lives in a popup window, where an inline looked-up colour does not resolve (see Theme.literal).
                 val lead: Node = when {
-                    checked != null -> Icons.glyph("check", 14.0, "-text").apply { isVisible = checked }
-                    glyph != null -> Icons.glyph(glyph, 14.0, if (danger) "-danger" else "-text")
+                    checked != null -> Icons.glyph("check", 14.0, Theme.literal("-text")).apply { isVisible = checked }
+                    glyph != null -> Icons.glyph(glyph, 14.0, Theme.literal(if (danger) "-danger" else "-text"))
                     else -> Region().apply { minWidth = 14.0; prefWidth = 14.0 }
                 }
                 children += lead

@@ -376,7 +376,7 @@ class TunnelManager(
 
     companion object {
         const val DEFAULT_TIMEOUT_MS = 60_000L
-        private const val POLL_MS = 250L
+        private const val POLL_MS = 100L // the forward is usable the moment its port answers; a tighter poll shaves the wait
         private const val CONNECT_PROBE_MS = 400
         /** Unexpected exits reopened per [REOPEN_WINDOW_MS] before the launcher gives the forward up. */
         internal const val REOPEN_LIMIT = 3

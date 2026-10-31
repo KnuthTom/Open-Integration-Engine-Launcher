@@ -31,7 +31,7 @@ expected on other machines. That is acceptable for internal testing only.
 ```powershell
 # 1) build the installer(s) with WiX on PATH
 $env:PATH = "C:\path\to\wix314;$env:PATH"
-gradle :app:packageMsi          # and/or :app:packageExe / :app:packageDistributionForCurrentOS
+gradle :app-fx:packageMsi       # and/or :app-fx:packageExe / :app-fx:packageDistributionForCurrentOS
 
 # 2) Authenticode-sign + RFC-3161 timestamp every produced .exe/.msi
 gradle :app:signWindows `

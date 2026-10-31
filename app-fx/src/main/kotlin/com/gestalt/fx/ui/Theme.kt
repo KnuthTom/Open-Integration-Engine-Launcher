@@ -56,5 +56,23 @@ object Theme {
     fun apply(scene: Scene, dark: Boolean) {
         val sheets = scene.stylesheets
         sheets.setAll(base, fontsCss, if (dark) this.dark else light)
+        isDark = dark
     }
+
+    /** The register the last [apply] installed. */
+    @Volatile
+    var isDark: Boolean = false
+        private set
+
+    /**
+     * A colour token as a literal for the current register, for nodes that live in a popup (menus,
+     * tooltips): an inline `-fx-stroke: -text` on a node inside a popup window cannot resolve the
+     * looked-up colours the main scene's `.root` defines, and JavaFX warns "Could not resolve '-text'"
+     * and draws nothing. Popups are rebuilt each time they open, so a literal follows the theme.
+     * Unknown tokens are returned as they are. Keep in step with light.css / dark.css.
+     */
+    fun literal(token: String): String = (if (isDark) DARK else LIGHT)[token] ?: token
+
+    private val LIGHT = mapOf("-text" to "#1C1D20", "-text-muted" to "#5F6168", "-accent" to "#2E3035", "-ok" to "#237A47", "-danger" to "#B23B2E")
+    private val DARK = mapOf("-text" to "#F2F3F5", "-text-muted" to "#A6A7AD", "-accent" to "#E9EAEC", "-ok" to "#6EE7A0", "-danger" to "#EF6B6B")
 }

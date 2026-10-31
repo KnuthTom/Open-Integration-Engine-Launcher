@@ -134,6 +134,13 @@ The tunnel command is local config like the Java home: it is exported with the c
 imported** from a file (a file from elsewhere must not be able to plant a command the launcher would
 run; `audit.log` records `import.tunnelCommand … NOT_IMPORTED`). Set it by hand on each machine.
 
+## When something goes wrong in the window
+
+An exception that escapes on the UI thread is written to `audit.log` as `launcher.error` (the class,
+the message and the top three frames) and shown as a toast; the window stays up. A launcher that cannot
+build its model at all (an unreadable or locked profile) shows a plain error dialog (`launcher.fatal`)
+and exits rather than hanging without a window.
+
 ## Sign-in (auto-login)
 
 The detail pane's **Sign-in** card is where the Administrator's credentials are set. The **Username** is

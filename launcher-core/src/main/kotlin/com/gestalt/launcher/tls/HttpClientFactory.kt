@@ -118,6 +118,10 @@ object HttpClientFactory {
 
     private val MODERN_TLS = arrayOf("TLSv1.3", "TLSv1.2")
 
+    /** Pool bounds: above the fetch parallelism (at most 6), so no fetch waits for a connection. */
+    private const val MAX_PER_ROUTE = 8
+    private const val MAX_TOTAL = 16
+
     /**
      * Bounded waits so a server that accepts the connection and then stalls can't hang a launch (or the
      * diagnostic) forever: the HttpClient defaults are a 3-minute connect timeout and NO socket timeout.
@@ -153,8 +157,9 @@ object HttpClientFactory {
             // IPv4-first for localhost (with fall-back across all resolved addresses); identical to the
             // platform default for every non-loopback host. Applies to the JNLP, digest and jar fetches.
             .setDnsResolver(LocalhostResolver.dnsResolver)
-            // One connection at a time through a port-forward (see singleConnection); otherwise the defaults.
-            .apply { if (singleConnection) setMaxConnPerRoute(1).setMaxConnTotal(1) }
+            // One connection at a time through a port-forward (see singleConnection); otherwise room for every
+            // parallel fetch at once (the library's default of five per route would park the sixth).
+            .apply { if (singleConnection) setMaxConnPerRoute(1).setMaxConnTotal(1) else setMaxConnPerRoute(MAX_PER_ROUTE).setMaxConnTotal(MAX_TOTAL) }
             .setDefaultConnectionConfig(
                 ConnectionConfig.custom()
                     .setConnectTimeout(CONNECT_TIMEOUT)

@@ -55,8 +55,7 @@ Compose/jpackage runtime (JDK 17).
 ./gradlew :app-fx:createDistributable
 
 # Building blocks (run automatically by the above; useful in isolation):
-./gradlew :app:stageClientRuntimes   # download + checksum-verify + stage Zulu FX 8 & 17
-./gradlew :app:generateAppIcons      # render .ico/.icns/.png from the GD mark
+./gradlew :app-fx:stageClientRuntimes   # download + checksum-verify + stage Zulu FX 8 & 17
 ```
 
 Outputs land under `app/build/`:
@@ -70,8 +69,8 @@ Outputs land under `app/build/`:
 ## What's in the package
 
 ```
-GestaltCloudConnect/            <- app-image root (the .exe sits here on Windows)
-├─ GestaltCloudConnect.exe      <- the launcher
+OpenIntegrationEngineLauncher/            <- app-image root (the .exe sits here on Windows)
+├─ OpenIntegrationEngineLauncher.exe      <- the launcher
 ├─ runtime/                     <- the launcher's own JDK-17 runtime (jlink'd by jpackage)
 ├─ app/                         <- the launcher jars + resources
 │  └─ resources/                <- appResources, exposed at runtime as compose.application.resources.dir
@@ -81,9 +80,15 @@ GestaltCloudConnect/            <- app-image root (the .exe sits here on Windows
 └─ (portable zip only) gestalt-portable.txt   <- the portable sentinel
 ```
 
+Nothing from a user profile is in there — not the packager's own: connections, credentials, trust
+decisions, prefs, logs and the admission cache live under the per-user data dir
+(`%LOCALAPPDATA%\OpenIntegrationEngineLauncher`, `~/Library/…`, XDG) or `./data` beside a portable
+copy, never under the project, and `verifyNoProfileData` checks the finished image anyway (see the
+acceptance checklist).
+
 ### Bundled runtimes (the two client JREs)
 
-`./gradlew :app:stageClientRuntimes` is the **runtime-acquisition build step**:
+`./gradlew :app-fx:stageClientRuntimes` is the **runtime-acquisition build step**:
 
 1. Asks the Azul metadata API for the latest GA **Zulu FX JRE 8** and **JRE 17** for the host OS/arch
    (`javafx_bundled=true`; the detail record carries the official checksum).
@@ -109,21 +114,10 @@ image, set `-Dgestalt.java.8.home` / `-Dgestalt.java.17.home` (or `GESTALT_JAVA_
 
 ### App icon
 
-`./gradlew :app:generateAppIcons` renders the GD mark into `app/build/icons/`:
-
-- `gestalt-cloud-connect-icon.ico` — multi-size Windows icon (16…256).
-- `gestalt-cloud-connect-icon.png` — 512px, the Linux icon (plus a full PNG set under `png/`).
-- `gestalt-cloud-connect-icon.icns` — macOS icon (for the macOS build host).
-
-The **design source** is `design-system/src/main/resources/branding/gestalt-cloud-connect-icon.svg`
-(the brand's H&E-staining motif). The raster set is generated from matching geometry in
-`buildSrc/.../gestalt/AppIconGenerator.kt` with **no external rasterizer** (ImageMagick / Inkscape are
-not assumed present) — keep the SVG and the generator in sync. The in-app header keeps the **wordmark**
-logo from `Branding`; only the OS app icon (Start menu / taskbar / Dock / installer) uses this mark.
-
-> macOS note: the `.icns` is generated cross-platform here for convenience. If you prefer the native
-> path, regenerate it on the macOS build host from the SVG/1024px PNG with `iconutil`/`png2icns` and
-> point `macOS.iconFile` at it.
+The OS icon (Start menu / taskbar / Dock / installer) is the ring-and-dot mark checked in under
+`app-fx/packaging/` — `app.ico` (multi-size Windows icon, 16…256) and `app.icns` (macOS) — with the PNG
+set the window uses at `app-fx/src/main/resources/com/gestalt/fx/icon/`. Nothing is rendered at build
+time; to change the icon, replace those files (patch 19 describes how they were produced).
 
 ---
 
@@ -161,7 +155,7 @@ tests). The current mode is shown in **Settings → About** ("Portable" vs "Inst
 
 ## Versioning / metadata
 
-The version is single-sourced from **`gestaltVersion`** in `gradle.properties` (currently `1.0.0`) and
+The version is single-sourced from **`gestaltVersion`** in `gradle.properties` (currently `1.1.0`) and
 flows into the root project version, the jpackage `packageVersion`, the CycloneDX SBOM, and a generated
 `build-info.properties` resource. **Settings → About** shows the app name, version (+ git commit), the
 vendor (**Gestalt Diagnostics**), the build time, the bundled runtimes, and the layout mode.
@@ -173,6 +167,7 @@ vendor (**Gestalt Diagnostics**), the build time, the bundled runtimes, and the 
 | Acceptance | How |
 |------------|-----|
 | Package task produces a Windows installer **and** a portable app-image | `./gradlew :app-fx:packageAll` (installer needs WiX) |
+| **No profile data in any package** — connections, credentials, trust decisions, prefs, logs, the admission cache | `verifyNoProfileData` runs before every `package*` task: it walks the app-image and the staged resources, including every entry of every jar, and fails the build on any such file (or a `data/` folder beside the image) |
 | Installs without admin; GD icon in Start menu / taskbar / installer | per-user MSI (`perUserInstall = true`) + `windows.iconFile` |
 | Both client runtimes present | `runtimes/jre8` + `runtimes/jre17` staged by `stageClientRuntimes` |
 | `Bundled` Java 17 launches the Administrator; `Bundled` 8 resolves to the bundled JRE | `ChildJvmCommandBuilder` → `compose.application.resources.dir/runtimes/jre<N>` |

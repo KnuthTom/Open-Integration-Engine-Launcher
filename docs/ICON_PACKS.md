@@ -30,7 +30,7 @@ never part of the shipped binary and are the user's own to license.
 A downstream or custom build can bundle an extra set (e.g. an Icons8 pack) as additional library entries:
 
 ```
-./gradlew :app:packageAll -PgestaltIconPackDir=/path/to/pack     # or GESTALT_ICON_PACK_DIR
+./gradlew :app-fx:packageAll -PgestaltIconPackDir=/path/to/pack     # or GESTALT_ICON_PACK_DIR
 ```
 
 The pack directory must contain:

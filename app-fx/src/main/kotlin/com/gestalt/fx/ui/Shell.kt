@@ -454,6 +454,11 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         stage.requestFocus()
     }
 
+    /** Surface an error that escaped on the FX thread (see LauncherApp.onUncaught): a toast, nothing modal. */
+    fun reportError(t: Throwable) {
+        toast.show("Something went wrong", t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName, ToastHost.Kind.Error, 6000)
+    }
+
     private fun exitNow() {
         com.gestalt.fx.SingleInstance.release() // first: a launcher started from here on must start its own window
         shutdown()

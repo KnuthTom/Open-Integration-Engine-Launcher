@@ -263,6 +263,55 @@ val packagePortableZip by tasks.registering(Zip::class) {
     isPreserveFileTimestamps = false
 }
 
+// --- Guard: nothing from a user profile ever rides in a package ---------------------------------
+// Connections, credentials, trust decisions, prefs, logs and the admission cache live in the per-user
+// data dir (or ./data beside a portable copy) and are never build inputs. This checks the finished
+// app-image and the staged resources anyway — every file, and every entry of every jar — and fails
+// the package if any such file is present (e.g. a ./data folder left beside an app-image that was run
+// in place). Every package* task depends on it.
+val profileFileNames = setOf(
+    "connections.json", "connections.json.bak", "ui-prefs.properties", "trusted-certs.json", "trusted-signers.json",
+    "admissions.json", "audit.log", "instance.lock", "ui-fonts.css",
+)
+val profileFileSuffixes = listOf(".dpapi", ".corrupt", "-tunnel.log")
+val profileDirName = "data" // the portable layout's state folder, should one be left beside an app-image that was run in place
+val verifyNoProfileData by tasks.registering {
+    group = "verification"
+    description = "Fail if the app-image or the staged resources carry anything from a user profile (connections, credentials, trust, prefs, logs)."
+    dependsOn("createDistributable", stageClientRuntimes)
+    val roots = listOf(appImageDir, appResourcesDir)
+    doLast {
+        val offenders = ArrayList<String>()
+        fun check(name: String, where: String) {
+            if (name in profileFileNames || profileFileSuffixes.any { name.endsWith(it) }) offenders += where
+        }
+        for (root in roots) {
+            val dir = root.get().asFile
+            if (!dir.isDirectory) continue
+            dir.walkTopDown().forEach { f ->
+                if (f.isDirectory) {
+                    if (f.name == profileDirName && f.parentFile == dir && f.listFiles()?.isNotEmpty() == true) offenders += f.path
+                    return@forEach
+                }
+                check(f.name, f.path)
+                if (f.name.endsWith(".jar")) {
+                    runCatching {
+                        java.util.zip.ZipFile(f).use { zip ->
+                            for (e in zip.entries()) check(e.name.substringAfterLast('/'), "${f.path}!${e.name}")
+                        }
+                    }
+                }
+            }
+        }
+        if (offenders.isNotEmpty()) {
+            throw GradleException("Profile data must never be packaged — remove these before packaging:\n  " + offenders.joinToString("\n  "))
+        }
+        println("verifyNoProfileData: no profile data in the app-image or the staged resources.")
+    }
+}
+tasks.matching { it.name.startsWith("package") && it.name != "packageAll" }
+    .configureEach { dependsOn(verifyNoProfileData) }
+
 tasks.register("packageAll") {
     group = "distribution"
     description = "Build the current-OS installer(s) AND the portable app-image zip."
