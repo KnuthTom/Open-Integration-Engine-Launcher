@@ -79,7 +79,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
     // connection card
     private val addressField = TextField().apply { styleClass += "mono-field"; promptText = "https://host:8443" }
-    private val tunnelField = TextField().apply { styleClass += "mono-field"; promptText = "None — or a batch file / command that opens the address's port" }
+    private val tunnelSwitch = Controls.CheckRow("Open a port-forward before launching") { on -> update { it.copy(tunnelEnabled = on) } }
+    private val tunnelField = TextField().apply { styleClass += "mono-field"; promptText = "Batch file or command that opens the address's port" }
     private val browseTunnel = Controls.button("Browse…") { browseFileInto(tunnelField) { path -> update { it.copy(tunnelCommand = path) } } }
     private val tunnelNote = Label("Runs before each launch when the port isn't already listening (e.g. a batch file that starts an SSM port-forward); closed when the Administrator exits.").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
     private val folderButton: MenuButton = Controls.menuButton("Top level", Icons.glyph("folder", 14.0)) { folderMenuItems() }
@@ -167,7 +168,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
         // --- cards ---
         val tunnelRow = VBox(
-            4.0,
+            6.0,
+            tunnelSwitch,
             HBox(8.0, tunnelField, browseTunnel).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(tunnelField, Priority.ALWAYS); tunnelField.minWidth = 0.0 },
             tunnelNote,
         ).apply { minWidth = 0.0 }
@@ -324,6 +326,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             if (addressField.text != d.serverUrl) addressField.text = d.serverUrl
             val tunnel = d.tunnelCommand.orEmpty()
             if (tunnelField.text.orEmpty().trim() != tunnel) tunnelField.text = tunnel
+            val forward = d.tunnelEnabled ?: !d.tunnelCommand.isNullOrBlank() // unset (older files): on when there is a command
+            tunnelSwitch.on = forward
+            tunnelField.isDisable = !forward; browseTunnel.isDisable = !forward
             val user = d.username?.trim().orEmpty()
             if (userField.text.orEmpty().trim() != user) userField.text = user
             if (d.id != renderedId) { passwordField.clear(); renderedId = d.id } // a typed, unsaved password never follows a selection change

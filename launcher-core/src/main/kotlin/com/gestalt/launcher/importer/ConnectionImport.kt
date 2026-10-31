@@ -109,7 +109,7 @@ object ConnectionImport {
         // A bare Gestalt connection object carries serverUrl; a legacy entry carries address.
         return if (root["serverUrl"] != null) {
             runCatching { lenient.decodeFromString<Connection>(trimmed) }.getOrNull()
-                ?.copy(username = null, tunnelCommand = null) // never adopt a pasted credential association, nor a command to run
+                ?.copy(username = null, tunnelCommand = null, tunnelEnabled = null) // never adopt a pasted credential association, nor a command to run
         } else {
             runCatching { parseLegacy("[$trimmed]", idGenerator).firstOrNull() }.getOrNull()
         }
@@ -129,7 +129,7 @@ object ConnectionImport {
         val withTunnel = file.connections.count { it.hasTunnel }
         if (withTunnel > 0) AuditLog.event("import.tunnelCommand", "dropped" to withTunnel, "result" to "NOT_IMPORTED")
         return Parsed(
-            file.connections.map { it.copy(username = null, tunnelCommand = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl)) },
+            file.connections.map { it.copy(username = null, tunnelCommand = null, tunnelEnabled = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl)) },
             file.folders,
         )
     }

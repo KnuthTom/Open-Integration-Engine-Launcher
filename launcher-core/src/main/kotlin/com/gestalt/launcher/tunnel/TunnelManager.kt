@@ -103,7 +103,7 @@ class TunnelManager(
 
     /** The tunnel command and the local end of the forward, or null when the connection has no tunnel. */
     private fun endpointOf(connection: Connection): Endpoint? {
-        val command = connection.tunnelCommand?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val command = connection.activeTunnelCommand ?: return null
         val uri = runCatching { connection.baseUri() }.getOrNull()
             ?: throw TunnelFailedException("the tunnel needs a usable address: ${connection.serverUrl}")
         val host = uri.host?.takeIf { it.isNotBlank() }

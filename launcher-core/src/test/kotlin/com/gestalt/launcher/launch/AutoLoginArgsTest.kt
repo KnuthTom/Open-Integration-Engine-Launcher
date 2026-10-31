@@ -63,13 +63,21 @@ class AutoLoginArgsTest {
     }
 
     @Test
-    @DisplayName("no credentials, a blank username, or an empty password: the command is the plan's, untouched")
+    @DisplayName("no credentials or a blank username: the command is the plan's, untouched")
     fun absentOrEmptyCredentialsChangeNothing(@TempDir dir: Path) {
         val p = plan(listOf("https://mirth.example.internal:8443", "4.4.2"))
         val c = core(dir)
         assertSame(p.command, c.commandWithLogin(p, null))
         assertSame(p.command, c.commandWithLogin(p, AutoLogin("  ", "pw".toCharArray())))
-        assertSame(p.command, c.commandWithLogin(p, AutoLogin("admin", CharArray(0))))
+    }
+
+    @Test
+    @DisplayName("a username without a password is passed on its own as argument 3 — the login screen opens with it filled in")
+    fun usernameAlonePrefillsTheLogin(@TempDir dir: Path) {
+        val p = plan(listOf("https://mirth.example.internal:8443", "4.4.2"))
+        val cmd = core(dir).commandWithLogin(p, AutoLogin("admin", CharArray(0)))
+        assertEquals(p.command + "admin", cmd)
+        assertSame(p.command, core(dir).commandWithLogin(plan(listOf("https://mirth.example.internal:8443")), AutoLogin("admin", CharArray(0)))) { "still only in the stock shape" }
     }
 
     @Test

@@ -75,11 +75,20 @@ data class Connection(
      * like [javaHome]; never imported from a connection file. Null: no tunnel.
      */
     val tunnelCommand: String? = null,
+    /**
+     * The port-forward switch: true runs [tunnelCommand] before each launch, false keeps the command but
+     * does not run it. Null — the value of files written before the switch existed — means "as the
+     * command dictates": on when there is one.
+     */
+    val tunnelEnabled: Boolean? = null,
 ) {
     val isPinned: Boolean get() = !pinnedCertSha256.isNullOrBlank()
 
-    /** True when this connection opens a port-forward before launching. */
-    val hasTunnel: Boolean get() = !tunnelCommand.isNullOrBlank()
+    /** True when this connection opens a port-forward before launching: the switch is on (or unset) and there is a command. */
+    val hasTunnel: Boolean get() = (tunnelEnabled ?: true) && !tunnelCommand.isNullOrBlank()
+
+    /** The command to run before launching, or null when the port-forward is off or there is none. */
+    val activeTunnelCommand: String? get() = tunnelCommand?.trim()?.takeIf { it.isNotEmpty() && hasTunnel }
 
     /** `host:port` for trust-store bookkeeping (port defaults to 443 for https / 80 for http); null if unparseable. */
     val hostPort: String? get() = runCatching {

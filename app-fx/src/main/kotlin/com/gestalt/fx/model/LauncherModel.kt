@@ -193,13 +193,16 @@ class LauncherModel(
 
     fun cancelLaunch(id: String) = launchController.cancel(id)
 
-    /** The saved credential for [conn] as the Administrator's auto-login, read on the launch thread's behalf here (cheap: one keychain read). */
+    /**
+     * The saved credential for [conn] as the Administrator's auto-login, read on the launch thread's behalf
+     * here (cheap: one keychain read). A username without a saved password still goes: the login screen
+     * opens with it filled in and asks only for the password.
+     */
     internal fun autoLoginFor(conn: Connection): AutoLogin? {
         val user = conn.username?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val password = runCatching { credentials.retrieve(conn.id, user) }
             .onFailure { AuditLog.event("credential.error", "connection" to conn.id, "action" to "retrieve", "error" to (it.message ?: it.javaClass.simpleName)) }
-            .getOrNull()
-            ?.takeIf { it.isNotEmpty() } ?: return null
+            .getOrNull() ?: CharArray(0)
         return AutoLogin(user, password)
     }
 

@@ -89,7 +89,8 @@ runs headlessly in tests without real networking or spawning a process.
   within a second, and its Java children (seen while it lived, or found by the launch's command-line
   fingerprint) are adopted and awaited. Running, close-after-launch and the tunnel lease all hang off it.
 - **Tunnels** — `TunnelManager` opens a connection's port-forward before the launch (its *tunnel
-  command*, run through the platform shell with the user's own environment), waits for the address's
+  command*, when the connection's switch is on — `Connection.activeTunnelCommand` — run through the
+  platform shell with the user's own environment), waits for the address's
   port, and holds the process per connection with a lease count: shared by concurrent launches of the
   same connection, torn down — the whole process tree — when the last Administrator exits or the
   launcher closes. A port that is already listening is used as-is and never torn down. The command is

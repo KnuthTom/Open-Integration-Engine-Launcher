@@ -85,11 +85,14 @@ Client output:
 
 ## Port-forwards (tunnels)
 
-A connection's **Tunnel** field names a command the launcher runs *before* launching, with the
-user's own tools and environment — typically a batch file that starts an AWS SSM port-forwarding
-session (`aws ssm start-session … --document-name AWS-StartPortForwardingSession …`), or an
-`ssh -N -L …`. The address's **port is the local end of the forward** (`https://localhost:31065`), so
-it must be explicit; it is what the Administrator shows on its login screen.
+A connection's **Tunnel** row has a switch, *Open a port-forward before launching*, and a command the
+launcher runs *before* launching when the switch is on, with the user's own tools and environment —
+typically a batch file that starts an AWS SSM port-forwarding session (`aws ssm start-session …
+--document-name AWS-StartPortForwardingSession …`), or an `ssh -N -L …`. Switching it off keeps the
+command but does not run it (`tunnelEnabled` in `connections.json`; files from before the switch
+existed count as on when they have a command). The address's **port is the local end of the forward**
+(`https://localhost:31065`), so it must be explicit; it is what the Administrator shows on its login
+screen.
 
 On Launch: if the port is already listening (a tunnel opened by hand, or by a previous launch whose
 Administrator is still running) the command is not run and nothing is closed afterwards. Otherwise the
@@ -138,9 +141,10 @@ a field of the connection (saved with it, in `connections.json`). The **Password
 *Save password* hands it straight to the OS credential store — Windows DPAPI (encrypted for the Windows
 account), the macOS Keychain, or libsecret — keyed by connection and username; it never reaches
 `connections.json`, the exports, or any log, and saving it applies at once (it also saves the username).
-With both in place the launcher fills them into the Administrator's login screen
-(`audit.log`: `credential.access action=retrieve`, `child.autologin result=SUPPLIED`); without a
-saved password the Administrator asks. Renaming the username on Save moves the saved password with it;
+With both in place the launcher fills them into the Administrator's login screen and it signs in
+(`audit.log`: `credential.access action=retrieve`, `child.autologin result=SUPPLIED`); with a username
+alone the login screen opens with the username filled in and asks for the password
+(`child.autologin result=USERNAME_ONLY`). Renaming the username on Save moves the saved password with it;
 *Remove* deletes it; deleting the connection deletes it; *Save as…* and Duplicate never copy it.
 
 ## Testing a connection (diagnostic)

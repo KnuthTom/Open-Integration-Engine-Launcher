@@ -62,8 +62,8 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
     private val countLabel = Label().apply { styleClass += "sidebar-count" }
     private val filterField = TextField().apply { promptText = "Filter connections" }
     private val emptyLabel = Label().apply { styleClass += "tree-empty"; isWrapText = true; isVisible = false; isManaged = false }
-    private val toggleAllButton = Controls.iconButton("chevrons-down-up", "Collapse all folders") { model.setAllExpanded(!model.anyFolderExpanded) }
     private val sortButton = Controls.iconButton("arrow-up-down", "Sort") {}
+    private val moreButton = Controls.iconButton("ellipsis", "More") {}
 
     /** The row the keyboard cursor is on, kept across row rebuilds. */
     private var focusKey: String? = null
@@ -76,21 +76,21 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         styleClass += "sidebar"
         minWidth = 240.0
 
-        // --- header: title, count, toolbar ---
+        // --- header: title, count, toolbar (the two things done often, sort, and a "more" menu for the rest —
+        // six icons did not fit beside the title at the sidebar's narrower widths) ---
         val header = HBox().apply {
             styleClass += "sidebar-header"
             alignment = Pos.CENTER_LEFT
             children += Label("Connections").apply { styleClass += "sidebar-title"; minWidth = 0.0 }
             children += countLabel
             children += Controls.spacer()
-            children += Controls.iconButton("import", "Import connections") { host.importConnections() }
-            children += Controls.iconButton("share", "Export connections") { host.exportConnections() }
             children += Controls.iconButton("plus", "New connection") { host.newConnection(focusedFolderId()) }
             children += Controls.iconButton("folder-plus", "New folder") { host.newFolder(null) }
             children += sortButton
-            children += toggleAllButton
+            children += moreButton
         }
         sortButton.setOnAction { showSortMenu() }
+        moreButton.setOnAction { showMoreMenu() }
 
         // --- filter ---
         val filterWrap = StackPane().apply {
@@ -131,7 +131,6 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         }
         model.rows.addListener(ListChangeListener { restoreCursor(); updateEmptyState() })
         model.connections.addListener(ListChangeListener { countLabel.text = model.connections.size.toString() })
-        model.folders.addListener(ListChangeListener { refreshToggleAll() })
         model.launches.addListener(javafx.collections.MapChangeListener { list.refresh() })
         model.activeId.addListener { _, _, _ -> list.refresh() }
         list.addEventFilter(KeyEvent.KEY_PRESSED) { e -> onKey(e) }
@@ -156,7 +155,6 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
 
         children.addAll(header, filterWrap, emptyLabel, list)
         countLabel.text = model.connections.size.toString()
-        refreshToggleAll()
         updateEmptyState()
     }
 
@@ -221,12 +219,6 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         emptyLabel.text = if (q.isNotEmpty()) "No connections match “$q”." else "No connections yet. Add one with + or import a file."
         emptyLabel.isVisible = empty
         emptyLabel.isManaged = empty
-    }
-
-    private fun refreshToggleAll() {
-        val anyOpen = model.anyFolderExpanded
-        Controls.setGlyph(toggleAllButton, if (anyOpen) "chevrons-down-up" else "chevrons-up-down")
-        toggleAllButton.tooltip = Tooltip(if (anyOpen) "Collapse all folders" else "Expand all folders")
     }
 
     // --- keyboard ---------------------------------------------------------------------------------
@@ -300,6 +292,21 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         menu.show(sortButton, javafx.geometry.Side.BOTTOM, 0.0, 4.0)
     }
 
+    /** Expand / collapse all, and import / export — the header's "more" menu; the same entries sit on the list's background menu. */
+    private fun showMoreMenu() {
+        val menu = ContextMenu()
+        menu.items.setAll(libraryItems())
+        menu.show(moreButton, javafx.geometry.Side.BOTTOM, 0.0, 4.0)
+    }
+
+    private fun libraryItems(): List<MenuItem> = listOf(
+        Controls.menuItem("Expand all folders", "chevrons-up-down") { model.setAllExpanded(true) },
+        Controls.menuItem("Collapse all folders", "chevrons-down-up") { model.setAllExpanded(false) },
+        Controls.menuSeparator(),
+        Controls.menuItem("Import connections…", "import") { host.importConnections() },
+        Controls.menuItem("Export connections…", "share") { host.exportConnections() },
+    )
+
     private fun showMenuFor(row: TreeRow?, x: Double, y: Double) {
         val menu = ContextMenu()
         val items: List<MenuItem> = when (row) {
@@ -334,9 +341,7 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
                 Controls.menuItem("New connection", "plus") { host.newConnection(null) },
                 Controls.menuItem("New folder", "folder-plus") { host.newFolder(null) },
                 Controls.menuSeparator(),
-                Controls.menuItem("Expand all", "chevrons-up-down") { model.setAllExpanded(true) },
-                Controls.menuItem("Collapse all", "chevrons-down-up") { model.setAllExpanded(false) },
-            )
+            ) + libraryItems()
         }
         menu.items.setAll(items)
         menu.show(list, x, y)

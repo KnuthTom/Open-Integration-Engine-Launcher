@@ -333,7 +333,9 @@ open class LauncherCore(
 
     /**
      * The command to spawn: the plan's, plus — when [autoLogin] is supplied — the username and password
-     * as the Administrator's 3rd and 4th program arguments. The credentials are appended only when the
+     * as the Administrator's 3rd and 4th program arguments. A username alone is passed as the 3rd
+     * argument on its own: the Administrator's login screen then opens with it filled in and asks for
+     * the password; with both present it signs in by itself. The credentials are appended only when the
      * descriptor had the stock two arguments (`[serverUrl, version]`); with any other shape the positions
      * would be wrong, so the launch goes ahead without them and the login screen asks. Either way is
      * audited (the event only — never the values). The plan itself stays free of secrets.
@@ -344,10 +346,14 @@ open class LauncherCore(
      */
     internal fun commandWithLogin(plan: LaunchPlan, autoLogin: AutoLogin?): List<String> {
         if (autoLogin == null) return plan.command
-        if (autoLogin.username.isBlank() || autoLogin.password.isEmpty()) return plan.command
+        if (autoLogin.username.isBlank()) return plan.command
         if (plan.appArgs.size != 2) {
             AuditLog.event("child.autologin", "connection" to plan.connection.id, "result" to "SKIPPED", "reason" to "descriptor has ${plan.appArgs.size} arguments, expected 2")
             return plan.command
+        }
+        if (autoLogin.password.isEmpty()) {
+            AuditLog.event("child.autologin", "connection" to plan.connection.id, "result" to "USERNAME_ONLY")
+            return plan.command + autoLogin.username
         }
         AuditLog.event("child.autologin", "connection" to plan.connection.id, "result" to "SUPPLIED")
         return plan.command + autoLogin.username + String(autoLogin.password)

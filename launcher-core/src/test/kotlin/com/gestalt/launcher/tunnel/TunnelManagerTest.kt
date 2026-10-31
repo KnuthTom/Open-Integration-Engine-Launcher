@@ -89,12 +89,20 @@ class TunnelManagerTest {
     ) = TunnelManager(logDir = dir, starter = starter, probe = probe, sleeper = {}, timeoutMs = timeoutMs, clock = clock)
 
     @Test
-    @DisplayName("no tunnel command: nothing to acquire, nothing started")
+    @DisplayName("no tunnel command, or the port-forward switched off: nothing to acquire, nothing started")
     fun noTunnel(@TempDir dir: Path) {
         val starter = Scripted()
         assertNull(manager(dir, starter, { _, _ -> false }).acquire(connection(command = null)))
         assertNull(manager(dir, starter, { _, _ -> false }).acquire(connection(command = "   ")))
+        val off = connection(command = "forward.bat").copy(tunnelEnabled = false)
+        assertFalse(off.hasTunnel)
+        assertNull(off.activeTunnelCommand) { "the command is kept but not run" }
+        assertNull(manager(dir, starter, { _, _ -> false }).acquire(off))
         assertTrue(starter.started.isEmpty())
+        val legacy = connection(command = "forward.bat")
+        assertNull(legacy.tunnelEnabled)
+        assertTrue(legacy.hasTunnel) { "a file from before the switch existed: on when there is a command" }
+        assertEquals("forward.bat", legacy.activeTunnelCommand)
     }
 
     @Test
