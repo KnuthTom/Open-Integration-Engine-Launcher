@@ -77,7 +77,8 @@ class AutoLoginArgsTest {
         val p = plan(listOf("https://mirth.example.internal:8443", "4.4.2"))
         val cmd = core(dir).commandWithLogin(p, AutoLogin("admin", CharArray(0)))
         assertEquals(p.command + "admin", cmd)
-        assertSame(p.command, core(dir).commandWithLogin(plan(listOf("https://mirth.example.internal:8443")), AutoLogin("admin", CharArray(0)))) { "still only in the stock shape" }
+        val one = plan(listOf("https://mirth.example.internal:8443"))
+        assertSame(one.command, core(dir).commandWithLogin(one, AutoLogin("admin", CharArray(0)))) { "still only in the stock shape" }
     }
 
     @Test

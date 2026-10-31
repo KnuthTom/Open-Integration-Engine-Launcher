@@ -425,7 +425,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
     private fun refreshSaveEnabled() {
         val d = model.draft.get()
-        val heapOk = d?.heapSize.isNullOrEmpty() || HEAP_PATTERN.matches(d?.heapSize.orEmpty())
+        val heap = d?.heapSize
+        val heapOk = heap.isNullOrEmpty() || HEAP_PATTERN.matches(heap)
         saveButton.isDisable = !(model.dirty.get() && heapOk && d != null && d.name.isNotBlank())
     }
 
@@ -435,8 +436,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val inFlight = state?.inFlight == true
         launchButton.isDisable = inFlight
         val text = when {
-            inFlight -> when (state?.phase) { LaunchPhase.Tunneling -> "Opening tunnel…"; LaunchPhase.Verifying -> "Verifying…"; LaunchPhase.Launching -> "Starting…"; else -> "Launching…" }
-            state?.phase == LaunchPhase.Running && state.instances > 1 -> "Launch (${state.instances} running)"
+            state == null -> "Launch"
+            state.inFlight -> when (state.phase) { LaunchPhase.Tunneling -> "Opening tunnel…"; LaunchPhase.Verifying -> "Verifying…"; LaunchPhase.Launching -> "Starting…"; else -> "Launching…" }
+            state.phase == LaunchPhase.Running && state.instances > 1 -> "Launch (${state.instances} running)"
             else -> "Launch"
         }
         launchButton.text = text

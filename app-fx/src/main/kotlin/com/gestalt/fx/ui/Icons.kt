@@ -85,11 +85,19 @@ object Icons {
         return boxed(group, size)
     }
 
-    /** Scale the 24-grid [group] to [size] and pin it in a fixed box so layout never depends on the shape. */
+    /**
+     * Scale the 24-grid [group] to [size] and pin it in a fixed box so layout never depends on the shape.
+     *
+     * The scaled group goes into the box inside a second, plain [Group]: layout places a node by its
+     * layoutBounds, which leave out the node's own transforms, so the box would centre the glyph as if it
+     * were still 24 units wide and draw it (24 − size) / 2 px up and to the left of where it belongs —
+     * every glyph smaller than 24 px sat off-centre, the change-icon pencil most visibly. A Group's
+     * layoutBounds do include its children's transforms, so the outer one is exactly [size] square.
+     */
     private fun boxed(group: Group, size: Double): Node {
         val s = size / 24.0
         group.transforms += Scale(s, s)
-        return StackPane(group).apply {
+        return StackPane(Group(group)).apply {
             minWidth = size; prefWidth = size; maxWidth = size
             minHeight = size; prefHeight = size; maxHeight = size
             isPickOnBounds = false
