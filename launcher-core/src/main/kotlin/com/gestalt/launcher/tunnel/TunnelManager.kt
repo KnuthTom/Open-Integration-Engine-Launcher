@@ -199,10 +199,22 @@ class TunnelManager(
      * id in brackets). Basic mode services one connection at a time, so the launcher fetches one thing at
      * a time through it. False for a multiplexing forward, a hand-started tunnel, or no tunnel.
      */
-    fun isBasicForward(connectionId: String): Boolean {
+    fun isBasicForward(connectionId: String): Boolean = logHasLine(connectionId, BASIC_MODE_LINE)
+
+    /**
+     * True when the forward the launcher runs for [connectionId] accepted the launcher's connection and
+     * then reported that the **server side** refused it — the SSM plugin's `Connection to destination port
+     * failed, check SSM Agent logs.`: the agent on the instance could not reach the forwarded port, so
+     * nothing is listening there (the engine is down, or the forward names the wrong port). The forward
+     * itself is fine; a fetch through it fails with a reset or closed connection, and this is what turns
+     * that into a diagnosis that names the real cause. Must be asked while the forward is still held.
+     */
+    fun destinationRefused(connectionId: String): Boolean = logHasLine(connectionId, DESTINATION_REFUSED_LINE)
+
+    private fun logHasLine(connectionId: String, pattern: Regex): Boolean {
         val log = live[connectionId]?.log ?: return false
         return runCatching {
-            Files.readAllLines(log, Charset.defaultCharset()).any { BASIC_MODE_LINE.matches(it.trim()) }
+            Files.readAllLines(log, Charset.defaultCharset()).any { pattern.matches(it.trim()) }
         }.getOrDefault(false)
     }
 
@@ -383,6 +395,7 @@ class TunnelManager(
         internal const val REOPEN_WINDOW_MS = 10 * 60_000L
         /** The SSM plugin's basic-mode accept line (mux mode prints `[id]`, with brackets). */
         private val BASIC_MODE_LINE = Regex("^Connection accepted for session [^\\[\\]\\s]+\\.$")
+        private val DESTINATION_REFUSED_LINE = Regex("^Connection to destination port failed.*$")
 
         /** The process-wide manager: launches share tunnels per connection, and exit tears them all down. */
         val shared: TunnelManager by lazy {

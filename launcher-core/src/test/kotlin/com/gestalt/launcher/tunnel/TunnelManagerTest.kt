@@ -258,6 +258,23 @@ class TunnelManagerTest {
     }
 
     @Test
+    @DisplayName("the server side refusing the forwarded port is read from the plugin's own output, while the forward is held")
+    fun destinationRefusedDetection(@TempDir dir: Path) {
+        val starter = Scripted()
+        val m = manager(dir, starter, probeAfter(refusals = 1))
+        assertFalse(m.destinationRefused("c1")) { "no tunnel yet" }
+        val lease = m.acquire(connection())!!
+        val log = starter.logs.single()!!
+        Files.writeString(log, Files.readString(log) + "Waiting for connections...\n\nConnection accepted for session [user-abc123]\n")
+        assertFalse(m.destinationRefused("c1")) { "accepted, nothing refused" }
+        Files.writeString(log, Files.readString(log) + "\nConnection to destination port failed, check SSM Agent logs.\n")
+        assertTrue(m.destinationRefused("c1"))
+        assertFalse(m.destinationRefused("other"))
+        lease.close()
+        assertFalse(m.destinationRefused("c1")) { "released: the forward and its log are no longer held" }
+    }
+
+    @Test
     @DisplayName("recheck: a forward the launcher did not open, now dead, is reported — it can't be reopened here")
     fun recheckUnmanagedDeadThrows(@TempDir dir: Path) {
         val starter = Scripted()

@@ -125,7 +125,11 @@ from the plugin's own output: an SSM forward in **basic** (non-multiplexing) mod
 instance's SSM agent is old, services one connection at a time and parks the rest in the listener's
 backlog, so the launcher fetches one thing at a time through such a forward. Right before the
 Administrator is started the launcher **re-checks** the port and reopens a forward of its own that has
-stopped listening; a forward that dies *while* the Administrator uses it (a session timing out, a
+stopped listening. A forward that opens and accepts the launcher's connection but whose session then
+reports `Connection to destination port failed` (the SSM agent on the instance could not reach the
+forwarded port) fails the launch as *"The tunnel is up, but the server didn't answer"* — the engine is
+not running on that server, or the forward's destination port is not the engine's https port — rather
+than as a reset connection; a forward that dies *while* the Administrator uses it (a session timing out, a
 dropped network) is reopened on its own, a bounded number of times, so the client can reconnect
 (`audit.log`: `tunnel.reopen`, `tunnel.exited`). Upgrade the plugin when it prints "An outdated
 SessionManagerPlugin version detected".

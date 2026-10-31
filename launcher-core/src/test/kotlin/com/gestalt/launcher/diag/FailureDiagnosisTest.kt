@@ -10,6 +10,7 @@ import com.gestalt.launcher.launch.LaunchAbortedException
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.JavaHomeConfig
 import com.gestalt.launcher.model.JavaHomeMode
+import com.gestalt.launcher.tunnel.TunnelFailedException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -37,6 +38,24 @@ class FailureDiagnosisTest {
         FixAction.ReviewAndPinCert, FixAction.EditConnection,
         FixAction.ReviewTrustPosture, FixAction.ViewLogs, FixAction.None,
     )
+
+    @Test
+    @DisplayName("tunnel failures: the port never listening, and the server side refusing the forwarded port, are told apart")
+    fun tunnelFailures() {
+        val conn = Connection(id = "t", name = "Forwarded", serverUrl = "https://localhost:31065", tunnelCommand = "forward.bat")
+        val never = FailureDiagnosis.classify(TunnelFailedException("the tunnel command did not open localhost:31065 within 60 s"), conn)
+        assertEquals(FailureKind.TunnelFailed, never.kind)
+        assertEquals("The tunnel didn't open", never.title)
+
+        val refused = FailureDiagnosis.classify(
+            TunnelFailedException("the port-forward opened and accepted the connection, but nothing answered on the server side (the session reported \"Connection to destination port failed\"): …", IOException("Connection reset")),
+            conn,
+        )
+        assertEquals(FailureKind.TunnelFailed, refused.kind)
+        assertEquals("The tunnel is up, but the server didn't answer", refused.title)
+        assertTrue(refused.nextStep.contains("destination port")) { refused.nextStep }
+        assertTrue(refused.actions.contains(FixAction.ViewLogs))
+    }
 
     @Test
     @DisplayName("no FixAction weakens verification and no diagnosis offers a bypass")

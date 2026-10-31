@@ -27,9 +27,11 @@ import com.gestalt.launcher.tls.HttpClientFactory
 import com.gestalt.launcher.tls.ServerCertProbe
 import com.gestalt.launcher.tls.ServerTrustFailure
 import com.gestalt.launcher.tls.TrustedCertStore
+import com.gestalt.launcher.tunnel.TunnelFailedException
 import com.gestalt.launcher.tunnel.TunnelManager
 import com.gestalt.trust.TrustMode
 import com.gestalt.trust.TrustStore
+import java.io.IOException
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
@@ -323,7 +325,19 @@ open class LauncherCore(
                 onPhase(LaunchPhase.Running)
                 return process
             } catch (t: Throwable) {
+                // A fetch that died through a forward the launcher opened: if the forward's own log says the
+                // server side refused the destination port, that — not "connection reset" — is the failure.
+                // Asked before the lease goes, since releasing the last lease tears the forward down.
+                val refusedBeyondTheForward = lease != null && t is IOException && tunnels.destinationRefused(connection.id)
                 lease?.close()
+                if (refusedBeyondTheForward) {
+                    throw TunnelFailedException(
+                        "the port-forward opened and accepted the connection, but nothing answered on the server side " +
+                            "(the session reported \"Connection to destination port failed\"): the engine is not running there, " +
+                            "or the forward's destination port is not the engine's https port",
+                        t,
+                    )
+                }
                 throw t
             }
         } finally {

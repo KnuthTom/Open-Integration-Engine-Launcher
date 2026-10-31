@@ -16,6 +16,7 @@ import com.gestalt.launcher.tls.CertFingerprint
 import com.gestalt.trust.TrustMode
 import com.gestalt.trust.TrustStore
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
@@ -253,5 +254,63 @@ class PortForwardLaunchTest {
         val conn = Connection(id = "pf", name = "local-appliance", serverUrl = base, connectionMode = ConnectionMode.Standard)
 
         assertThrows(IOException::class.java) { launcher(dir, ca, fetcher, leaf = null).prepareLaunch(conn) }
+    }
+
+    /** A tunnel process that lives until destroyed. */
+    private class FakeTunnelProcess : Process() {
+        private val exited = java.util.concurrent.CountDownLatch(1)
+        override fun getOutputStream(): java.io.OutputStream = java.io.OutputStream.nullOutputStream()
+        override fun getInputStream(): java.io.InputStream = java.io.InputStream.nullInputStream()
+        override fun getErrorStream(): java.io.InputStream = java.io.InputStream.nullInputStream()
+        override fun waitFor(): Int { exited.await(); return 0 }
+        override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean = exited.await(timeout, unit)
+        override fun exitValue(): Int { if (exited.count > 0) throw IllegalThreadStateException("running"); return 0 }
+        override fun destroy() = exited.countDown()
+        override fun isAlive(): Boolean = exited.count > 0
+    }
+
+    /** A launcher whose forward is a fake process that writes [sessionOutput] into its tunnel log, and whose fetches all fail with [failure]. */
+    private fun launcherThroughFakeForward(dir: Path, sessionOutput: String, failure: () -> Exception): Pair<LauncherCore, com.gestalt.launcher.tunnel.TunnelManager> {
+        val starter = com.gestalt.launcher.tunnel.TunnelManager.ProcessStarter { _, _, log ->
+            log?.let { Files.writeString(it, Files.readString(it) + sessionOutput) }
+            FakeTunnelProcess()
+        }
+        var probes = 0
+        val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
+            logDir = dir.resolve("logs"), starter = starter, probe = { _, _ -> ++probes > 1 }, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
+        )
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val core = LauncherCore(
+            trustStore = TrustStore.of(ca.cert), cacheDir = dir.resolve("cache"), tunnels = tunnels,
+            fetcherFactory = { FlakyFetcher(emptyMap(), Int.MAX_VALUE, error = failure) }, sleeper = {},
+        )
+        return core to tunnels
+    }
+
+    @Test
+    @DisplayName("a fetch that dies through a launcher-opened forward whose session reports the server side refused the port fails as THAT, not as a reset connection")
+    fun destinationRefusedThroughTheForward(@TempDir dir: Path) {
+        val conn = Connection(id = "t", name = "Forwarded", serverUrl = "https://localhost:31065", tunnelCommand = "forward.bat")
+        val session = "Port 31065 opened for sessionId user-abc123.\nWaiting for connections...\n\nConnection accepted for session [user-abc123]\n\nConnection to destination port failed, check SSM Agent logs.\n"
+        val (core, tunnels) = launcherThroughFakeForward(dir, session) { IOException("Connection reset") }
+
+        val ex = assertThrows(com.gestalt.launcher.tunnel.TunnelFailedException::class.java) { core.launch(conn) }
+
+        assertTrue(ex.message!!.contains("Connection to destination port failed")) { ex.message }
+        assertTrue(ex.cause is IOException) { "the transport failure rides along as the cause" }
+        assertFalse(tunnels.hasLiveTunnels()) { "the failed launch released its forward" }
+    }
+
+    @Test
+    @DisplayName("the same failure through a forward whose session reported nothing of the kind stays what it was")
+    fun plainFailureThroughTheForward(@TempDir dir: Path) {
+        val conn = Connection(id = "t", name = "Forwarded", serverUrl = "https://localhost:31065", tunnelCommand = "forward.bat")
+        val session = "Port 31065 opened for sessionId user-abc123.\nWaiting for connections...\n\nConnection accepted for session [user-abc123]\n"
+        val (core, tunnels) = launcherThroughFakeForward(dir, session) { IOException("Connection reset") }
+
+        val ex = assertThrows(IOException::class.java) { core.launch(conn) }
+
+        assertEquals("Connection reset", ex.message)
+        assertFalse(tunnels.hasLiveTunnels())
     }
 }

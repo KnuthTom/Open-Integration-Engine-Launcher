@@ -222,7 +222,15 @@ object FailureDiagnosis {
         actions = listOf(FixAction.TrustPublisher, FixAction.ReviewTrustPosture, FixAction.ViewLogs),
     )
 
-    private fun tunnelFailed(text: String) = Diagnosis(
+    private fun tunnelFailed(text: String) = if (text.contains("Connection to destination port failed")) Diagnosis(
+        kind = FailureKind.TunnelFailed,
+        title = "The tunnel is up, but the server didn't answer",
+        explanation = "The port-forward opened and accepted the launcher's connection, but on the server side nothing " +
+            "answered the forwarded port — the session reported \"Connection to destination port failed\".",
+        nextStep = "Check that Mirth / OIE is running on that server, and that the destination port in the tunnel " +
+            "command is the engine's https port (the port in the address is only the local end of the forward).",
+        actions = listOf(FixAction.EditConnection, FixAction.ViewLogs),
+    ) else Diagnosis(
         kind = FailureKind.TunnelFailed,
         title = "The tunnel didn't open",
         explanation = "This connection's tunnel command ran, but the address's port never started listening. " +
