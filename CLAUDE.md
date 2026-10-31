@@ -20,7 +20,8 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
   **optional** pack (`Branding.Gestalt`). Final product name is the maintainer's call — see the
   `TODO(maintainer)` in `Branding.Default`.
 - Release binaries are **UNSIGNED** (community). A **v1.0.1** Windows MSI (the Compose UI) exists;
-  **v1.1.0** is the first release of the JavaFX UI (`:app-fx`), built with `./gradlew :app-fx:packageMsi`.
+  **v1.1.x** are the first releases of the JavaFX UI (`:app-fx`), built with `./gradlew :app-fx:packageMsi`;
+  bump `gestaltVersion` before every MSI — Windows Installer will not upgrade a product over the same version.
 - **300+ tests pass** (`./gradlew build`).
 
 ## Stack & modules
