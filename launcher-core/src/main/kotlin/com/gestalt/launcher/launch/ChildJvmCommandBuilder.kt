@@ -101,9 +101,12 @@ class ChildJvmCommandBuilder(
             cmd += "-Djdk.tls.ephemeralDHKeySize=legacy"
         }
 
-        // Display scale (sun.java2d.uiScale): only a well-formed factor is honoured. Java 8 ignores the
-        // property; on Java 9+ it replaces the DPI-derived scale the JVM would otherwise apply to Swing.
-        connection.uiScale?.trim()?.takeIf { it.matches(UI_SCALE_PATTERN) }?.let { cmd += "-Dsun.java2d.uiScale=$it" }
+        // Display scale (sun.java2d.uiScale): the connection's factor when well-formed, else the default
+        // (75% — the Administrator's windows are laid out for a 100% screen and overflow a high-DPI one at
+        // the system scale). Java 8 ignores the property; on Java 9+ it replaces the DPI-derived scale the
+        // JVM would otherwise apply to Swing.
+        val uiScale = connection.uiScale?.trim()?.takeIf { it.matches(UI_SCALE_PATTERN) } ?: DEFAULT_UI_SCALE
+        cmd += "-Dsun.java2d.uiScale=$uiScale"
 
         extraSystemProperties.forEach { (k, v) -> cmd += "-D$k=$v" }
 
@@ -200,6 +203,8 @@ class ChildJvmCommandBuilder(
         private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
         /** 0.5 … 4, optionally with two decimals: "1", "1.0", "1.25", "1.5", "2". */
         private val UI_SCALE_PATTERN = Regex("^(0\\.[5-9]\\d?|[1-3](\\.\\d{1,2})?|4(\\.0{1,2})?)$")
+        /** The display scale a connection gets when it has none set. */
+        const val DEFAULT_UI_SCALE = "0.75"
         private const val MAX_MODULE_ARGS = 256
 
         /** The only JVM-arg flags the launcher will accept from a (untrusted) server JNLP. */

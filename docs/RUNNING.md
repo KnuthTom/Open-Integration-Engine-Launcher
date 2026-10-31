@@ -151,6 +151,14 @@ the message and the top three frames) and shown as a toast; the window stays up.
 build its model at all (an unreadable or locked profile) shows a plain error dialog (`launcher.fatal`)
 and exits rather than hanging without a window.
 
+## Display scale
+
+The Java runtime card's **Display scale** (125% · 100% · 75% · 50%) is the Administrator's
+`sun.java2d.uiScale`, per connection; **75% is the default** — the Administrator's windows are laid out
+for a 100% screen and overflow a high-DPI one at the system scale, and 75% of a 150% desktop is where
+they fit. 100% is the client's unscaled size. Java 8 ignores the property (Windows scales the whole
+window instead); on Java 17 it replaces the DPI-derived scale.
+
 ## Sign-in (auto-login)
 
 The detail pane's **Sign-in** card is where the Administrator's credentials are set. The **Username** is

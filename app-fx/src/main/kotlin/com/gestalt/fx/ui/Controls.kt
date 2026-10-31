@@ -141,6 +141,7 @@ object Controls {
                     styleClass += "seg-button"
                     if (mono) styleClass += "mono"
                     isFocusTraversable = false
+                    minWidth = Region.USE_PREF_SIZE // a squeezed segment must not shrink its label to "…"
                     setOnAction { onSelect(key) }
                 }
                 buttons += key to b

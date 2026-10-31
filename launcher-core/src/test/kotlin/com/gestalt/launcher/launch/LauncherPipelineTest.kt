@@ -417,15 +417,17 @@ class LauncherPipelineTest {
     }
 
     @Test
-    @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale, anything else is dropped, null leaves the JVM's choice")
+    @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale; null and junk get the default 0.75")
     fun displayScaleIsPerConnection(@TempDir dir: Path) {
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val jarBytes = signedCoreJar(dir, ca, "CN=OIE,O=BrightCodeCompany OÜ,C=EE")
         val launcher = launcher(dir.resolve("cache"), ca, jnlp(), manifestForCore(jarBytes), jarBytes)
 
-        assertFalse(launcher.prepareLaunch(connection()).command.any { it.startsWith("-Dsun.java2d.uiScale") }) { "no scale by default" }
+        assertTrue(launcher.prepareLaunch(connection()).command.contains("-Dsun.java2d.uiScale=0.75")) { "75% by default: the Administrator fits a high-DPI screen" }
         assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "1.0")).command.contains("-Dsun.java2d.uiScale=1.0"))
         assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "1.25")).command.contains("-Dsun.java2d.uiScale=1.25"))
-        assertFalse(launcher.prepareLaunch(connection().copy(uiScale = "9; -javaagent:x")).command.any { it.contains("uiScale") }) { "junk never reaches the command line" }
+        assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "0.5")).command.contains("-Dsun.java2d.uiScale=0.5"))
+        val junk = launcher.prepareLaunch(connection().copy(uiScale = "9; -javaagent:x")).command
+        assertTrue(junk.contains("-Dsun.java2d.uiScale=0.75") && junk.none { it.contains("javaagent") }) { "junk never reaches the command line; the default does" }
     }
 }
