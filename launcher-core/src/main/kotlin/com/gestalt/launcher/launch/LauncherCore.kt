@@ -299,46 +299,70 @@ open class LauncherCore(
      */
     open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}, autoLogin: AutoLogin? = null): Process {
         try {
-            val lease = tunnels.acquire(connection) { onPhase(LaunchPhase.Tunneling) }
-            try {
-                val plan = prepareLaunch(connection, onPhase)
-                checkNotCancelled()
-                // The launcher's own connections just closed; an older SSM plugin can drop the session with
-                // them. Make sure the port still answers before the Administrator is pointed at it.
-                tunnels.recheck(connection, lease) { onPhase(LaunchPhase.Tunneling) }
-                onPhase(LaunchPhase.Launching)
-                val builder = ProcessBuilder(commandWithLogin(plan, autoLogin))
-                val log = ClientLog.open(clientLogDir, plan)
-                if (log != null) {
-                    builder.redirectInput(ProcessBuilder.Redirect.INHERIT)
-                        .redirectErrorStream(true)
-                        .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
-                    AuditLog.event("child.log", "connection" to connection.id, "path" to log.toString())
-                } else {
-                    builder.inheritIO()
-                }
-                // The Administrator relaunches itself when its saved heap preference differs from -Xmx: the
-                // process the launcher started exits within a second and a child JVM is the real client. Track
-                // the tree, so Running, close-after-launch and the port-forward follow the client, not the stub.
-                val process = ProcessTree.track(builder.start(), fingerprint = listOf(plan.mainClass) + plan.appArgs.take(1))
-                if (lease != null) process.onExit().thenRun { runCatching { lease.close() } }
-                onPhase(LaunchPhase.Running)
-                return process
-            } catch (t: Throwable) {
-                // A fetch that died through a forward the launcher opened: if the forward's own log says the
-                // server side refused the destination port, that — not "connection reset" — is the failure.
-                // Asked before the lease goes, since releasing the last lease tears the forward down.
-                val refusedBeyondTheForward = lease != null && t is IOException && tunnels.destinationRefused(connection.id)
-                lease?.close()
-                if (refusedBeyondTheForward) {
+            // The forward's remote port: the one that answered last time (if it was not the command's own),
+            // else as the command says. When the server side refuses it, the engine's usual ports are tried.
+            var remotePort: Int? = tunnels.rememberedRemotePort(connection.id)
+            val refusedPorts = LinkedHashSet<Int>()
+            while (true) {
+                val lease = tunnels.acquire(connection, remotePort) { onPhase(LaunchPhase.Tunneling) }
+                try {
+                    val plan = prepareLaunch(connection, onPhase)
+                    checkNotCancelled()
+                    // The launcher's own connections just closed; an older SSM plugin can drop the session with
+                    // them. Make sure the port still answers before the Administrator is pointed at it.
+                    tunnels.recheck(connection, lease) { onPhase(LaunchPhase.Tunneling) }
+                    onPhase(LaunchPhase.Launching)
+                    val builder = ProcessBuilder(commandWithLogin(plan, autoLogin))
+                    val log = ClientLog.open(clientLogDir, plan)
+                    if (log != null) {
+                        builder.redirectInput(ProcessBuilder.Redirect.INHERIT)
+                            .redirectErrorStream(true)
+                            .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
+                        AuditLog.event("child.log", "connection" to connection.id, "path" to log.toString())
+                    } else {
+                        builder.inheritIO()
+                    }
+                    // The Administrator relaunches itself when its saved heap preference differs from -Xmx: the
+                    // process the launcher started exits within a second and a child JVM is the real client. Track
+                    // the tree, so Running, close-after-launch and the port-forward follow the client, not the stub.
+                    val process = ProcessTree.track(builder.start(), fingerprint = listOf(plan.mainClass) + plan.appArgs.take(1))
+                    if (lease != null) {
+                        process.onExit().thenRun { runCatching { lease.close() } }
+                        // Remember the remote port that answered when it is not the command's own (and drop a
+                        // stale override when the command's own port is what answered).
+                        val answered = lease.remotePort
+                        if (lease.managed && answered != null) tunnels.rememberRemotePort(connection.id, answered.takeIf { it != tunnels.commandRemotePort(connection) })
+                    }
+                    onPhase(LaunchPhase.Running)
+                    return process
+                } catch (t: Throwable) {
+                    // A fetch that died through a forward the launcher opened: if the forward's own log says the
+                    // server side refused the destination port, that — not "connection reset" — is the failure,
+                    // and the engine's usual ports are worth a try. Asked before the lease goes, since releasing
+                    // the last lease tears the forward (and its log) down.
+                    val refusedBeyondTheForward = lease != null && t is IOException && tunnels.destinationRefused(connection.id)
+                    val forwardedTo = lease?.remotePort
+                    lease?.close()
+                    if (!refusedBeyondTheForward) throw t
+                    // Another Administrator still holds this forward: it cannot be re-pointed under them.
+                    val heldByOthers = tunnels.holders(connection.id) > 0
+                    // Progress gate: a port counts once; re-acquiring a shared forward that keeps refusing must not loop.
+                    val newlyRefused = forwardedTo != null && refusedPorts.add(forwardedTo)
+                    val next = tunnels.nextRemotePort(connection, refusedPorts)
+                    if (newlyRefused && next != null && !heldByOthers) {
+                        AuditLog.event("tunnel.retryPort", "connection" to connection.id, "refused" to forwardedTo, "next" to next)
+                        tunnels.awaitPortFree(connection)
+                        remotePort = next
+                        continue
+                    }
+                    val ports = if (refusedPorts.isEmpty()) "the forwarded port" else "port${if (refusedPorts.size > 1) "s" else ""} ${refusedPorts.joinToString(", ")}"
                     throw TunnelFailedException(
-                        "the port-forward opened and accepted the connection, but nothing answered on the server side " +
+                        "the port-forward opened and accepted the connection, but nothing answered on the server side on $ports " +
                             "(the session reported \"Connection to destination port failed\"): the engine is not running there, " +
-                            "or the forward's destination port is not the engine's https port",
+                            "or it listens on a port the launcher did not try",
                         t,
                     )
                 }
-                throw t
             }
         } finally {
             autoLogin?.password?.fill('\u0000')

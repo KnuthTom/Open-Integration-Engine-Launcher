@@ -225,10 +225,12 @@ object FailureDiagnosis {
     private fun tunnelFailed(text: String) = if (text.contains("Connection to destination port failed")) Diagnosis(
         kind = FailureKind.TunnelFailed,
         title = "The tunnel is up, but the server didn't answer",
-        explanation = "The port-forward opened and accepted the launcher's connection, but on the server side nothing " +
-            "answered the forwarded port — the session reported \"Connection to destination port failed\".",
-        nextStep = "Check that Mirth / OIE is running on that server, and that the destination port in the tunnel " +
-            "command is the engine's https port (the port in the address is only the local end of the forward).",
+        explanation = "The port-forward opened and accepted the launcher's connection, but on the server side nothing answered " +
+            (Regex("on (the forwarded port|ports? [0-9, ]*[0-9])").find(text)?.value ?: "on the forwarded port") +
+            " — the session reported \"Connection to destination port failed\".",
+        nextStep = "Check that Mirth / OIE is running on that server. When the command's own port is refused the launcher " +
+            "also tries the engine's usual ports (8443, 8000); if the engine listens elsewhere, put that port in the tunnel " +
+            "command (the port in the address is only the local end of the forward).",
         actions = listOf(FixAction.EditConnection, FixAction.ViewLogs),
     ) else Diagnosis(
         kind = FailureKind.TunnelFailed,

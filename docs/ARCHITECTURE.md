@@ -99,6 +99,10 @@ runs headlessly in tests without real networking or spawning a process.
   Administrator exits; `SingleInstance` (a lock on `instance.lock` far past EOF plus a loopback socket
   and a per-run secret) makes a launcher started meanwhile re-show that window rather than start a
   second one — and start normally if the first cannot be reached.
+  **Remote-port fallback**: when the forward's session reports the server side refused the destination
+  port, `launch()` re-acquires the forward re-pointed at `RemotePort.FALLBACKS` (8443, 8000) in turn —
+  a `portNumber=<n>` in the command or its batch file, the latter run as a cache copy from the
+  original's folder — and `TunnelManager` remembers the port that answered per connection.
 - **Loopback address family** — `localhost` is two addresses and a port-forward listens on one of them.
   The launcher's own fetches fall back across both and record which answered
   (`ArtifactFetcher.lastRemoteAddress`); the child JVM is then pinned to that family

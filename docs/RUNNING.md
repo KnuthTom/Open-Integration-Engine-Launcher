@@ -127,9 +127,15 @@ backlog, so the launcher fetches one thing at a time through such a forward. Rig
 Administrator is started the launcher **re-checks** the port and reopens a forward of its own that has
 stopped listening. A forward that opens and accepts the launcher's connection but whose session then
 reports `Connection to destination port failed` (the SSM agent on the instance could not reach the
-forwarded port) fails the launch as *"The tunnel is up, but the server didn't answer"* — the engine is
-not running on that server, or the forward's destination port is not the engine's https port — rather
-than as a reset connection; a forward that dies *while* the Administrator uses it (a session timing out, a
+forwarded port) is **re-pointed at the engine's usual ports** — 8443, then 8000 — when the command
+names its remote port as `portNumber=<n>` (an SSM command line, or inside the batch file it runs: the
+launcher runs a copy from its cache dir with only that number changed — `%~dp0` / `%~f0` spelled out as
+the original's folder and path — started in the original's folder; the user's file is never edited;
+`audit.log`: `tunnel.retryPort`). A forward another Administrator is still using is not re-pointed
+under it. The port that answers is remembered per connection
+(`cache/tunnel/remote-ports.json`, `tunnel.remotePort`) and used first next time; the command's own
+port answering again forgets it. With every port refused the launch fails as *"The tunnel is up, but
+the server didn't answer"*, naming the ports tried, rather than as a reset connection; a forward that dies *while* the Administrator uses it (a session timing out, a
 dropped network) is reopened on its own, a bounded number of times, so the client can reconnect
 (`audit.log`: `tunnel.reopen`, `tunnel.exited`). Upgrade the plugin when it prints "An outdated
 SessionManagerPlugin version detected".

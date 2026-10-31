@@ -12,6 +12,9 @@ import com.gestalt.launcher.launch.ClientLog
 import com.gestalt.launcher.launch.LaunchAbortedException
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.net.LocalhostResolver
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -19,6 +22,7 @@ import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -55,6 +59,8 @@ class TunnelManager(
     private val sleeper: (Long) -> Unit = { if (it > 0) Thread.sleep(it) },
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Re-pointed script copies and the remembered remote ports live here (a cache: losing it costs one retry). */
+    private val cacheDir: Path = AppPaths.cacheDir.resolve("tunnel"),
 ) {
     /** Spawns the tunnel command (injected so the manager is tested without a real shell). */
     fun interface ProcessStarter {
@@ -85,13 +91,16 @@ class TunnelManager(
         internal val entry: Live?,
     ) : AutoCloseable {
         private val closed = AtomicBoolean(false)
+        /** The remote port this forward points at, when the launcher opened it and the command names one. */
+        val remotePort: Int? get() = entry?.remotePort
         override fun close() {
             if (closed.compareAndSet(false, true) && managed && entry != null) manager.release(connectionId, entry)
         }
     }
 
     /** A tunnel the launcher runs. The process is replaced in place when a dead forward is reopened, so leases stay valid. */
-    internal class Live(@Volatile var process: Process, @Volatile var log: Path?) {
+    internal class Live(@Volatile var process: Process, @Volatile var log: Path?, internal val endpoint: Endpoint? = null) {
+        val remotePort: Int? get() = endpoint?.remotePort
         var users = 0
         /** Set before the launcher itself takes the process down, so its exit is not taken for a crash. */
         @Volatile var closing = false
@@ -99,10 +108,14 @@ class TunnelManager(
         val reopens = ArrayDeque<Long>()
     }
 
-    private class Endpoint(val command: String, val host: String, val port: Int)
+    /**
+     * What to run and where: the command (re-pointed at [remotePort] when that differs from the port the
+     * user's command names), the local end of the forward, and the line the tunnel log records.
+     */
+    internal class Endpoint(val command: String, val host: String, val port: Int, val workingDir: Path?, val remotePort: Int?, val display: String)
 
     /** The tunnel command and the local end of the forward, or null when the connection has no tunnel. */
-    private fun endpointOf(connection: Connection): Endpoint? {
+    private fun endpointOf(connection: Connection, remotePort: Int? = null): Endpoint? {
         val command = connection.activeTunnelCommand ?: return null
         val uri = runCatching { connection.baseUri() }.getOrNull()
             ?: throw TunnelFailedException("the tunnel needs a usable address: ${connection.serverUrl}")
@@ -110,14 +123,23 @@ class TunnelManager(
             ?: throw TunnelFailedException("the tunnel needs a host in the address: ${connection.serverUrl}")
         val port = uri.port.takeIf { it > 0 }
             ?: throw TunnelFailedException("the tunnel needs an explicit port in the address — it is the local end of the forward (for example https://localhost:31065)")
-        return Endpoint(command, host, port)
+        val own = RemotePort.of(command)
+        val repointed = if (remotePort != null && remotePort != own) {
+            runCatching { RemotePort.repointed(command, remotePort, connection.id, cacheDir) }
+                .getOrElse { throw TunnelFailedException("could not re-point the tunnel command at port $remotePort: ${it.message}", it) }
+        } else null
+        return if (repointed != null) {
+            Endpoint(repointed.command, host, port, repointed.workingDir, remotePort, "${repointed.command}  (remote port $remotePort instead of ${repointed.original}, from: $command)")
+        } else {
+            Endpoint(command, host, port, workingDirFor(command), own, command)
+        }
     }
 
     /** Start the command for [endpoint] with a fresh log; the caller waits for the port. */
     private fun start(connection: Connection, endpoint: Endpoint): Pair<Process, Path?> {
-        val log = ClientLog.openTunnel(logDir, connection, endpoint.command)
+        val log = ClientLog.openTunnel(logDir, connection, endpoint.display)
         val process = try {
-            starter.start(commandLine(endpoint.command), workingDirFor(endpoint.command), log)
+            starter.start(commandLine(endpoint.command), endpoint.workingDir, log)
         } catch (e: IOException) {
             throw TunnelFailedException("could not start the tunnel command: ${e.message}", e)
         }
@@ -157,8 +179,8 @@ class TunnelManager(
      * [InterruptedException] when the launch is cancelled meanwhile (the command is then torn down).
      */
     @Throws(TunnelFailedException::class, InterruptedException::class)
-    fun acquire(connection: Connection, onWaiting: () -> Unit = {}): Lease? {
-        val endpoint = endpointOf(connection) ?: return null
+    fun acquire(connection: Connection, remotePort: Int? = null, onWaiting: () -> Unit = {}): Lease? {
+        val endpoint = endpointOf(connection, remotePort) ?: return null
         val host = endpoint.host
         val port = endpoint.port
 
@@ -176,7 +198,7 @@ class TunnelManager(
             }
             onWaiting()
             val (process, log) = start(connection, endpoint)
-            val entry = Live(process, log).also { it.users = 1 }
+            val entry = Live(process, log, endpoint).also { it.users = 1 }
             try {
                 awaitPort(entry, host, port)
             } catch (t: Throwable) {
@@ -185,7 +207,7 @@ class TunnelManager(
             }
             live[connection.id] = entry
             AuditLog.event(
-                "tunnel.open", "connection" to connection.id, "port" to port,
+                "tunnel.open", "connection" to connection.id, "port" to port, "remotePort" to endpoint.remotePort,
                 "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
             )
             watch(connection, endpoint, entry, process)
@@ -270,7 +292,9 @@ class TunnelManager(
     @Throws(TunnelFailedException::class, InterruptedException::class)
     fun recheck(connection: Connection, lease: Lease?, onWaiting: () -> Unit = {}) {
         if (lease == null) return
-        val endpoint = endpointOf(connection) ?: return
+        // The forward's own endpoint (the command as it was started, re-pointed or not) — never re-derived
+        // here, which would rewrite a script copy the running forward is executing.
+        val endpoint = lease.entry?.endpoint ?: endpointOf(connection) ?: return
         val host = endpoint.host
         val port = endpoint.port
         synchronized(lockFor(connection.id)) {
@@ -301,6 +325,73 @@ class TunnelManager(
                 "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
             )
             watch(connection, endpoint, entry, process)
+        }
+    }
+
+    // --- the remote port: the command's own, the fallbacks, and the one remembered ------------------
+
+    /**
+     * The next remote port to try for [connection] after the ones in [tried] were refused: the command's
+     * own port first, then [RemotePort.FALLBACKS] in order; null when the command names no port the
+     * launcher could change, or every candidate has been tried.
+     */
+    fun nextRemotePort(connection: Connection, tried: Set<Int>): Int? {
+        val own = commandRemotePort(connection) ?: return null
+        return (listOf(own) + RemotePort.FALLBACKS).firstOrNull { it !in tried }
+    }
+
+    /** The remote port the connection's own tunnel command names, or null when it names none the launcher recognises. */
+    fun commandRemotePort(connection: Connection): Int? = connection.activeTunnelCommand?.let { RemotePort.of(it) }
+
+    /** The remote port that answered for [connectionId] last time, when it was not the command's own; null otherwise. */
+    fun rememberedRemotePort(connectionId: String): Int? = synchronized(memoryLock) { memory()[connectionId] }
+
+    /** Record that [port] is the remote port that answers for [connectionId] (null: the command's own does — forget any override). */
+    fun rememberRemotePort(connectionId: String, port: Int?) {
+        synchronized(memoryLock) {
+            val m = memory()
+            val changed = if (port == null) m.remove(connectionId) != null else m.put(connectionId, port) != port
+            if (changed) saveMemory(m)
+        }
+        if (port != null) AuditLog.event("tunnel.remotePort", "connection" to connectionId, "port" to port, "result" to "REMEMBERED")
+    }
+
+    /**
+     * After a forward was torn down: wait (bounded) until nothing answers on the local port any more, so
+     * the next [acquire] opens a fresh forward instead of reusing the dying one.
+     */
+    fun awaitPortFree(connection: Connection, waitMs: Long = 3_000) {
+        val endpoint = endpointOf(connection) ?: return
+        val deadline = clock() + waitMs
+        var polls = 0L
+        while (probe(endpoint.host, endpoint.port) && clock() < deadline && polls++ < waitMs / POLL_MS) sleeper(POLL_MS)
+    }
+
+    /** Drop what the launcher kept for [connectionId]: the remembered remote port and any re-pointed script copies — on connection delete. */
+    fun forgetConnection(connectionId: String) {
+        rememberRemotePort(connectionId, null)
+        RemotePort.forget(connectionId, cacheDir)
+    }
+
+    private val memoryLock = Any()
+    private var memoryCache: MutableMap<String, Int>? = null
+    private val memoryFile: Path get() = cacheDir.resolve(REMOTE_PORTS_FILE)
+
+    private fun memory(): MutableMap<String, Int> = memoryCache ?: loadMemory().also { memoryCache = it }
+
+    private val memoryJson = Json { ignoreUnknownKeys = true }
+
+    private fun loadMemory(): MutableMap<String, Int> = runCatching {
+        if (!Files.isRegularFile(memoryFile)) return@runCatching mutableMapOf<String, Int>()
+        memoryJson.decodeFromString<Map<String, Int>>(Files.readString(memoryFile)).filterValues { it in 1..65535 }.toMutableMap()
+    }.getOrDefault(mutableMapOf())
+
+    private fun saveMemory(m: Map<String, Int>) {
+        runCatching {
+            Files.createDirectories(cacheDir)
+            val tmp = memoryFile.resolveSibling("$REMOTE_PORTS_FILE.tmp")
+            Files.writeString(tmp, memoryJson.encodeToString(m.toMap()))
+            Files.move(tmp, memoryFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         }
     }
 
@@ -388,6 +479,7 @@ class TunnelManager(
 
     companion object {
         const val DEFAULT_TIMEOUT_MS = 60_000L
+        const val REMOTE_PORTS_FILE = "remote-ports.json"
         private const val POLL_MS = 100L // the forward is usable the moment its port answers; a tighter poll shaves the wait
         private const val CONNECT_PROBE_MS = 400
         /** Unexpected exits reopened per [REOPEN_WINDOW_MS] before the launcher gives the forward up. */

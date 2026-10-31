@@ -48,12 +48,13 @@ class FailureDiagnosisTest {
         assertEquals("The tunnel didn't open", never.title)
 
         val refused = FailureDiagnosis.classify(
-            TunnelFailedException("the port-forward opened and accepted the connection, but nothing answered on the server side (the session reported \"Connection to destination port failed\"): …", IOException("Connection reset")),
+            TunnelFailedException("the port-forward opened and accepted the connection, but nothing answered on the server side on ports 8000, 8443 (the session reported \"Connection to destination port failed\"): …", IOException("Connection reset")),
             conn,
         )
         assertEquals(FailureKind.TunnelFailed, refused.kind)
         assertEquals("The tunnel is up, but the server didn't answer", refused.title)
-        assertTrue(refused.nextStep.contains("destination port")) { refused.nextStep }
+        assertTrue(refused.explanation.contains("on ports 8000, 8443")) { refused.explanation }
+        assertTrue(refused.nextStep.contains("8443, 8000")) { refused.nextStep }
         assertTrue(refused.actions.contains(FixAction.ViewLogs))
     }
 

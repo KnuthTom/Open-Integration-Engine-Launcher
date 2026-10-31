@@ -417,6 +417,7 @@ class LauncherModel(
         store.delete(id, persist = false)
         conn.username?.trim()?.takeIf { it.isNotEmpty() }?.let { user -> forgetPassword(id, user) }
         trustedCerts.forgetConnection(id)
+        runCatching { com.gestalt.launcher.tunnel.TunnelManager.shared.forgetConnection(id) } // the remembered remote port and any re-pointed script copies
         launches.remove(id)
         if (activeId.get() == id) select(null)
         schedulePersist()
