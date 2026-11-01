@@ -157,6 +157,12 @@ open class LauncherCore(
      * under the policy in force skip the signature check (never the digest check). Null disables it.
      */
     private val admissions: AdmissionCache? = AdmissionCache(cacheDir.resolve(AdmissionCache.FILE_NAME)),
+    /**
+     * Jars shared across connections by digest ([JarPool]): a connection whose server publishes the digest
+     * of bytes another connection already verified gets them from disk, not through its tunnel. Null
+     * disables it.
+     */
+    private val jarPool: JarPool? = JarPool(cacheDir.resolve(JarPool.DIR_NAME)),
 ) {
     /**
      * Verify everything and produce the launch plan. Does NOT spawn the process.
@@ -227,11 +233,12 @@ open class LauncherCore(
             val policy = AdmissionCache.policyFingerprint(gateMode, signerPins, trustStore, trustedSigners)
             val admitted = ArrayList<AdmittedJar>(jars.size)
             val cachedHits = java.util.concurrent.atomic.AtomicInteger()
+            val poolHits = java.util.concurrent.atomic.AtomicInteger()
             val verifyStarted = System.currentTimeMillis()
             try {
                 parallel(connection) { pool ->
                     val futures = jars.map { jar ->
-                        pool.submit(Callable { downloadAndGate(connection, fetcher, gate, manifest, version, jar, policy, cachedHits) })
+                        pool.submit(Callable { downloadAndGate(connection, fetcher, gate, manifest, version, jar, policy, cachedHits, poolHits) })
                     }
                     for (future in futures) {
                         checkNotCancelled()
@@ -243,9 +250,10 @@ open class LauncherCore(
             }
             val verifyMs = System.currentTimeMillis() - verifyStarted
             AuditLog.event(
-                "launch.timing", "connection" to connection.id, "jars" to jars.size, "cachedAdmissions" to cachedHits.get(),
+                "launch.timing", "connection" to connection.id, "jars" to jars.size, "cachedAdmissions" to cachedHits.get(), "fromPool" to poolHits.get(),
                 "descriptorsMs" to descriptorsMs, "downloadVerifyMs" to verifyMs, "parallelism" to parallelismFor(connection),
             )
+            jarPool?.prune()?.takeIf { it > 0 }?.let { AuditLog.event("cache.pool.prune", "removed" to it) }
 
             // Bound the on-disk cache: now that this version is verified, drop any other-version jars for
             // this connection (keeps the cache-reuse speed-up for the current version, no unbounded growth).
@@ -618,7 +626,7 @@ open class LauncherCore(
      */
     private fun downloadAndGate(
         connection: Connection, fetcher: ArtifactFetcher, gate: CodebaseVerifier, manifest: DigestManifest, version: String, jar: PlannedJar,
-        policy: String, cachedHits: java.util.concurrent.atomic.AtomicInteger,
+        policy: String, cachedHits: java.util.concurrent.atomic.AtomicInteger, poolHits: java.util.concurrent.atomic.AtomicInteger,
     ): AdmittedJar {
         val name = jar.artifactName
         val file = cacheFile(connection.id, version, name)
@@ -626,9 +634,16 @@ open class LauncherCore(
         // One hash of the cached file decides both reuse and (below) the gate's digest check.
         val cached: String? = if (expected != null && Files.isRegularFile(file)) runCatching { DigestVerifier.sha256Hex(file) }.getOrNull() else null
         val actual: String = if (expected == null || cached == null || !DigestVerifier.constantTimeEquals(cached, expected)) {
-            val bytes = withConnectRetry(connection) { fetcher.fetchBytes(jar.uri) }
-            Files.write(file, bytes)
-            DigestVerifier.sha256Hex(bytes)
+            // Not in this connection's slot. The bytes this server publishes the digest of may be in the
+            // shared pool (verified for another connection); only then the network.
+            if (expected != null && jarPool?.restore(expected, file) == true) {
+                poolHits.incrementAndGet()
+                expected
+            } else {
+                val bytes = withConnectRetry(connection) { fetcher.fetchBytes(jar.uri) }
+                writeAtomically(file, bytes)
+                DigestVerifier.sha256Hex(bytes)
+            }
         } else {
             cached
         }
@@ -637,12 +652,13 @@ open class LauncherCore(
         if (admissions != null && expected != null && DigestVerifier.constantTimeEquals(actual, expected)) {
             admissions.lookup(actual, policy)?.let { hit ->
                 cachedHits.incrementAndGet()
-                return gate.admitCached(name, file, actual, hit.signerDN, hit.usedTimestamp)
+                return gate.admitCached(name, file, actual, hit.signerDN, hit.usedTimestamp).also { jarPool?.offer(actual, file) }
             }
         }
         return when (val outcome = gate.verify(name, file, manifest, sha256 = actual)) {
             is GateOutcome.Admitted -> {
                 admissions?.record(AdmissionCache.Entry(outcome.jar.sha256, policy, outcome.jar.signerDN, outcome.jar.usedTimestamp, AdmissionCache.now(), name))
+                jarPool?.offer(outcome.jar.sha256, file) // admitted bytes: the next connection on this version gets them from disk
                 outcome.jar
             }
             is GateOutcome.Rejected -> {
@@ -671,6 +687,13 @@ open class LauncherCore(
     }
 
     private fun sanitize(s: String): String = s.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+    /** Replace [file]'s directory entry rather than its bytes: a pooled jar may share them (a link) and must keep its own. */
+    private fun writeAtomically(file: Path, bytes: ByteArray) {
+        val tmp = file.resolveSibling(file.fileName.toString() + ".dl.tmp")
+        Files.write(tmp, bytes)
+        Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+    }
 
     /**
      * The digest manifest the descriptors carry inline — one SHA-256 per `<jar>`, keyed by the same

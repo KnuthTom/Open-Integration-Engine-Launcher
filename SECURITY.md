@@ -34,6 +34,10 @@ The trust-critical surface is the most valuable to scrutinize:
   decisions invalidates every entry. The cache lives in the user's own profile: someone who can write
   there can already replace the launcher, so it is not a trust boundary — but a way to admit a jar
   through it without that access would be in scope.
+- **The jar pool** (`cache/pool/`) — admitted jars filed by SHA-256 and shared across connections.
+  It is a byte source only: a pooled jar is used for a connection only when its server publishes that
+  exact digest, and it still passes the gate (or a cached admission under the policy in force). A way
+  to get bytes a server did not publish onto a classpath through the pool would be in scope.
 - **Local state the launcher runs from** — the tunnel command (never imported from a file), the
   single-instance lock and its loopback hand-over (`instance.lock`: a per-run secret, loopback only,
   the only action is "show your window").

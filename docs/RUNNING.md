@@ -151,6 +151,19 @@ the message and the top three frames) and shown as a toast; the window stays up.
 build its model at all (an unreadable or locked profile) shows a plain error dialog (`launcher.fatal`)
 and exits rather than hanging without a window.
 
+## The jar cache and the shared pool
+
+Each connection keeps the jars its server published under `cache/<connection>/<version>/`; a launch
+hashes what is there and downloads only what no longer matches the digest the server publishes this
+time. Beyond that, jars are **shared across connections by digest** in `cache/pool/<sha256>.jar`: a
+jar the gate has admitted for one connection is filed there, and another connection whose server
+publishes that same digest gets the bytes from disk instead of through its tunnel — so the first launch
+of a second server on the same engine version takes seconds, not the minutes the ~170-jar download
+takes over SSM. The pool is only a byte source: pooled bytes go through exactly what downloaded bytes
+go through (hashed and compared to what *that* server publishes, then the gate or a cached admission).
+A corrupt entry hashes wrong, is dropped, and the jar is fetched. Entries unused for 90 days are pruned.
+`launch.timing` reports `fromPool=` beside `cachedAdmissions=`.
+
 ## Display scale
 
 The Java runtime card's **Display scale** (Auto · 100% · 75% · 50%) is the Administrator's

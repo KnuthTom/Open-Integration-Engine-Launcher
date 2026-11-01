@@ -84,6 +84,10 @@ runs headlessly in tests without real networking or spawning a process.
   relaunch the gate still hashes every jar and compares it to the digest the server publishes *this*
   launch; only when the bytes are exactly the ones verified before, under the same policy, is the CMS /
   PKIX / timestamp check skipped (audited `CACHED_ADMISSION`). Any policy change misses every entry.
+- **The jar pool** — `JarPool` files admitted jars by SHA-256 under `cache/pool/`, shared by every
+  connection. `downloadAndGate` asks it for the bytes a server publishes the digest of before going to
+  the network; what comes back is hashed and gated exactly like a download. Slots are replaced by
+  directory entry (`writeAtomically`), never written in place, so a pooled copy keeps its own bytes.
 - **The Administrator is a process tree** — `ProcessTree.track` wraps the spawned JVM so `isAlive` /
   `onExit` answer for the whole tree: the client relaunches itself with its preferred heap and exits
   within a second, and its Java children (seen while it lived, or found by the launch's command-line
