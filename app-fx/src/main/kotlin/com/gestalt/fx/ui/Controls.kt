@@ -83,7 +83,10 @@ object Controls {
     fun menuButton(caption: String, leading: Node? = null, menuItems: () -> List<MenuItem>): MenuButton {
         val button = MenuButton()
         button.styleClass.addAll("btn", "btn-outline")
-        val captionLabel = Label(caption)
+        // Never squeezed: a label's minimum width is the width of "…", so a crowded row turned the caption
+        // (the Java runtime's "Automatic", a folder's path) into an ellipsis.
+        button.minWidth = Region.USE_PREF_SIZE
+        val captionLabel = Label(caption).apply { minWidth = Region.USE_PREF_SIZE }
         button.graphic = HBox(8.0).apply {
             alignment = Pos.CENTER_LEFT
             leading?.let { children += it }

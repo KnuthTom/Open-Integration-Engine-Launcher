@@ -98,7 +98,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
     // java card
     private val javaButton: MenuButton = Controls.menuButton("Bundled Java 17") { javaMenuItems() }
-    private val javaNote = Label("Bundled Java 8 for Mirth / OIE up to 4.6, Java 17 from 4.7").apply { styleClass += "field-note" }
+    private val javaNote = Label("Bundled Java 8 for Mirth / OIE up to 4.6, Java 17 from 4.7").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
     private val customJavaField = TextField().apply { styleClass += "mono-field"; promptText = "Path to a JDK or JRE" }
     private val browseJava = Controls.button("Browse…") { browseInto(customJavaField) { path -> update { it.copy(javaHome = it.javaHome.copy(mode = JavaHomeMode.Custom, customPath = path)) } } }
     private val javaFxField = TextField().apply { styleClass += "mono-field"; promptText = "Bundled with the launcher" }
@@ -196,7 +196,12 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         passwordField.textProperty().addListener { _, _, _ -> refreshSignIn() }
         passwordField.setOnAction { if (!savePasswordButton.isDisable) submitPassword() }
 
-        val javaRow = HBox(8.0, javaButton, javaNote, customJavaField, browseJava).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(customJavaField, Priority.ALWAYS); customJavaField.minWidth = 0.0 }
+        // The note goes under the choice, not beside it: beside it, the two fought for the half-width card and the choice lost.
+        val javaRow = VBox(
+            4.0,
+            HBox(8.0, javaButton, customJavaField, browseJava).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(customJavaField, Priority.ALWAYS); customJavaField.minWidth = 0.0 },
+            javaNote,
+        ).apply { minWidth = 0.0 }
         val fxRow = HBox(8.0, javaFxField, browseFx).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(javaFxField, Priority.ALWAYS); javaFxField.minWidth = 0.0 }
         val heapRow = VBox(4.0, HBox(8.0, heapField, heapSeg).apply { alignment = Pos.CENTER_LEFT }, heapError)
         val consoleRow = HBox(10.0, consoleSwitch, Label("Open a console window alongside the Administrator").apply { styleClass += "field-note"; minWidth = 0.0 }).apply { alignment = Pos.CENTER_LEFT }
