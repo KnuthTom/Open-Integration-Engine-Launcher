@@ -405,14 +405,24 @@ class LauncherPipelineTest {
         val caRoot = core(TrustMode.CA_ROOT).prepareLaunch(connection())
         assertEquals(first.admitted.single().signerDN, caRoot.admitted.single().signerDN)
 
-        // Altered bytes — on disk and from the server: the digest check still runs every launch and the launch aborts.
-        Files.write(first.admitted.single().file, jarBytes + byteArrayOf(0x00))
+        // Altered bytes on disk, with the server now serving altered bytes too but still publishing the
+        // ORIGINAL digest. The slot's bytes fail the digest check — and the shared pool holds the bytes
+        // that digest names (verified on the first launch), so the slot is healed from it and the launch
+        // goes ahead on exactly the bytes the server publishes; nothing altered is ever admitted.
+        val slot = first.admitted.single().file
+        Files.write(slot, jarBytes + byteArrayOf(0x00))
         val tampered = mapOf("${base}webstart" to responses.getValue("${base}webstart"), "${base}core.jar" to jarBytes + byteArrayOf(0x00))
-        val poisoned = LauncherCore(
+        fun poisoned(pool: JarPool?) = LauncherCore(
             trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = TrustMode.PIN_KNOWN_SIGNERS,
-            cacheDir = cacheDir, trustedSigners = signers, fetcherFactory = { FakeFetcher(tampered) }, admissions = admissions,
+            cacheDir = cacheDir, trustedSigners = signers, fetcherFactory = { FakeFetcher(tampered) }, admissions = admissions, jarPool = pool,
         )
-        val ex = assertThrows(LaunchAbortedException::class.java) { poisoned.prepareLaunch(connection()) }
+        val healed = poisoned(JarPool(cacheDir.resolve(JarPool.DIR_NAME))).prepareLaunch(connection())
+        assertEquals(sha, healed.admitted.single().sha256) { "the pool restored the published bytes" }
+        assertEquals(jarBytes.toList(), Files.readAllBytes(slot).toList())
+
+        // Without the pool (or with its entry gone too), the digest check catches the altered bytes and the launch aborts.
+        Files.write(slot, jarBytes + byteArrayOf(0x00))
+        val ex = assertThrows(LaunchAbortedException::class.java) { poisoned(null).prepareLaunch(connection()) }
         assertTrue(ex.message!!.contains("digest mismatch")) { ex.message }
     }
 
