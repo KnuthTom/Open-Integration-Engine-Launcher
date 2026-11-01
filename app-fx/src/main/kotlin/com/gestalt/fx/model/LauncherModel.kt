@@ -66,6 +66,8 @@ class LauncherModel(
     private val ui: (Runnable) -> Unit = { javafx.application.Platform.runLater(it) },
     launcherFactory: ((LauncherModel) -> LauncherCore)? = null,
     private val now: () -> Instant = { Instant.now() },
+    /** The Auto display scale for this screen (injectable: headless tests have no screen). */
+    private val autoScale: () -> String = DisplayScale::autoForPrimaryScreen,
 ) {
     // --- observable state ------------------------------------------------------------------------
 
@@ -188,7 +190,9 @@ class LauncherModel(
         val conn = store.get(id) ?: return
         if (launches[id]?.inFlight == true) return
         launches[id] = LaunchState(LaunchPhase.Downloading)
-        launchController.launch(conn, autoLoginFor(conn))
+        // Auto display scale is resolved here, for this screen, at launch time — the saved connection stays Auto.
+        val effective = if (conn.uiScale.isNullOrBlank()) conn.copy(uiScale = autoScale()) else conn
+        launchController.launch(effective, autoLoginFor(conn))
     }
 
     fun cancelLaunch(id: String) = launchController.cancel(id)

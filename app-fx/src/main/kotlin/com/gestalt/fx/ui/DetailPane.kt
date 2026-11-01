@@ -6,11 +6,11 @@
 
 package com.gestalt.fx.ui
 
+import com.gestalt.fx.model.DisplayScale
 import com.gestalt.fx.model.LaunchState
 import com.gestalt.fx.model.LauncherModel
 import com.gestalt.fx.model.TreeRows
 import com.gestalt.launcher.icon.CustomIconStore
-import com.gestalt.launcher.launch.ChildJvmCommandBuilder
 import com.gestalt.launcher.launch.LaunchPhase
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.JavaHomeConfig
@@ -107,7 +107,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val heapSeg = Controls.Segmented(listOf("512m" to "512m", "1g" to "1g", "2g" to "2g", "4g" to "4g"), mono = true) { v -> update { it.copy(heapSize = v) } }
     private val heapError = Label("Use a size like 1024m or 2g").apply { styleClass += "field-error"; isVisible = false; isManaged = false }
     private val consoleSwitch = Controls.Switch { on -> update { it.copy(showJavaConsole = on) } }
-    private val scaleSeg = Controls.Segmented(listOf("1.25" to "125%", "1.0" to "100%", "0.75" to "75%", "0.5" to "50%")) { v -> update { it.copy(uiScale = v) } }
+    private val scaleSeg = Controls.Segmented<String?>(listOf(null to "Auto", "1.0" to "100%", "0.75" to "75%", "0.5" to "50%")) { v -> update { it.copy(uiScale = v) } }
+    private val scaleNote = Label().apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
 
     // certificates card
     private val reviewBadge = Label().apply { styleClass += "badge-warn"; isVisible = false; isManaged = false }
@@ -199,7 +200,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val fxRow = HBox(8.0, javaFxField, browseFx).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(javaFxField, Priority.ALWAYS); javaFxField.minWidth = 0.0 }
         val heapRow = VBox(4.0, HBox(8.0, heapField, heapSeg).apply { alignment = Pos.CENTER_LEFT }, heapError)
         val consoleRow = HBox(10.0, consoleSwitch, Label("Open a console window alongside the Administrator").apply { styleClass += "field-note"; minWidth = 0.0 }).apply { alignment = Pos.CENTER_LEFT }
-        val scaleRow = VBox(4.0, scaleSeg, Label("75% fits the Administrator on a high-DPI screen; 100% is its unscaled size").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }).apply { minWidth = 0.0 }
+        val scaleRow = VBox(4.0, scaleSeg, scaleNote).apply { minWidth = 0.0 }
         val javaCard = Controls.card("Java runtime", Controls.fieldGrid().apply {
             row(0, "Java home", javaRow)
             row(1, "JavaFX home", fxRow)
@@ -359,7 +360,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             val heapOk = heap.isEmpty() || HEAP_PATTERN.matches(heap)
             heapError.isVisible = !heapOk; heapError.isManaged = !heapOk
             consoleSwitch.on = d.showJavaConsole
-            scaleSeg.value = d.uiScale?.trim()?.takeIf { it.isNotEmpty() } ?: ChildJvmCommandBuilder.DEFAULT_UI_SCALE
+            scaleSeg.value = d.uiScale?.trim()?.takeIf { it.isNotEmpty() }
+            val autoPct = runCatching { (DisplayScale.autoForPrimaryScreen().toDouble() * 100).toInt() }.getOrNull()
+            scaleNote.text = "Auto picks the largest scale that keeps the Administrator on this screen" + (autoPct?.let { " — $it% here" } ?: "") + "; 100% is its unscaled size"
 
             renderCertificates(d)
             autoApprove.on = d.autoApproveCertificates

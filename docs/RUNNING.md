@@ -153,11 +153,16 @@ and exits rather than hanging without a window.
 
 ## Display scale
 
-The Java runtime card's **Display scale** (125% · 100% · 75% · 50%) is the Administrator's
-`sun.java2d.uiScale`, per connection; **75% is the default** — the Administrator's windows are laid out
-for a 100% screen and overflow a high-DPI one at the system scale, and 75% of a 150% desktop is where
-they fit. 100% is the client's unscaled size. Java 8 ignores the property (Windows scales the whole
-window instead); on Java 17 it replaces the DPI-derived scale.
+The Java runtime card's **Display scale** (Auto · 100% · 75% · 50%) is the Administrator's
+`sun.java2d.uiScale`, per connection — an absolute factor: 100% is the client's unscaled size whatever
+Windows is set to. Windows cannot size the Administrator to the screen (its DPI scaling is what makes
+the client overflow a high-DPI desktop), so **Auto**, the default, does it: the client's windows are laid
+out for roughly 2560 × 1440 physical pixels at 100%, and Auto takes the primary screen's physical size
+and picks the largest factor that keeps that on the screen — 75% on a 1920 × 1080 display, 100% on
+2560 × 1440, 125% on 4K, 50% on a 1366 × 768 laptop. The card's note shows what Auto resolves to on
+this machine; it is resolved at launch, on the machine that launches, so a connection on Auto stays
+Auto when exported. Java 8 ignores the property (Windows scales the whole window instead); on Java 17 it
+replaces the DPI-derived scale. Without a screen (the CLI) the engine's default is 75%.
 
 ## Sign-in (auto-login)
 
