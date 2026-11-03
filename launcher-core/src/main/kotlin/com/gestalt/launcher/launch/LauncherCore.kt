@@ -364,8 +364,9 @@ open class LauncherCore(
                     // A fetch that died through a forward the launcher opened: if the forward's own log says the
                     // server side refused the destination port, that — not "connection reset" — is the failure,
                     // and the engine's usual ports are worth a try. Asked before the lease goes, since releasing
-                    // the last lease tears the forward (and its log) down.
-                    val refusedBeyondTheForward = lease != null && t is IOException && tunnels.destinationRefused(connection.id)
+                    // the last lease tears the forward (and its log) down; and given a moment, since the plugin
+                    // writes the line around the time it drops the connection, not strictly before.
+                    val refusedBeyondTheForward = lease != null && t is IOException && tunnels.destinationRefused(connection.id, REFUSAL_GRACE_MS)
                     val forwardedTo = lease?.remotePort
                     lease?.close()
                     if (!refusedBeyondTheForward) throw t
@@ -790,6 +791,9 @@ open class LauncherCore(
          * Deliberately NOT true for TLS/PKIX ([javax.net.ssl.SSLException]), HTTP-status, or integrity errors,
          * so an untrusted cert or a tampered jar fails fast and is never masked by a retry.
          */
+        /** How long a failed fetch through a forward waits for the plugin to say the server side refused the port. */
+        internal const val REFUSAL_GRACE_MS = 1_500L
+
         internal fun isTransientConnect(t: Throwable): Boolean {
             var cur: Throwable? = t
             val seen = java.util.IdentityHashMap<Throwable, Boolean>()

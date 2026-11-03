@@ -30,8 +30,13 @@ object RemotePort {
     /** The engine's usual https ports, tried in this order after the command's own port is refused. */
     val FALLBACKS: List<Int> = listOf(8443, 8000)
 
-    /** `portNumber=<n>` as its own word: `localPortNumber=` must not match (it ends in the same letters). */
-    private val PARAM = Regex("(?i)\\b(portNumber=)(\\d{1,5})")
+    /**
+     * The remote port in either form the AWS CLI takes `--parameters` in: shorthand `portNumber=<n>` as its
+     * own word (`localPortNumber=` must not match — it ends in the same letters), or JSON
+     * `"portNumber":["<n>"]` — quotes possibly backslash-escaped inside a batch file, spaces allowed
+     * (`"localPortNumber"` cannot match: a quote must sit right before `portNumber`).
+     */
+    private val PARAM = Regex("(?i)(\\bportNumber=|\\\\?\"portNumber\\\\?\"\\s*:\\s*\\[\\s*\\\\?\")(\\d{1,5})")
     /** A batch file's own path and folder, which a copy would resolve to the cache dir: written out as the original's. */
     private val SELF_DIR = Regex("(?i)%~dp0")
     private val SELF_PATH = Regex("(?i)%~f0")

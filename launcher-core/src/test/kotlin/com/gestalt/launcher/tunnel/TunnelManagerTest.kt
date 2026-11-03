@@ -275,6 +275,36 @@ class TunnelManagerTest {
     }
 
     @Test
+    @DisplayName("the refusal line is waited for (bounded) — the plugin writes it around the moment it drops the connection — and is still found after the forward was reopened with a fresh log")
+    fun destinationRefusedIsPatientAndRemembersEarlierLogs(@TempDir dir: Path) {
+        val starter = Scripted()
+        var now = 0L
+        var polls = 0
+        val sleeper: (Long) -> Unit = { ms ->
+            now += ms; polls++
+            if (polls == 3) starter.logs.first()!!.let { Files.writeString(it, Files.readString(it) + "\nConnection to destination port failed, check SSM Agent logs.\n") }
+        }
+        val m = TunnelManager(logDir = dir, starter = starter, probe = { _, _ -> starter.processes.any { it.isAlive } }, sleeper = sleeper, timeoutMs = 60_000, clock = { now }, cacheDir = dir.resolve("tunnel-cache"))
+        val lease = m.acquire(connection())!!
+        assertFalse(m.destinationRefused("c1")) { "nothing written yet, and no wait asked for" }
+        polls = 0
+        assertTrue(m.destinationRefused("c1", 1_500)) { "the line turned up on the third poll" }
+        assertEquals(3, polls)
+
+        // Basic (non-mux) mode ends the session on the refusal; the manager reopens the forward with a new log.
+        starter.processes[0].die(1)
+        awaitUntil("the forward is reopened") { starter.logs.size == 2 && starter.processes[1].isAlive }
+        assertTrue(m.destinationRefused("c1")) { "what the earlier process reported is still readable" }
+        lease.close()
+
+        val again = m.acquire(connection())!!
+        polls = 0; now = 0
+        assertFalse(m.destinationRefused("c1", 1_500)) { "a forward that never reports it: the wait is bounded" }
+        assertEquals(15, polls)
+        again.close()
+    }
+
+    @Test
     @DisplayName("a forward opened at another remote port runs the command re-pointed at it — a batch file as a copy, run in its own folder — and the lease and log say so")
     fun remotePortRepointing(@TempDir dir: Path) {
         val starter = Scripted()

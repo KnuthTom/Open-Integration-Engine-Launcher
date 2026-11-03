@@ -99,7 +99,12 @@ class TunnelManager(
     }
 
     /** A tunnel the launcher runs. The process is replaced in place when a dead forward is reopened, so leases stay valid. */
-    internal class Live(@Volatile var process: Process, @Volatile var log: Path?, internal val endpoint: Endpoint? = null) {
+    internal class Live(@Volatile var process: Process, log: Path?, internal val endpoint: Endpoint? = null) {
+        /** The current process's log; assigning a new one keeps the old in [logs], so what an earlier process reported is still readable. */
+        @Volatile var log: Path? = log
+            set(v) { field?.let { if (it != v) logs.add(it) }; field = v }
+        /** Logs of the processes this forward has run before the current one (a reopen replaces the process and its log). */
+        val logs = java.util.concurrent.CopyOnWriteArrayList<Path>()
         val remotePort: Int? get() = endpoint?.remotePort
         var users = 0
         /** Set before the launcher itself takes the process down, so its exit is not taken for a crash. */
@@ -230,14 +235,28 @@ class TunnelManager(
      * nothing is listening there (the engine is down, or the forward names the wrong port). The forward
      * itself is fine; a fetch through it fails with a reset or closed connection, and this is what turns
      * that into a diagnosis that names the real cause. Must be asked while the forward is still held.
+     *
+     * The plugin writes that line around the moment it drops the connection, and in basic (non-mux) mode
+     * it may end the whole session on it — which this manager answers by reopening the forward with a
+     * fresh log. So the question is asked of every log this forward has had, and with [waitMs] > 0 it is
+     * asked again (every [POLL_MS]) until the line turns up or the time is spent.
      */
-    fun destinationRefused(connectionId: String): Boolean = logHasLine(connectionId, DESTINATION_REFUSED_LINE)
+    fun destinationRefused(connectionId: String, waitMs: Long = 0L): Boolean {
+        val deadline = clock() + waitMs
+        var polls = 0L
+        while (true) {
+            if (logHasLine(connectionId, DESTINATION_REFUSED_LINE)) return true
+            if (live[connectionId] == null || clock() >= deadline || polls++ >= waitMs / POLL_MS) return false
+            sleeper(POLL_MS)
+        }
+    }
 
     private fun logHasLine(connectionId: String, pattern: Regex): Boolean {
-        val log = live[connectionId]?.log ?: return false
-        return runCatching {
-            Files.readAllLines(log, Charset.defaultCharset()).any { pattern.matches(it.trim()) }
-        }.getOrDefault(false)
+        val entry = live[connectionId] ?: return false
+        val logs = entry.logs + listOfNotNull(entry.log)
+        return logs.any { log ->
+            runCatching { Files.readAllLines(log, Charset.defaultCharset()).any { pattern.matches(it.trim()) } }.getOrDefault(false)
+        }
     }
 
     /**

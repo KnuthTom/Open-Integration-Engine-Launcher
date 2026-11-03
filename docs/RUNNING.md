@@ -128,11 +128,14 @@ Administrator is started the launcher **re-checks** the port and reopens a forwa
 stopped listening. A forward that opens and accepts the launcher's connection but whose session then
 reports `Connection to destination port failed` (the SSM agent on the instance could not reach the
 forwarded port) is **re-pointed at the engine's usual ports** — 8443, then 8000 — when the command
-names its remote port as `portNumber=<n>` (an SSM command line, or inside the batch file it runs: the
-launcher runs a copy from its cache dir with only that number changed — `%~dp0` / `%~f0` spelled out as
-the original's folder and path — started in the original's folder; the user's file is never edited;
-`audit.log`: `tunnel.retryPort`). A forward another Administrator is still using is not re-pointed
-under it. The port that answers is remembered per connection
+names its remote port in either form the AWS CLI takes: `portNumber=<n>` or JSON `"portNumber":["<n>"]`
+(an SSM command line, or inside the batch file it runs: the launcher runs a copy from its cache dir with
+only that number changed — `%~dp0` / `%~f0` spelled out as the original's folder and path — started in
+the original's folder; the user's file is never edited; `audit.log`: `tunnel.retryPort`). The plugin
+writes that line around the moment it drops the connection — and in basic mode may end the session on
+it, which the launcher answers by reopening the forward — so the launcher gives it a moment (1.5 s) and
+reads every log the forward has had before deciding. A forward another Administrator is still using is
+not re-pointed under it. The port that answers is remembered per connection
 (`cache/tunnel/remote-ports.json`, `tunnel.remotePort`) and used first next time; the command's own
 port answering again forgets it. With every port refused the launch fails as *"The tunnel is up, but
 the server didn't answer"*, naming the ports tried, rather than as a reset connection; a forward that dies *while* the Administrator uses it (a session timing out, a

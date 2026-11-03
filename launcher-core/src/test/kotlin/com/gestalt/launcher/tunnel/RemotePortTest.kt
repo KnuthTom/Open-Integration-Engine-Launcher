@@ -31,6 +31,23 @@ class RemotePortTest {
     }
 
     @Test
+    @DisplayName("the JSON form of --parameters is read and re-pointed too — quotes escaped as a batch file has them, or bare, spaces allowed; localPortNumber never matches")
+    fun readsTheJsonForm(@TempDir dir: Path) {
+        val escaped = """aws ssm start-session --target mi-0123456789abcdef0 --document-name AWS-StartPortForwardingSession --parameters "{\"portNumber\":[\"8000\"],\"localPortNumber\":[\"31074\"]}""""
+        assertEquals(8000, RemotePort.of(escaped))
+        val bare = """aws ssm start-session --parameters '{"localPortNumber":["31074"],"portNumber":["8443"]}'"""
+        assertEquals(8443, RemotePort.of(bare))
+        assertEquals(8000, RemotePort.of("""--parameters '{ "localPortNumber" : [ "31074" ], "portNumber" : [ "8000" ] }'"""))
+        assertNull(RemotePort.of("""--parameters '{"localPortNumber":["31074"]}'""")) { "no remote port named" }
+
+        val r = RemotePort.repointed(escaped, 8443, "c1", dir.resolve("cache"))!!
+        assertEquals(8000, r.original)
+        assertTrue(r.command.contains("""\"portNumber\":[\"8443\"]""")) { r.command }
+        assertTrue(r.command.contains("31074")) { "the local port is untouched: ${r.command}" }
+        assertNull(RemotePort.repointed(bare, 8443, "c1", dir.resolve("cache"))) { "already that port" }
+    }
+
+    @Test
     @DisplayName("an inline command is re-pointed in place; the same port is no change")
     fun repointsAnInlineCommand(@TempDir dir: Path) {
         val r = RemotePort.repointed(inline, 8443, "c1", dir.resolve("cache"))!!
