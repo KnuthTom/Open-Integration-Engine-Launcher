@@ -166,12 +166,14 @@ A corrupt entry hashes wrong, is dropped, and the jar is fetched. Entries unused
 
 ## Display scale and the Administrator's rendering
 
-The Java runtime card's **Display scale** (100% · 75% · 50%) is the Administrator's `sun.java2d.uiScale`,
-per connection — an absolute factor: **100%, the default, is the Administrator at its own size, every
-pixel of its Swing UI drawn 1:1**, which is the crisp look. Smaller factors fit more of it on a small or
-high-DPI screen; a fractional factor is Java scaling a UI laid out for 100% and leaves seams and soft
-edges in places (the client's old Swing look-and-feel was never built for it). Java 8 ignores the
-property and Windows scales the whole window itself.
+The Java runtime card's **Display scale** (150% · 125% · 100% · 75% · 50%) is the Administrator's
+`sun.java2d.uiScale`, per connection — an absolute factor: **100%, the default, is the Administrator at
+its own size, every pixel of its Swing UI drawn 1:1**, which is the crisp look but small on a high-DPI
+screen. 125% is usually the right size there; 150% can run past the screen edge. Any factor other than
+100% is Java scaling a UI laid out for 100%: text stays sharp (it is rasterized at the new size), but
+one-pixel borders and bitmap icons come out uneven in places — the client's old Swing look-and-feel was
+never built for it — and that is the trade for the larger size. Java 8 ignores the property and Windows
+scales the whole window itself (uniformly, but as a bitmap).
 
 What else the launcher sets for the client's rendering on Java 9+: the embedded JavaFX (the tag editor
 is a `JFXPanel`) gets the same factor (`glass.win.uiScale` / `glass.gtk.uiScale` — on its own it would

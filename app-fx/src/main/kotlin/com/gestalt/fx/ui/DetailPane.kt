@@ -108,8 +108,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val heapSeg = Controls.Segmented(listOf("512m" to "512m", "1g" to "1g", "2g" to "2g", "4g" to "4g"), mono = true) { v -> update { it.copy(heapSize = v) } }
     private val heapError = Label("Use a size like 1024m or 2g").apply { styleClass += "field-error"; isVisible = false; isManaged = false }
     private val consoleSwitch = Controls.Switch { on -> update { it.copy(showJavaConsole = on) } }
-    private val scaleSeg = Controls.Segmented(listOf("1.0" to "100%", "0.75" to "75%", "0.5" to "50%")) { v -> update { it.copy(uiScale = v) } }
-    private val scaleNote = Label("100% is the Administrator's own size; smaller fits more of it on a small or high-DPI screen").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
+    private val scaleSeg = Controls.Segmented(listOf("1.5" to "150%", "1.25" to "125%", "1.0" to "100%", "0.75" to "75%", "0.5" to "50%")) { v -> update { it.copy(uiScale = v) } }
+    private val scaleNote = Label("100% is the Administrator's own size, drawn pixel for pixel. Larger reads better on a high-DPI screen; 125% is usually the one — 150% can run past the screen edge.").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
 
     // certificates card
     private val reviewBadge = Label().apply { styleClass += "badge-warn"; isVisible = false; isManaged = false }
