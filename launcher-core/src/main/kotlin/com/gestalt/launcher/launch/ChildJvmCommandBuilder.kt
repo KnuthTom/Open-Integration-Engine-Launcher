@@ -117,11 +117,13 @@ class ChildJvmCommandBuilder(
             val percent = (uiScale.toDouble() * 100).toInt()
             cmd += "-Dglass.win.uiScale=$percent%"
             cmd += "-Dglass.gtk.uiScale=$percent%"
-            // Swing text antialiased the way the desktop renders its own (subpixel where the desktop does);
-            // Java 9+ rasterizes with FreeType and, left to defaults, reads the desktop hints anyway — this
-            // pins it so a session with the hints unavailable (a remote desktop) does not fall to aliased text.
-            cmd += "-Dawt.useSystemAAFontSettings=on"
+            // Text: subpixel (LCD) antialiasing, pinned. Java 9+ rasterizes with FreeType, and grayscale AA
+            // there comes out light and thin; LCD rendering is what the desktop's own text uses and keeps the
+            // weight even. The software pipeline rather than Direct3D: D3D composites fractional-scale glyphs
+            // and one-pixel lines through the GPU and softens or unevens them — the Swing UI needs no GPU.
+            cmd += "-Dawt.useSystemAAFontSettings=lcd"
             cmd += "-Dswing.aatext=true"
+            cmd += "-Dsun.java2d.d3d=false"
         }
 
         extraSystemProperties.forEach { (k, v) -> cmd += "-D$k=$v" }

@@ -42,9 +42,11 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /** A connection's launch, as the sidebar and the Launch button show it. */
-data class LaunchState(val phase: LaunchPhase, val instances: Int = 0, val message: String? = null) {
+data class LaunchState(val phase: LaunchPhase, val instances: Int = 0, val message: String? = null, val done: Int = 0, val total: Int = 0) {
     /** Preparing: downloading / verifying / spawning. The Launch button waits and the row offers cancel. */
     val inFlight: Boolean get() = phase == LaunchPhase.Tunneling || phase == LaunchPhase.Downloading || phase == LaunchPhase.Verifying || phase == LaunchPhase.Launching
+    /** The jar step's progress, 0..1, once its size is known. */
+    val fraction: Double? get() = if (total > 0) done.toDouble() / total else null
 }
 
 /**
@@ -110,8 +112,16 @@ class LauncherModel(
     // otherwise chases its own tail ("type checking has run into a recursive problem").
     private val launchEvents: LaunchEvents = object : LaunchEvents {
         override fun onPhase(id: String, phase: LaunchPhase) {
-            launches[id] = LaunchState(phase, instances = launchController.runningInstances(id))
+            val progress = launches[id]
+            launches[id] = LaunchState(phase, instances = launchController.runningInstances(id), done = progress?.done ?: 0, total = progress?.total ?: 0)
             launchListener?.onPhase(id, phase)
+        }
+
+        override fun onProgress(id: String, done: Int, total: Int) {
+            val state = launches[id] ?: return
+            if (!state.inFlight) return
+            launches[id] = state.copy(done = done, total = total)
+            launchListener?.onProgress(id, done, total)
         }
 
         override fun onRunning(id: String, instances: Int) {

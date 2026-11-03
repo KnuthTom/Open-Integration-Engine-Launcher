@@ -177,11 +177,18 @@ scales the whole window itself (uniformly, but as a bitmap).
 
 What else the launcher sets for the client's rendering on Java 9+: the embedded JavaFX (the tag editor
 is a `JFXPanel`) gets the same factor (`glass.win.uiScale` / `glass.gtk.uiScale` — on its own it would
-follow the monitor's DPI and sit at 150% inside a 100% window), and Swing text is antialiased the way
-the desktop renders its own (`awt.useSystemAAFontSettings=on`, `swing.aatext=true`). What it cannot
-change: the client's fonts and look-and-feel (the Administrator sets them itself), and the rasterizer
-(Java 9+ uses FreeType, Java 8 used T2K — text is drawn a little lighter on 17 than MCAL drew it on 8).
-The client log header records every option that was in force.
+follow the monitor's DPI and sit at 150% inside a 100% window); Swing text is drawn with **subpixel
+(LCD) antialiasing**, pinned (`awt.useSystemAAFontSettings=lcd`, `swing.aatext=true` — Java 9+
+rasterizes with FreeType, and its grayscale antialiasing comes out light and thin; LCD is what the
+desktop's own text uses and keeps the weight even at every scale); and the **software pipeline** rather
+than Direct3D (`sun.java2d.d3d=false` — the GPU path composites fractional-scale glyphs and one-pixel
+lines and softens or unevens them; the Swing UI needs no GPU). What it cannot change: the client's
+fonts and look-and-feel (the Administrator sets them itself). The client log header records every
+option that was in force.
+
+A first launch pulls every jar through the connection (minutes over an SSM forward); the launch toast
+carries a progress bar that fills jar by jar, and the Launch button counts them, so a long download
+never looks like a hang.
 
 ## Sign-in (auto-login)
 

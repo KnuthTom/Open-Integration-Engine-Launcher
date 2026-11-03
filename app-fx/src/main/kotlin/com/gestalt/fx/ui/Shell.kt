@@ -159,9 +159,12 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         startLaunch(id)
     }
 
+    private var launchToastFor: String? = null
+
     private fun startLaunch(id: String) {
         val conn = model.store.get(id) ?: return
         toast.show("Launching ${conn.name}", conn.serverUrl, ToastHost.Kind.Progress)
+        launchToastFor = id
         model.launch(id)
     }
 
@@ -315,7 +318,21 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     // --- launch prompts ----------------------------------------------------------------------------
 
     private val launchPrompts: LaunchEvents = object : LaunchEvents {
-        override fun onPhase(id: String, phase: LaunchPhase) = Unit
+        override fun onPhase(id: String, phase: LaunchPhase) {
+            if (id != launchToastFor) return
+            when (phase) {
+                LaunchPhase.Tunneling -> toast.progress(0, 0, "Opening the tunnel…")
+                LaunchPhase.Downloading -> toast.progress(0, 0, "Reading the server's launch descriptors…")
+                LaunchPhase.Launching -> toast.progress(1, 1, "Starting the Administrator…")
+                else -> Unit
+            }
+        }
+
+        /** The long part of a first launch, made visible: the bar fills jar by jar, so nobody takes two minutes of download for a hang. */
+        override fun onProgress(id: String, done: Int, total: Int) {
+            if (id != launchToastFor) return
+            toast.progress(done, total, if (total > 0) "$done of $total jars fetched and verified" else "")
+        }
 
         override fun onRunning(id: String, instances: Int) {
             val conn = model.store.get(id) ?: return

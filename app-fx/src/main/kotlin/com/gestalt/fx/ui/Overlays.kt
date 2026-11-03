@@ -13,6 +13,7 @@ import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.Node
 import javafx.scene.control.Label
+import javafx.scene.control.ProgressBar
 import javafx.scene.control.TextField
 import javafx.scene.input.KeyCode
 import javafx.scene.layout.HBox
@@ -118,6 +119,8 @@ class ToastHost(private val root: StackPane) {
 
     private var current: HBox? = null
     private var hide: PauseTransition? = null
+    private var bar: ProgressBar? = null
+    private var sub: Label? = null
 
     fun show(title: String, detail: String?, kind: Kind, millis: Long = 3400) {
         dismiss()
@@ -127,11 +130,17 @@ class ToastHost(private val root: StackPane) {
             Kind.Success -> Icons.glyph("circle-check", 16.0, "-ok")
             Kind.Info -> Icons.glyph("circle-check", 16.0, "-text-muted")
         }
-        val text = VBox(2.0).apply {
+        val subLabel = Label(detail.orEmpty()).apply { styleClass += "toast-sub"; isVisible = !detail.isNullOrBlank(); isManaged = isVisible }
+        val progressBar = if (kind == Kind.Progress) ProgressBar(ProgressBar.INDETERMINATE_PROGRESS).apply { styleClass += "toast-bar"; maxWidth = Double.MAX_VALUE } else null
+        val text = VBox(3.0).apply {
             children += Label(title).apply { styleClass += "toast-title" }
-            if (!detail.isNullOrBlank()) children += Label(detail).apply { styleClass += "toast-sub" }
+            children += subLabel
+            progressBar?.let { children += it }
             minWidth = 0.0
+            prefWidth = if (progressBar != null) 260.0 else javafx.scene.layout.Region.USE_COMPUTED_SIZE
         }
+        bar = progressBar
+        sub = subLabel
         val toast = HBox(icon, text).apply {
             styleClass += "toast"
             isPickOnBounds = false
@@ -148,10 +157,19 @@ class ToastHost(private val root: StackPane) {
         }
     }
 
+    /** Move the progress toast's bar to [done]/[total] and say so beneath the title; no-op unless a progress toast is up. */
+    fun progress(done: Int, total: Int, detail: String) {
+        val b = bar ?: return
+        b.progress = if (total > 0) (done.toDouble() / total).coerceIn(0.0, 1.0) else ProgressBar.INDETERMINATE_PROGRESS
+        sub?.let { it.text = detail; it.isVisible = detail.isNotBlank(); it.isManaged = it.isVisible }
+    }
+
     fun dismiss() {
         hide?.stop(); hide = null
         current?.let { root.children.remove(it) }
         current = null
+        bar = null
+        sub = null
     }
 
     private fun spin(node: Node) {

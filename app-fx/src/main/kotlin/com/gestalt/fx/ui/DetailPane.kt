@@ -450,6 +450,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         launchButton.isDisable = inFlight
         val text = when {
             state == null -> "Launch"
+            state.inFlight && state.total > 0 && state.phase != LaunchPhase.Launching -> "${state.done} / ${state.total} jars…"
             state.inFlight -> when (state.phase) { LaunchPhase.Tunneling -> "Opening tunnel…"; LaunchPhase.Verifying -> "Verifying…"; LaunchPhase.Launching -> "Starting…"; else -> "Launching…" }
             state.phase == LaunchPhase.Running && state.instances > 1 -> "Launch (${state.instances} running)"
             else -> "Launch"

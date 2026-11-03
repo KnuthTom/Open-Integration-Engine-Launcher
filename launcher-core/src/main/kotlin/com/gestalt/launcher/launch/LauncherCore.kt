@@ -165,6 +165,14 @@ open class LauncherCore(
     private val jarPool: JarPool? = JarPool(cacheDir.resolve(JarPool.DIR_NAME)),
 ) {
     /**
+     * Told how far the jar fetch-and-verify step has come — `(done, total)` after the descriptors are
+     * known and after every jar — so a window can show progress through the long first launch. Called on
+     * the launch thread; set it before [launch] / [prepareLaunch].
+     */
+    @Volatile
+    var progressListener: ((done: Int, total: Int) -> Unit)? = null
+
+    /**
      * Verify everything and produce the launch plan. Does NOT spawn the process.
      *
      * Server trust: an https certificate the policy doesn't accept surfaces from the first fetch. If the
@@ -235,6 +243,7 @@ open class LauncherCore(
             val cachedHits = java.util.concurrent.atomic.AtomicInteger()
             val poolHits = java.util.concurrent.atomic.AtomicInteger()
             val verifyStarted = System.currentTimeMillis()
+            progressListener?.invoke(0, jars.size)
             try {
                 parallel(connection) { pool ->
                     val futures = jars.map { jar ->
@@ -243,6 +252,7 @@ open class LauncherCore(
                     for (future in futures) {
                         checkNotCancelled()
                         admitted += await(future, futures)
+                        progressListener?.invoke(admitted.size, jars.size)
                     }
                 }
             } finally {

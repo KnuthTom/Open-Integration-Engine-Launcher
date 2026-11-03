@@ -27,6 +27,9 @@ import java.util.concurrent.FutureTask
 interface LaunchEvents {
     fun onPhase(id: String, phase: LaunchPhase)
 
+    /** [done] of [total] jars fetched and verified so far (the long part of a first launch). */
+    fun onProgress(id: String, done: Int, total: Int) = Unit
+
     /** The child is running; [instances] Administrators this launcher started for [id] are alive. */
     fun onRunning(id: String, instances: Int)
 
@@ -82,6 +85,7 @@ class LaunchController(
             // a failure or a cancel by launching again at once, and that must not find the slot still
             // taken (one task per id is registered before it runs, so removing by key is ours to do).
             val outcome: () -> Unit = try {
+                launcher.progressListener = { done, total -> post { events.onProgress(id, done, total) } }
                 val process = launcher.launch(connection, { phase -> if (phase != LaunchPhase.Running) post { events.onPhase(id, phase) } }, autoLogin)
                 val deliver: () -> Unit = { track(id, process) }
                 deliver

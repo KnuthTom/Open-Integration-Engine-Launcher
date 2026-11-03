@@ -373,6 +373,10 @@
 }
 .toast .toast-title { -fx-font-weight: bold; }
 .toast .toast-sub { -fx-font-size: 12px; -fx-text-fill: -text-muted; }
+/* The launch toast's progress bar: a thin track that fills jar by jar (indeterminate until the count is known). */
+.toast .toast-bar { -fx-pref-height: 6; -fx-min-height: 6; -fx-max-height: 6; -fx-padding: 0; -fx-background-insets: 0; }
+.toast .toast-bar .track { -fx-background-color: -surface-sunken; -fx-background-radius: 3; -fx-background-insets: 0; }
+.toast .toast-bar .bar { -fx-background-color: -accent; -fx-background-radius: 3; -fx-background-insets: 0; -fx-padding: 3; }
 
 .scroll-bar { -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0; }
 .scroll-bar:vertical { -fx-pref-width: 10; }

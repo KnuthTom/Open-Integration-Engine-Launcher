@@ -437,7 +437,7 @@ class LauncherPipelineTest {
         assertTrue(default.contains("-Dsun.java2d.uiScale=1.0")) { "100% by default: the Administrator at its own size" }
         if (Runtime.version().feature() >= 9) {
             assertTrue(default.contains("-Dglass.win.uiScale=100%") && default.contains("-Dglass.gtk.uiScale=100%")) { "the embedded JavaFX follows Swing's scale: $default" }
-            assertTrue(default.contains("-Dswing.aatext=true"))
+            assertTrue(default.contains("-Dswing.aatext=true") && default.contains("-Dawt.useSystemAAFontSettings=lcd") && default.contains("-Dsun.java2d.d3d=false")) { "text rendering pinned: $default" }
         }
         val threeQuarters = launcher.prepareLaunch(connection().copy(uiScale = "0.75")).command
         assertTrue(threeQuarters.contains("-Dsun.java2d.uiScale=0.75"))

@@ -58,6 +58,8 @@ class LauncherModelTest {
             lastConnection = connection
             lastLogin = autoLogin?.let { AutoLogin(it.username, it.password.copyOf()) }
             onPhase(LaunchPhase.Verifying)
+            progressListener?.invoke(0, 3)
+            progressListener?.invoke(2, 3)
             onPhase(LaunchPhase.Launching)
             called.countDown()
             return FakeProcess().also { spawned += it }
@@ -300,6 +302,34 @@ class LauncherModelTest {
         m.launch(c.id) // a second instance is allowed
         await("two running") { m.launchState(c.id)?.instances == 2 }
 
+        launcher.spawned.forEach { it.exit() }
+        await("cleared") { m.launchState(c.id) == null }
+    }
+
+    @Test
+    @DisplayName("the jar step's progress reaches the launch state while the launch is in flight, and leaves with it")
+    fun progressInTheLaunchState(@TempDir dir: Path) {
+        val launcher = FakeLauncher()
+        val m = model(dir, launcher)
+        val c = m.newConnection(null)
+        var seen: Pair<Int, Int>? = null
+        m.launchListener = object : LaunchEvents {
+            override fun onPhase(id: String, phase: LaunchPhase) = Unit
+            override fun onProgress(id: String, done: Int, total: Int) { seen = done to total }
+            override fun onRunning(id: String, instances: Int) = Unit
+            override fun onExited(id: String, instances: Int) = Unit
+            override fun onCancelled(id: String) = Unit
+            override fun onNeedsServerTrust(id: String, leaf: java.security.cert.X509Certificate, hostPort: String?) = Unit
+            override fun onServerRejected(id: String, leaf: java.security.cert.X509Certificate) = Unit
+            override fun onNeedsPublisherTrust(id: String, signer: java.security.cert.X509Certificate, artifactName: String, reason: String) = Unit
+            override fun onFailed(id: String, error: Throwable, diagnosis: com.gestalt.launcher.diag.Diagnosis) = Unit
+        }
+
+        m.launch(c.id)
+        assertTrue(launcher.called.await(5, TimeUnit.SECONDS))
+        await("progress seen") { seen == (2 to 3) }
+        await("running") { m.launchState(c.id)?.phase == LaunchPhase.Running }
+        assertEquals(0, m.launchState(c.id)!!.total) { "Running carries no jar progress" }
         launcher.spawned.forEach { it.exit() }
         await("cleared") { m.launchState(c.id) == null }
     }
