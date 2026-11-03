@@ -56,6 +56,17 @@ class FailureDiagnosisTest {
         assertTrue(refused.explanation.contains("on ports 8000, 8443")) { refused.explanation }
         assertTrue(refused.nextStep.contains("8443, 8000")) { refused.nextStep }
         assertTrue(refused.actions.contains(FixAction.ViewLogs))
+
+        val ended = FailureDiagnosis.classify(
+            TunnelFailedException("the port-forward's session ended as soon as the launcher connected, 2 times in a row (the session log says \"Exiting session\") — the SSM Session Manager plugin on this machine reports that it is outdated; upgrade it", IOException("Connection refused")),
+            conn,
+        )
+        assertEquals(FailureKind.TunnelFailed, ended.kind)
+        assertEquals("The tunnel's session ended as soon as the launcher connected", ended.title)
+        assertTrue(ended.explanation.contains("outdated")) { ended.explanation }
+        assertTrue(ended.nextStep.contains("Upgrade the Session Manager plugin")) { ended.nextStep }
+        val endedNoHint = FailureDiagnosis.classify(TunnelFailedException("the port-forward's session ended as soon as the launcher connected, 2 times in a row (the session log says \"Exiting session\")"), conn)
+        assertTrue(endedNoHint.nextStep.contains("by hand")) { endedNoHint.nextStep }
     }
 
     @Test

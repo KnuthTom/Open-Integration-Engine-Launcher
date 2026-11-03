@@ -388,6 +388,79 @@ class PortForwardLaunchTest {
         }
     }
 
+    /** A forward whose first [dying] sessions end the moment the launcher connects (the plugin's `Exiting session`), leaving the process alive on `pause`; later ones serve. */
+    private class DyingForward(private val dying: Int, outdated: Boolean = true) {
+        val processes = ArrayList<FakeTunnelProcess>()
+        @Volatile var sessionAlive = false
+        private val warning = if (outdated) "WARNING: An outdated SessionManagerPlugin version detected. Please upgrade it to the latest version.\n" else ""
+        val starter = com.gestalt.launcher.tunnel.TunnelManager.ProcessStarter { _, _, log ->
+            val n = processes.size
+            val session = warning + "Starting session with SessionId: user-abc123\nPort 31065 opened for sessionId user-abc123.\nWaiting for connections...\n\nConnection accepted for session [user-abc123]\n" +
+                if (n < dying) "\n\nExiting session with sessionId: user-abc123.\n\nPress any key to continue . . .\n" else ""
+            log?.let { Files.writeString(it, Files.readString(it) + session) }
+            sessionAlive = n >= dying
+            FakeTunnelProcess().also { processes += it } // alive either way: a batch file parked on `pause` after the session ended
+        }
+        /** The port answers once per forward while it comes up (the launcher's own probe — the connection the session dies on), then only while the session is alive. */
+        private val probedOnce = HashSet<Int>()
+        val probe: (String, Int) -> Boolean = { _, _ -> processes.lastOrNull()?.isAlive == true && (sessionAlive || probedOnce.add(processes.lastIndex)) }
+        fun fetcher(canned: Map<String, ByteArray>): ArtifactFetcher = object : ArtifactFetcher {
+            override fun fetchBytes(uri: URI): ByteArray {
+                if (!sessionAlive) throw java.net.ConnectException("Connection refused: connect")
+                return canned[uri.toString()] ?: throw IOException("no canned response for $uri")
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("a forward whose session ends the moment the launcher connects — its process parked on `pause` — is torn down and reopened once; the launch goes through the fresh session")
+    fun sessionEndsUnderTheLauncher(@TempDir dir: Path) {
+        val base = "https://localhost:31065/"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca)
+        val forward = DyingForward(dying = 1)
+        val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
+            logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
+            cacheDir = dir.resolve("tunnel-cache"),
+        )
+        val core = LauncherCore(
+            trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = TrustMode.PIN_KNOWN_SIGNERS,
+            cacheDir = dir.resolve("cache"), tunnels = tunnels, fetcherFactory = { forward.fetcher(responses(base, jarBytes)) },
+            serverLeafProbe = { error("not an https trust failure") }, sleeper = {},
+        )
+        val conn = Connection(id = "t", name = "Forwarded", serverUrl = base, tunnelCommand = "forward.bat")
+
+        val process = core.launch(conn)
+        try {
+            assertEquals(2, forward.processes.size) { "the dead session's process was replaced by one fresh forward" }
+            assertFalse(forward.processes[0].isAlive) { "the process parked on `pause` was taken down with its session" }
+        } finally {
+            process.destroyForcibly()
+            process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @DisplayName("a session that ends again on the reopened forward fails as that, naming the plugin's own warning")
+    fun sessionKeepsEnding(@TempDir dir: Path) {
+        val forward = DyingForward(dying = Int.MAX_VALUE)
+        val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
+            logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
+            cacheDir = dir.resolve("tunnel-cache"),
+        )
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val core = LauncherCore(trustStore = TrustStore.of(ca.cert), cacheDir = dir.resolve("cache"), tunnels = tunnels, fetcherFactory = { forward.fetcher(emptyMap()) }, sleeper = {})
+        val conn = Connection(id = "t", name = "Forwarded", serverUrl = "https://localhost:31065", tunnelCommand = "forward.bat")
+
+        val ex = assertThrows(com.gestalt.launcher.tunnel.TunnelFailedException::class.java) { core.launch(conn) }
+
+        assertEquals(LauncherCore.SESSION_REOPENS + 1, forward.processes.size) { "opened, reopened once, then given up" }
+        assertTrue(ex.message!!.contains("session ended as soon as the launcher connected")) { ex.message }
+        assertTrue(ex.message!!.contains("outdated")) { "the plugin's own warning is passed on: ${ex.message}" }
+        assertTrue(forward.processes.none { it.isAlive })
+        assertFalse(tunnels.hasLiveTunnels())
+    }
+
     @Test
     @DisplayName("every usual port refused: the failure names the ports tried")
     fun allPortsRefused(@TempDir dir: Path) {

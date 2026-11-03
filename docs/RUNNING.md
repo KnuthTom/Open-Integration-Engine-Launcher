@@ -140,8 +140,17 @@ not re-pointed under it. The port that answers is remembered per connection
 port answering again forgets it. With every port refused the launch fails as *"The tunnel is up, but
 the server didn't answer"*, naming the ports tried, rather than as a reset connection; a forward that dies *while* the Administrator uses it (a session timing out, a
 dropped network) is reopened on its own, a bounded number of times, so the client can reconnect
-(`audit.log`: `tunnel.reopen`, `tunnel.exited`). Upgrade the plugin when it prints "An outdated
-SessionManagerPlugin version detected".
+(`audit.log`: `tunnel.reopen`, `tunnel.exited`).
+
+A session can also end **the moment the launcher connects** — the plugin prints `Exiting session with
+sessionId` right after `Connection accepted`, and an outdated plugin has been seen to do this on a
+multiplexed forward. The process may live on (a batch file that ends in `pause` sits at "Press any key"
+with the session gone), so the launcher reads the log, not just the process: a held forward whose
+session has ended is torn down (the whole tree, `pause` included) and reopened in place, the launch
+prepared again once (`audit.log`: `tunnel.sessionEnded … REOPEN`), and a session that ends again fails
+as *"The tunnel's session ended as soon as the launcher connected"*, passing on the plugin's own
+"outdated" warning when it printed one. **Upgrade the plugin** when it prints "An outdated
+SessionManagerPlugin version detected" — that warning is the first line of the tunnel log.
 
 The tunnel command is exported with the connection like every other setting. It is the one setting the
 launcher *runs*, so an import that carries any shows them first — connection by connection, the command

@@ -192,6 +192,11 @@ class TunnelManager(
         synchronized(lockFor(connection.id)) {
             live[connection.id]?.let { current ->
                 if (current.process.isAlive) {
+                    // A process that lives on after its session ended (a batch file parked on `pause`, say) is a
+                    // dead forward with a pulse: reopen it in place for everyone holding it, then join.
+                    if (sessionEndedIn(current) || !probe(host, port)) {
+                        reopenInPlace(connection, current, endpoint, "its session ended under ${current.users} holder(s)", onWaiting)
+                    }
                     current.users++
                     return Lease(this, connection.id, managed = true, entry = current)
                 }
@@ -251,13 +256,29 @@ class TunnelManager(
         }
     }
 
+    /**
+     * True when the forward the launcher runs for [connectionId] has reported that its **session ended**
+     * — the SSM plugin's `Exiting session with sessionId: …` — while its process may well still be alive
+     * (a batch file that ends in `pause` sits there after the session is gone). The local port is closed
+     * then: every connect is refused until the forward is reopened, which [acquire] and [recheck] do in
+     * place. An outdated plugin has been seen to end a multiplexed session the moment the launcher's first
+     * connection came in. Read from the current process's log only — an earlier process's ending is history.
+     */
+    fun sessionEnded(connectionId: String): Boolean = live[connectionId]?.let { sessionEndedIn(it) } ?: false
+
+    private fun sessionEndedIn(entry: Live): Boolean = entry.log?.let { logHas(it, SESSION_ENDED_LINE) } ?: false
+
+    /** True when the forward's plugin printed that it is outdated (`WARNING: An outdated SessionManagerPlugin version detected`). */
+    fun outdatedPlugin(connectionId: String): Boolean = logHasLine(connectionId, OUTDATED_PLUGIN_LINE)
+
     private fun logHasLine(connectionId: String, pattern: Regex): Boolean {
         val entry = live[connectionId] ?: return false
         val logs = entry.logs + listOfNotNull(entry.log)
-        return logs.any { log ->
-            runCatching { Files.readAllLines(log, Charset.defaultCharset()).any { pattern.matches(it.trim()) } }.getOrDefault(false)
-        }
+        return logs.any { logHas(it, pattern) }
     }
+
+    private fun logHas(log: Path, pattern: Regex): Boolean =
+        runCatching { Files.readAllLines(log, Charset.defaultCharset()).any { pattern.matches(it.trim()) } }.getOrDefault(false)
 
     /**
      * When the forward dies on its own while Administrators still depend on it (an SSM session timing
@@ -323,28 +344,39 @@ class TunnelManager(
                     "the port-forward at $host:$port stopped listening after the download, and it was not opened by " +
                         "the launcher, so it can't be reopened here — open it again and relaunch",
                 )
-            AuditLog.event("tunnel.reopen", "connection" to connection.id, "port" to port, "reason" to "stopped listening after the download")
-            entry.closing = true
-            destroy(entry.process)
-            onWaiting()
-            val (process, log) = start(connection, endpoint)
-            entry.process = process
-            entry.log = log
-            entry.closing = false
-            try {
-                awaitPort(entry, host, port)
-            } catch (t: Throwable) {
-                entry.closing = true
-                destroy(process)
-                live.remove(connection.id) // every lease on it is now stale and releases nothing
-                throw t
-            }
-            AuditLog.event(
-                "tunnel.open", "connection" to connection.id, "port" to port, "reopened" to true,
-                "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
-            )
-            watch(connection, endpoint, entry, process)
+            reopenInPlace(connection, entry, endpoint, "stopped listening after the download", onWaiting)
         }
+    }
+
+    /**
+     * Replace a held forward's process with a fresh one — same [entry], same holders — taking the old
+     * process tree down first. Under the connection's lock. Throws (and drops the entry, so every lease on
+     * it is stale and releases nothing) when the new process never opens the port.
+     */
+    private fun reopenInPlace(connection: Connection, entry: Live, endpoint: Endpoint, reason: String, onWaiting: () -> Unit) {
+        val host = endpoint.host
+        val port = endpoint.port
+        AuditLog.event("tunnel.reopen", "connection" to connection.id, "port" to port, "reason" to reason)
+        entry.closing = true
+        destroy(entry.process)
+        onWaiting()
+        val (process, log) = start(connection, endpoint)
+        entry.process = process
+        entry.log = log
+        entry.closing = false
+        try {
+            awaitPort(entry, host, port)
+        } catch (t: Throwable) {
+            entry.closing = true
+            destroy(process)
+            live.remove(connection.id) // every lease on it is now stale and releases nothing
+            throw t
+        }
+        AuditLog.event(
+            "tunnel.open", "connection" to connection.id, "port" to port, "reopened" to true,
+            "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"),
+        )
+        watch(connection, endpoint, entry, process)
     }
 
     // --- the remote port: the command's own, the fallbacks, and the one remembered ------------------
@@ -507,6 +539,8 @@ class TunnelManager(
         /** The SSM plugin's basic-mode accept line (mux mode prints `[id]`, with brackets). */
         private val BASIC_MODE_LINE = Regex("^Connection accepted for session [^\\[\\]\\s]+\\.$")
         private val DESTINATION_REFUSED_LINE = Regex("^Connection to destination port failed.*$")
+        private val SESSION_ENDED_LINE = Regex("^Exiting session with sessionId: .*$")
+        private val OUTDATED_PLUGIN_LINE = Regex("^WARNING: An outdated SessionManagerPlugin version detected.*$")
 
         /** The process-wide manager: launches share tunnels per connection, and exit tears them all down. */
         val shared: TunnelManager by lazy {

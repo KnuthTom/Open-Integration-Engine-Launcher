@@ -321,6 +321,7 @@ open class LauncherCore(
             // else as the command says. When the server side refuses it, the engine's usual ports are tried.
             var remotePort: Int? = tunnels.rememberedRemotePort(connection.id)
             val refusedPorts = LinkedHashSet<Int>()
+        var sessionReopens = 0
             while (true) {
                 val lease = tunnels.acquire(connection, remotePort) { onPhase(LaunchPhase.Tunneling) }
                 try {
@@ -367,8 +368,27 @@ open class LauncherCore(
                     // the last lease tears the forward (and its log) down; and given a moment, since the plugin
                     // writes the line around the time it drops the connection, not strictly before.
                     val refusedBeyondTheForward = lease != null && t is IOException && tunnels.destinationRefused(connection.id, REFUSAL_GRACE_MS)
+                    // The forward's session ended under the launcher (the plugin's `Exiting session`), so every
+                    // connect was refused — nothing the server did. Reopen once and prepare again; a session that
+                    // ends again the moment the launcher connects is reported as that, with the plugin's own
+                    // warning when it printed one (an outdated plugin has been seen to do exactly this).
+                    val sessionEndedUnderUs = lease != null && lease.managed && t is IOException && !refusedBeyondTheForward && tunnels.sessionEnded(connection.id)
+                    val outdatedPlugin = sessionEndedUnderUs && tunnels.outdatedPlugin(connection.id)
                     val forwardedTo = lease?.remotePort
                     lease?.close()
+                    if (sessionEndedUnderUs) {
+                        if (sessionReopens++ < SESSION_REOPENS) {
+                            AuditLog.event("tunnel.sessionEnded", "connection" to connection.id, "port" to forwardedTo, "result" to "REOPEN")
+                            tunnels.awaitPortFree(connection)
+                            continue
+                        }
+                        throw TunnelFailedException(
+                            "the port-forward's session ended as soon as the launcher connected, ${SESSION_REOPENS + 1} times in a row " +
+                                "(the session log says \"Exiting session\")" +
+                                (if (outdatedPlugin) " — the SSM Session Manager plugin on this machine reports that it is outdated; upgrade it" else ""),
+                            t,
+                        )
+                    }
                     if (!refusedBeyondTheForward) throw t
                     // Another Administrator still holds this forward: it cannot be re-pointed under them.
                     val heldByOthers = tunnels.holders(connection.id) > 0
@@ -793,6 +813,8 @@ open class LauncherCore(
          */
         /** How long a failed fetch through a forward waits for the plugin to say the server side refused the port. */
         internal const val REFUSAL_GRACE_MS = 1_500L
+        /** How many times a launch reopens a forward whose session ended under it before giving up. */
+        internal const val SESSION_REOPENS = 1
 
         internal fun isTransientConnect(t: Throwable): Boolean {
             var cur: Throwable? = t

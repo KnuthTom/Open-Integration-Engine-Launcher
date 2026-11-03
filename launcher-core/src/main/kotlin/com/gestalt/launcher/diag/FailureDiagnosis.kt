@@ -222,7 +222,21 @@ object FailureDiagnosis {
         actions = listOf(FixAction.TrustPublisher, FixAction.ReviewTrustPosture, FixAction.ViewLogs),
     )
 
-    private fun tunnelFailed(text: String) = if (text.contains("Connection to destination port failed")) Diagnosis(
+    private fun tunnelFailed(text: String) = if (text.contains("session ended as soon as the launcher connected")) Diagnosis(
+        kind = FailureKind.TunnelFailed,
+        title = "The tunnel's session ended as soon as the launcher connected",
+        explanation = "The port-forward opened, but its session ended the moment the launcher's first connection came in " +
+            "(the session log says \"Exiting session\"), and did so again when the launcher reopened it. " +
+            (if (text.contains("outdated")) "The AWS Session Manager plugin on this machine reports that it is outdated — older versions have been seen to drop a session this way." else "Nothing on the server side was reached."),
+        nextStep = if (text.contains("outdated")) {
+            "Upgrade the Session Manager plugin (docs.aws.amazon.com → Systems Manager → \"Install the Session Manager plugin\"), then relaunch. " +
+                "The tunnel log (logs/client/…-tunnel.log) has the link the plugin printed."
+        } else {
+            "Run the tunnel command by hand and connect to the local port once: if the session ends there too, the instance's " +
+                "SSM agent or the session document is ending it — check the agent's logs on the instance. The tunnel log is in logs/client/."
+        },
+        actions = listOf(FixAction.ViewLogs, FixAction.EditConnection),
+    ) else if (text.contains("Connection to destination port failed")) Diagnosis(
         kind = FailureKind.TunnelFailed,
         title = "The tunnel is up, but the server didn't answer",
         explanation = "The port-forward opened and accepted the launcher's connection, but on the server side nothing answered " +
