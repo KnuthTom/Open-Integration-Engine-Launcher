@@ -106,7 +106,9 @@ class ChildJvmCommandBuilder(
         // Any other factor is Java scaling a UI laid out for 100%, and fractional ones leave seams. Java 8
         // ignores the property (Windows scales the whole window itself); on Java 9+ it replaces the
         // DPI-derived scale the JVM would otherwise apply.
-        val uiScale = connection.uiScale?.trim()?.takeIf { it.matches(UI_SCALE_PATTERN) } ?: DEFAULT_UI_SCALE
+        // "windows": the JVM draws at 100% and Windows scales the whole window as a bitmap (the child runs
+        // DPI-unaware — LauncherCore sets the compatibility layer): uniform, correctly sized, a little soft.
+        val uiScale = if (windowsScaling(connection)) DEFAULT_UI_SCALE else connection.uiScale?.trim()?.takeIf { it.matches(UI_SCALE_PATTERN) } ?: DEFAULT_UI_SCALE
         cmd += "-Dsun.java2d.uiScale=$uiScale"
 
         val targetMajor = targetMajor(connection, javaHome)
@@ -223,6 +225,9 @@ class ChildJvmCommandBuilder(
         private val UI_SCALE_PATTERN = Regex("^(0\\.[5-9]\\d?|[1-3](\\.\\d{1,2})?|4(\\.0{1,2})?)$")
         /** The display scale a connection gets when it has none set: the Administrator's own size. */
         const val DEFAULT_UI_SCALE = "1.0"
+        /** The `uiScale` value that hands scaling to Windows (the child runs DPI-unaware). */
+        const val WINDOWS_SCALING = "windows"
+        fun windowsScaling(connection: Connection): Boolean = connection.uiScale?.trim().equals(WINDOWS_SCALING, ignoreCase = true)
         private const val MAX_MODULE_ARGS = 256
 
         /** The only JVM-arg flags the launcher will accept from a (untrusted) server JNLP. */

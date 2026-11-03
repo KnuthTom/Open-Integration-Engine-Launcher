@@ -445,5 +445,9 @@ class LauncherPipelineTest {
         assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "0.5")).command.contains("-Dsun.java2d.uiScale=0.5"))
         val junk = launcher.prepareLaunch(connection().copy(uiScale = "9; -javaagent:x")).command
         assertTrue(junk.contains("-Dsun.java2d.uiScale=1.0") && junk.none { it.contains("javaagent") }) { "junk never reaches the command line; the default does" }
+        val windows = connection().copy(uiScale = "Windows")
+        assertTrue(ChildJvmCommandBuilder.windowsScaling(windows))
+        assertTrue(launcher.prepareLaunch(windows).command.contains("-Dsun.java2d.uiScale=1.0")) { "Windows scaling: the JVM draws at 100%, the desktop scales the window" }
+        assertFalse(ChildJvmCommandBuilder.windowsScaling(connection()))
     }
 }

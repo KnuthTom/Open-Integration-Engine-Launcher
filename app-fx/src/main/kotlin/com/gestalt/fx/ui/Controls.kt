@@ -68,7 +68,7 @@ object Controls {
         }
 
     /** A two-column label/field grid as the cards use. */
-    fun fieldGrid(labelWidth: Double = 128.0): GridPane = GridPane().apply {
+    fun fieldGrid(labelWidth: Double = 104.0): GridPane = GridPane().apply {
         styleClass += "field-grid"
         columnConstraints.setAll(
             ColumnConstraints().apply { minWidth = labelWidth; prefWidth = labelWidth; maxWidth = labelWidth },

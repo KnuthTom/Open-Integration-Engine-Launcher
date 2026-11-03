@@ -166,14 +166,22 @@ A corrupt entry hashes wrong, is dropped, and the jar is fetched. Entries unused
 
 ## Display scale and the Administrator's rendering
 
-The Java runtime card's **Display scale** (150% · 125% · 100% · 75% · 50%) is the Administrator's
-`sun.java2d.uiScale`, per connection — an absolute factor: **100%, the default, is the Administrator at
-its own size, every pixel of its Swing UI drawn 1:1**, which is the crisp look but small on a high-DPI
-screen. 125% is usually the right size there; 150% can run past the screen edge. Any factor other than
-100% is Java scaling a UI laid out for 100%: text stays sharp (it is rasterized at the new size), but
-one-pixel borders and bitmap icons come out uneven in places — the client's old Swing look-and-feel was
-never built for it — and that is the trade for the larger size. Java 8 ignores the property and Windows
-scales the whole window itself (uniformly, but as a bitmap).
+The Java runtime card's **Display scale** (Windows · 150% · 125% · 100% · 75%) decides who scales the
+Administrator on a high-DPI desktop, per connection:
+
+- **A percentage** is `sun.java2d.uiScale`, an absolute factor: **100%, the default, is the Administrator
+  at its own size, every pixel of its Swing UI drawn 1:1** — crisp, but small on a high-DPI screen.
+  Any other factor is Java scaling a UI laid out for 100%: text stays sharp (rasterized at the new
+  size), but one-pixel borders and bitmap icons come out uneven in places — the client's old Swing
+  look-and-feel was never built for it. 125% is usually the readable size; 150% can run past the
+  screen edge.
+- **Windows** hands the scaling to the desktop: the JVM draws at 100% and the child runs DPI-unaware
+  (`__COMPAT_LAYER=DPIUNAWARE` in its environment), so Windows scales the whole window as a bitmap —
+  the size you expect, everything in step, slightly soft. This is the look the Administrator had under
+  the old launcher; users who find Java's fractional scaling wrong usually want this one. The client log
+  header says `# scaling: Windows` when it is in force. (On other platforms it is simply 100%.)
+
+Java 8 ignores `uiScale` whatever is chosen; its window is scaled by Windows the same way.
 
 What else the launcher sets for the client's rendering on Java 9+: the embedded JavaFX (the tag editor
 is a `JFXPanel`) gets the same factor (`glass.win.uiScale` / `glass.gtk.uiScale` — on its own it would

@@ -108,8 +108,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val heapSeg = Controls.Segmented(listOf("512m" to "512m", "1g" to "1g", "2g" to "2g", "4g" to "4g"), mono = true) { v -> update { it.copy(heapSize = v) } }
     private val heapError = Label("Use a size like 1024m or 2g").apply { styleClass += "field-error"; isVisible = false; isManaged = false }
     private val consoleSwitch = Controls.Switch { on -> update { it.copy(showJavaConsole = on) } }
-    private val scaleSeg = Controls.Segmented(listOf("1.5" to "150%", "1.25" to "125%", "1.0" to "100%", "0.75" to "75%", "0.5" to "50%")) { v -> update { it.copy(uiScale = v) } }
-    private val scaleNote = Label("100% is the Administrator's own size, drawn pixel for pixel. Larger reads better on a high-DPI screen; 125% is usually the one — 150% can run past the screen edge.").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
+    private val scaleSeg = Controls.Segmented(listOf(ChildJvmCommandBuilder.WINDOWS_SCALING to "Windows", "1.5" to "150%", "1.25" to "125%", "1.0" to "100%", "0.75" to "75%")) { v -> update { it.copy(uiScale = v) } }
+    private val scaleNote = Label().apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
 
     // certificates card
     private val reviewBadge = Label().apply { styleClass += "badge-warn"; isVisible = false; isManaged = false }
@@ -371,7 +371,12 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             val heapOk = heap.isEmpty() || HEAP_PATTERN.matches(heap)
             heapError.isVisible = !heapOk; heapError.isManaged = !heapOk
             consoleSwitch.on = d.showJavaConsole
-            scaleSeg.value = d.uiScale?.trim()?.takeIf { it.isNotEmpty() } ?: ChildJvmCommandBuilder.DEFAULT_UI_SCALE
+            scaleSeg.value = d.uiScale?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: ChildJvmCommandBuilder.DEFAULT_UI_SCALE
+            scaleNote.text = if (ChildJvmCommandBuilder.windowsScaling(d)) {
+                "Windows scales the whole window the way it scales any older program: the size you expect, everything in step, slightly soft — the look the Administrator had under the old launcher."
+            } else {
+                "Java draws the Administrator at this size: 100% is pixel-exact; larger keeps text sharp but leaves one-pixel borders and icons uneven, and 150% can run past the screen edge."
+            }
 
             renderCertificates(d)
             autoApprove.on = d.autoApproveCertificates
@@ -538,8 +543,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     }
 
     companion object {
-        /** Two cards of 128 px labels + the widest row (~260 px) + card padding, plus the body's gaps. */
-        private const val TWO_COLUMN_MIN_WIDTH = 820.0
+        /** Two cards of 104 px labels + the widest row (the five-way scale control, ~250 px) + card padding, plus the body's gaps. */
+        private const val TWO_COLUMN_MIN_WIDTH = 860.0
         private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
         const val SSL_DEFAULT = "TLSv1.3,TLSv1.2"
         const val CIPHER_DEFAULT = "TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256"

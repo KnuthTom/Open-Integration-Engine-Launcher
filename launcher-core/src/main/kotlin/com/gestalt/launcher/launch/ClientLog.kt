@@ -33,7 +33,7 @@ internal object ClientLog {
      * the directory can't be written — the caller then lets the child inherit the launcher's console, as
      * before, rather than fail a launch over a log file.
      */
-    fun open(dir: Path, plan: LaunchPlan, now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): Path? =
+    fun open(dir: Path, plan: LaunchPlan, now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault(), extraHeader: List<String> = emptyList()): Path? =
         runCatching {
             Files.createDirectories(dir)
             val file = freshFile(dir, "${stem(plan)}-${STAMP.withZone(zone).format(now)}")
@@ -45,8 +45,7 @@ internal object ClientLog {
                     "# server: ${plan.connection.serverUrl}   version: ${plan.version}",
                     "# java: ${plan.command.firstOrNull() ?: "-"}   main: ${plan.mainClass}   jars: ${plan.admitted.size}",
                     "# jvm options: ${jvmOptions(plan).joinToString(" ").ifBlank { "(none)" }}",
-                    "",
-                ),
+                ) + extraHeader + listOf(""),
                 Charsets.UTF_8,
                 StandardOpenOption.WRITE, StandardOpenOption.APPEND,
             )
