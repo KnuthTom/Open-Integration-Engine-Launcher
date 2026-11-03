@@ -8,10 +8,15 @@ package com.gestalt.launcher.importer
 
 import com.gestalt.launcher.importer.ConnectionImport.DedupePolicy
 import com.gestalt.launcher.importer.ConnectionImport.SourceFormat
+import com.gestalt.launcher.icon.CustomIconStore
+import com.gestalt.launcher.model.CloseAfterLaunch
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.ConnectionMode
 import com.gestalt.launcher.model.ConnectionStore
+import com.gestalt.launcher.model.Folder
+import com.gestalt.launcher.model.JavaHomeConfig
 import com.gestalt.launcher.model.JavaHomeMode
+import com.gestalt.launcher.model.SslOption
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -171,35 +176,68 @@ class ConnectionImportTest {
         val fromLegacy = ConnectionImport.parse(legacy).single()
         assertEquals("https://mirth.example.com:8443", fromLegacy.serverUrl)
 
-        val own = """{"version":1,"connections":[{"id":"x","name":"Own","serverUrl":"https://admin:hunter2@mirth.example.com:8443","username":"admin"}]}"""
+        val own = """{"version":1,"connections":[{"id":"x","name":"Own","serverUrl":"https://admin:hunter2@mirth.example.com:8443","username":" admin "}]}"""
         val fromOwn = ConnectionImport.parse(own).single()
         assertEquals("https://mirth.example.com:8443", fromOwn.serverUrl)
-        assertEquals(null, fromOwn.username) { "ids are regenerated on import, so a username would be a dangling keychain reference" }
+        assertEquals("admin", fromOwn.username) { "the username is a setting (it pre-fills the login) and comes along, trimmed" }
         assertFalse(Json.encodeToString(listOf(fromLegacy, fromOwn)).contains("hunter2"))
     }
 
     @Test
-    @DisplayName("a tunnel command in an imported file is dropped — a file from elsewhere must not plant a command the launcher would run")
-    fun neverImportsTunnelCommand() {
-        val own = """{"version":1,"connections":[{"id":"x","name":"Forwarded","serverUrl":"https://localhost:31065","tunnelCommand":"C:\\\\tools\\\\evil.bat","tunnelEnabled":true}]}"""
-        val fromOwn = ConnectionImport.parse(own).single()
-        assertEquals(null, fromOwn.tunnelCommand)
-        assertEquals(null, fromOwn.tunnelEnabled)
-        assertFalse(fromOwn.hasTunnel)
-        val bare = """{"id":"x","name":"Forwarded","serverUrl":"https://localhost:31065","tunnelCommand":"evil.bat"}"""
-        assertEquals(null, ConnectionImport.parseSingleEntry(bare)?.tunnelCommand)
+    @DisplayName("port-forward commands come in under the caller's policy: kept as reviewed, kept switched off (default), or dropped")
+    fun tunnelCommandsUnderPolicy(@TempDir dir: Path) {
+        val own = """{"version":1,"connections":[{"id":"x","name":"Forwarded","serverUrl":"https://localhost:31065","tunnelCommand":"C:\\\\tools\\\\forward.bat","tunnelEnabled":true}]}"""
+        val parsed = ConnectionImport.parseAll(own)
+        assertEquals(1, parsed.forwards.size) { "a UI lists what the file carries before choosing" }
+        assertEquals("C:\\\\tools\\\\forward.bat", parsed.connections.single().tunnelCommand)
+
+        fun imported(policy: ConnectionImport.TunnelPolicy): Connection {
+            val store = ConnectionStore(dir.resolve("c-${policy.name}.json"))
+            val summary = ConnectionImport.import(store, own, DedupePolicy.Merge, policy)
+            assertEquals(1, summary.forwards)
+            return store.list().single()
+        }
+        val disarmed = imported(ConnectionImport.TunnelPolicy.Disarm)
+        assertEquals("C:\\\\tools\\\\forward.bat", disarmed.tunnelCommand) { "the command is kept, visible, for the user to arm" }
+        assertEquals(false, disarmed.tunnelEnabled)
+        assertFalse(disarmed.hasTunnel) { "nothing runs until the switch is turned on here" }
+        val kept = imported(ConnectionImport.TunnelPolicy.Keep)
+        assertEquals(true, kept.tunnelEnabled)
+        assertTrue(kept.hasTunnel)
+        val dropped = imported(ConnectionImport.TunnelPolicy.Drop)
+        assertNull(dropped.tunnelCommand)
+        assertNull(dropped.tunnelEnabled)
+
+        val bare = """{"id":"x","name":"Forwarded","serverUrl":"https://localhost:31065","tunnelCommand":"forward.bat","tunnelEnabled":true}"""
+        val pasted = ConnectionImport.parseSingleEntry(bare)!!
+        assertEquals("forward.bat", pasted.tunnelCommand) { "a pasted entry keeps its command in the form" }
+        assertEquals(false, pasted.tunnelEnabled) { "with the switch off" }
     }
 
     @Test
-    @DisplayName("never imports credentials — no username and no plaintext secret survives")
+    @DisplayName("merging an export over the same connection keeps this machine's port-forward switch when the command is unchanged")
+    fun mergeKeepsTheLocalSwitch(@TempDir dir: Path) {
+        val store = ConnectionStore(dir.resolve("connections.json"))
+        store.add(Connection(id = "local", name = "Fwd", serverUrl = "https://localhost:31065", tunnelCommand = "forward.bat", tunnelEnabled = true))
+        val sameCommand = """{"version":1,"connections":[{"id":"x","name":"Fwd","serverUrl":"https://localhost:31065","tunnelCommand":"forward.bat","tunnelEnabled":true}]}"""
+        ConnectionImport.import(store, sameCommand, DedupePolicy.Merge, ConnectionImport.TunnelPolicy.Disarm)
+        assertEquals(true, store.get("local")!!.tunnelEnabled) { "re-importing one's own export never disarms a forward already set up here" }
+        val newCommand = sameCommand.replace("forward.bat", "other.bat")
+        ConnectionImport.import(store, newCommand, DedupePolicy.Merge, ConnectionImport.TunnelPolicy.Disarm)
+        val after = store.get("local")!!
+        assertEquals("other.bat", after.tunnelCommand) { "a changed command comes in" }
+        assertEquals(false, after.tunnelEnabled) { "switched off, as a new command the user has not armed" }
+    }
+
+    @Test
+    @DisplayName("never imports a secret — the legacy usernames come along, the plaintext passwords never do")
     fun neverImportsSecrets() {
         val all = parsed()
-        assertTrue(all.all { it.username == null }) { "username (credential-adjacent) must not be imported" }
+        assertEquals("labadmin", all.first { it.name == "Local Secrets Entry" }.username) { "a legacy username pre-fills the login as it did there" }
         val serialized = Json.encodeToString(all)
         assertFalse(serialized.contains("S3cr3t-do-not-import!"))
         assertFalse(serialized.contains("another-plaintext-secret"))
-        assertFalse(serialized.contains("labadmin"))
-        assertFalse(serialized.contains("svc-mirth"))
+        assertFalse(serialized.contains("password", ignoreCase = true))
     }
 
     @Test
@@ -226,6 +264,101 @@ class ConnectionImportTest {
         assertEquals(1, ConnectionImport.import(merge, incoming, DedupePolicy.Merge).merged)
         assertEquals("2048m", merge.get("keep-me")!!.heapSize) { "merge: incoming config wins, existing id preserved" }
         assertNull(merge.get("ignored")) { "incoming id is discarded on a dedupe match" }
+    }
+
+    @Test
+    @DisplayName("merge carries every setting the file has, and keeps what is this machine's: id, placement, pin, timestamps")
+    fun mergeCarriesEverySetting(@TempDir dir: Path) {
+        val store = ConnectionStore(dir.resolve("connections.json"))
+        store.add(Connection(id = "keep-me", name = "Prod", serverUrl = "https://h:8443", pinnedCertSha256 = "ab".repeat(32), username = "old", sortOrder = 0))
+        val incoming = Connection(
+            id = "ignored", name = "Prod", serverUrl = "https://h:8443/", username = "new", pinnedCertSha256 = "cd".repeat(32),
+            webstartPath = "/mirth/webstart", digestPath = "/mirth/digest", closeAfterLaunch = CloseAfterLaunch.On,
+            autoApproveCertificates = true, uiScale = "monitor", showJavaConsole = true, legacyTlsCompatibility = true,
+            javaHome = JavaHomeConfig(JavaHomeMode.Bundled, "8"), heapSize = "1g", icon = "dna", sortOrder = 7,
+        )
+        ConnectionImport.import(store, """{"version":2,"connections":[${Json.encodeToString(incoming)}]}""", DedupePolicy.Merge)
+        val merged = store.get("keep-me")!!
+        assertEquals("new", merged.username)
+        assertEquals("/mirth/webstart", merged.webstartPath)
+        assertEquals("/mirth/digest", merged.digestPath)
+        assertEquals(CloseAfterLaunch.On, merged.closeAfterLaunch)
+        assertTrue(merged.autoApproveCertificates)
+        assertEquals("monitor", merged.uiScale)
+        assertTrue(merged.showJavaConsole && merged.legacyTlsCompatibility)
+        assertEquals(JavaHomeMode.Bundled, merged.javaHome.mode)
+        assertEquals("1g", merged.heapSize)
+        assertEquals("dna", merged.icon)
+        assertEquals("ab".repeat(32), merged.pinnedCertSha256) { "the certificate pin is this machine's trust state" }
+        assertEquals(0, merged.sortOrder) { "placement is this machine's" }
+    }
+
+    @Test
+    @DisplayName("export → import round-trips every setting, the folder tree and the custom icons (passwords stay in the keychain)")
+    fun exportImportRoundTrip(@TempDir dir: Path) {
+        val icons = CustomIconStore(dir.resolve("icons-a"))
+        val svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M2 2h20v20H2z"/></svg>"""
+        val icon = icons.add("lab.svg", svg.toByteArray())
+
+        val source = ConnectionStore(dir.resolve("a/connections.json"))
+        val folder = source.addFolder(Folder(id = "f-region", name = "Region"))
+        val sub = source.addFolder(Folder(id = "f-site", name = "Site", parentId = folder.id))
+        val full = Connection(
+            id = "src", name = "Everything", serverUrl = "https://engine.example.internal:8443", username = "svc-launcher",
+            legacyTlsCompatibility = true, webstartPath = "/mirth/webstart", digestPath = "/mirth/digest",
+            connectionMode = ConnectionMode.LocalhostPortForward, icon = icon.key,
+            javaHome = JavaHomeConfig(JavaHomeMode.Custom, "17", "C:\\Java\\jdk-17"), javaFxHome = "C:\\JavaFX",
+            heapSize = "2g", showJavaConsole = true, sslProtocols = SslOption(custom = true, value = "TLSv1.2"),
+            sslCipherSuites = SslOption(custom = true, value = "TLS_AES_256_GCM_SHA384"), closeAfterLaunch = CloseAfterLaunch.Off,
+            autoApproveCertificates = true, folderId = sub.id, uiScale = "1.25",
+            tunnelCommand = "C:\\tools\\forward.bat", tunnelEnabled = true,
+        )
+        source.add(full)
+        source.add(Connection(id = "plain", name = "Plain", serverUrl = "http://localhost:8080"))
+        val export = dir.resolve("export.json")
+        source.exportTo(export, icons = icons)
+        val text = java.nio.file.Files.readString(export)
+        assertTrue(text.contains("\"icons\"") && text.contains("\"data\"")) { "the custom icon travels inside the file" }
+        assertTrue(text.contains("svc-launcher") && text.contains("forward.bat"))
+
+        val targetIcons = CustomIconStore(dir.resolve("icons-b"))
+        val target = ConnectionStore(dir.resolve("b/connections.json"))
+        val summary = ConnectionImport.import(target, text, DedupePolicy.Merge, ConnectionImport.TunnelPolicy.Keep, targetIcons)
+        assertEquals(2, summary.added)
+        assertEquals(1, summary.icons)
+        assertEquals(1, summary.forwards)
+
+        val back = target.list().first { it.name == "Everything" }
+        val filed = targetIcons.list().single()
+        assertEquals(filed.key, back.icon) { "the connection points at the icon as filed on this machine" }
+        assertEquals("lab", filed.label)
+        assertTrue(targetIcons.bytes(filed.id)!!.isNotEmpty())
+        // Everything but the identity the importing machine assigns.
+        val expected = full.copy(id = back.id, icon = back.icon, folderId = back.folderId, sortOrder = back.sortOrder, addedAt = back.addedAt, lastLaunchedAt = null)
+        assertEquals(expected, back)
+        val site = target.getFolder(back.folderId!!)!!
+        assertEquals("Site", site.name)
+        assertEquals("Region", target.getFolder(site.parentId!!)!!.name) { "the folder tree re-imports intact" }
+
+        // Importing the same file again on the same machine is a no-op merge: nothing doubles, the icon is matched by content.
+        val again = ConnectionImport.import(target, text, DedupePolicy.Merge, ConnectionImport.TunnelPolicy.Disarm, targetIcons)
+        assertEquals(2, again.merged)
+        assertEquals(1, targetIcons.list().size)
+        assertEquals(2, target.list().size)
+        assertEquals(true, target.list().first { it.name == "Everything" }.tunnelEnabled) { "an unchanged command keeps the local switch" }
+    }
+
+    @Test
+    @DisplayName("a custom icon the file does not carry falls back to the default glyph unless this machine already has it")
+    fun missingCustomIconFallsBack(@TempDir dir: Path) {
+        val icons = CustomIconStore(dir.resolve("icons"))
+        val store = ConnectionStore(dir.resolve("connections.json"))
+        val text = """{"version":2,"connections":[{"id":"x","name":"Orphan","serverUrl":"https://h:8443","icon":"custom:0123456789abcdef"}]}"""
+        ConnectionImport.import(store, text, DedupePolicy.Merge, ConnectionImport.TunnelPolicy.Drop, icons)
+        assertEquals(Connection.DEFAULT_ICON_KEY, store.list().single().icon)
+        val noIcons = ConnectionStore(dir.resolve("c2.json"))
+        ConnectionImport.import(noIcons, text, DedupePolicy.Merge, ConnectionImport.TunnelPolicy.Drop)
+        assertEquals("custom:0123456789abcdef", noIcons.list().single().icon) { "a caller that manages no icons gets the key as written" }
     }
 
     @Test

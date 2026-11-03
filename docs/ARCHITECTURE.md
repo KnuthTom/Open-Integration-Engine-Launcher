@@ -98,7 +98,8 @@ runs headlessly in tests without real networking or spawning a process.
   port, and holds the process per connection with a lease count: shared by concurrent launches of the
   same connection, torn down — the whole process tree — when the last Administrator exits or the
   launcher closes. A port that is already listening is used as-is and never torn down. The command is
-  trusted local config and is dropped on import. The window closing while a lease is held does not end
+  the one setting the launcher runs, so an import carries it only under a `TunnelPolicy` the UI chooses
+  after showing the commands (kept switched on, kept switched off, or dropped). The window closing while a lease is held does not end
   the process: the launcher **lingers** hidden with the model and executors live until the last such
   Administrator exits; `SingleInstance` (a lock on `instance.lock` far past EOF plus a loopback socket
   and a per-run secret) makes a launcher started meanwhile re-show that window rather than start a
@@ -123,10 +124,15 @@ runs headlessly in tests without real networking or spawning a process.
   "Launched … ago"). A schema-1 file's flat `group` becomes a top-level folder on load; deleting a
   folder lifts its contents to the parent, never drops them.
 - `ConnectionImport` detects format by root node: a top-level JSON **array** is a legacy MCAL export; an
-  object with a `connections` array is the launcher's own format. Import regenerates duplicate ids,
-  derives connection mode, strips a trailing `/webstart`, maps legacy icon/runtime fields, and **drops
-  credentials**. An export carries the folders of the exported connections (with their ancestors);
-  an import brings them back as a fresh subtree at the top level.
+  object with a `connections` array is the launcher's own format. Import regenerates ids, derives
+  connection mode, strips a trailing `/webstart` and any `user:pw@`, maps legacy icon/runtime fields, and
+  **never imports a password**. Every setting round-trips through the launcher's own export: the file
+  carries the folders of the exported connections (with their ancestors — brought back as a fresh
+  subtree at the top level) and the custom icons they use (`icons`: `ExportedIcon`, the sanitized bytes
+  Base64; filed again through `CustomIconStore.add`, so the sanitizer runs on the importing machine too,
+  and the connections re-pointed at the id the bytes hash to there). A merge over an existing connection
+  takes the file's settings and keeps the machine's own: id, placement, certificate pin, and the
+  port-forward switch when the command is unchanged.
 - The shipped app starts with **no connections** — users add their own. (Test fixtures use synthetic
   data only.)
 

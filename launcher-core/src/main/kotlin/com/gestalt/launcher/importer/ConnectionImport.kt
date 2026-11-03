@@ -7,6 +7,8 @@
 package com.gestalt.launcher.importer
 
 import com.gestalt.launcher.audit.AuditLog
+import com.gestalt.launcher.icon.CustomIconStore
+import com.gestalt.launcher.icon.ExportedIcon
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.Folder
 import com.gestalt.launcher.model.ConnectionStore
@@ -24,12 +26,17 @@ import java.util.UUID
 
 /**
  * Imports connections from a legacy MCAL ("Mirth Connect Administrator Launcher") export or a Gestalt
- * `connections.json`, auto-detecting which. Pure mapping logic (no UI); the file picker lives in :app.
+ * `connections.json`, auto-detecting which. Pure mapping logic (no UI); the file pickers live in the UIs.
  *
  * Security/discipline rules:
- *  - **Never imports secrets.** Legacy `username`/`password` are dropped; the connection's username is
- *    left null and credentials are (re-)entered in the client and stored only in the OS keychain.
- *  - **Regenerates ids** on legacy import (legacy ids are not unique).
+ *  - **Never imports secrets.** A legacy `password` is dropped; passwords are (re-)entered in the
+ *    launcher and stored only in the OS keychain. The username is a setting (it pre-fills the login)
+ *    and comes along.
+ *  - **Every other setting round-trips** from our own export: Java runtime, heap, SSL options, display
+ *    scale, close-after-launch, certificate auto-approve, custom paths, the folder tree and the custom
+ *    icons the connections use. A port-forward command is the one setting the launcher *runs*, so the
+ *    caller decides under a [TunnelPolicy] — after showing the user what the file carries.
+ *  - **Regenerates ids** (legacy ids are not unique; ours would collide with the machine's own).
  *  - **Preserves file order** as the initial [Connection.sortOrder].
  */
 object ConnectionImport {
@@ -40,6 +47,15 @@ object ConnectionImport {
     /** What to do when an incoming connection matches an existing one by name + base URL. */
     enum class DedupePolicy { Merge, Replace, Skip }
 
+    /**
+     * What to do with the port-forward commands a file carries — command lines the launcher would run
+     * before a launch, so a file from elsewhere must not be able to plant one unseen:
+     *  - [Keep]: as the file has them, switch included — for a file the user has reviewed;
+     *  - [Disarm] (the default): the command is kept but its switch is off, to be turned on by hand;
+     *  - [Drop]: command and switch are not imported.
+     */
+    enum class TunnelPolicy { Keep, Disarm, Drop }
+
     /** Outcome of an import run. */
     data class ImportSummary(
         val format: SourceFormat,
@@ -48,6 +64,10 @@ object ConnectionImport {
         val replaced: Int,
         val merged: Int,
         val skipped: Int,
+        /** Incoming connections that carried a port-forward command (whatever the [TunnelPolicy] did with it). */
+        val forwards: Int = 0,
+        /** Custom icons the file carried that were filed (or matched) here. */
+        val icons: Int = 0,
     )
 
     private val lenient = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -79,10 +99,13 @@ object ConnectionImport {
     fun parse(text: String, idGenerator: () -> String = { UUID.randomUUID().toString() }): List<Connection> =
         parseAll(text, idGenerator).connections
 
-    /** What a file carries: its connections and (our own format only) the folder tree they sit in. */
-    data class Parsed(val connections: List<Connection>, val folders: List<Folder>)
+    /** What a file carries: its connections and (our own format only) the folder tree they sit in and the custom icons they use. */
+    data class Parsed(val connections: List<Connection>, val folders: List<Folder>, val icons: List<ExportedIcon> = emptyList()) {
+        /** The connections that carry a port-forward command — what a UI shows for review before choosing a [TunnelPolicy]. */
+        val forwards: List<Connection> get() = connections.filter { !it.tunnelCommand.isNullOrBlank() }
+    }
 
-    /** [parse], plus the folders of a Gestalt export. A legacy file has no folders — its `group`s become folders in the store. */
+    /** [parse], plus the folders and icons of a Gestalt export. A legacy file has neither — its `group`s become folders in the store. */
     fun parseAll(text: String, idGenerator: () -> String = { UUID.randomUUID().toString() }): Parsed =
         when (detectFormat(text)) {
             SourceFormat.LegacyMcal -> Parsed(parseLegacy(text, idGenerator), emptyList())
@@ -93,8 +116,8 @@ object ConnectionImport {
     /**
      * Parse a SINGLE pasted connection entry — a legacy MCAL object, a Gestalt connection object, or the
      * first entry of a pasted whole file — into a [Connection] for prefilling the form. Returns null when
-     * the text isn't a recognizable connection object. Never imports credentials (same discipline as
-     * [parse]): a username/password on the pasted entry is dropped.
+     * the text isn't a recognizable connection object. Never imports a password (same discipline as
+     * [parse]); a port-forward command is kept with its switch off, for the user to turn on in the form.
      */
     fun parseSingleEntry(text: String, idGenerator: () -> String = { UUID.randomUUID().toString() }): Connection? {
         val trimmed = text.trim()
@@ -102,36 +125,44 @@ object ConnectionImport {
         // A whole pasted file (legacy array or Gestalt object) → take its first entry.
         when (detectFormat(trimmed)) {
             SourceFormat.LegacyMcal, SourceFormat.Gestalt ->
-                return runCatching { parse(trimmed, idGenerator).firstOrNull() }.getOrNull()
+                return runCatching { parse(trimmed, idGenerator).firstOrNull() }.getOrNull()?.let { disarmed(it) }
             SourceFormat.Unknown -> Unit // fall through: maybe a bare single object
         }
         val root = runCatching { Json.parseToJsonElement(trimmed) }.getOrNull() as? JsonObject ?: return null
         // A bare Gestalt connection object carries serverUrl; a legacy entry carries address.
         return if (root["serverUrl"] != null) {
-            runCatching { lenient.decodeFromString<Connection>(trimmed) }.getOrNull()
-                ?.copy(username = null, tunnelCommand = null, tunnelEnabled = null) // never adopt a pasted credential association, nor a command to run
+            runCatching { lenient.decodeFromString<Connection>(trimmed) }.getOrNull()?.let { disarmed(clean(it)) }
         } else {
             runCatching { parseLegacy("[$trimmed]", idGenerator).firstOrNull() }.getOrNull()
         }
+    }
+
+    /** Our own format, as the file has it, minus what must never come in: `user:pw@` userinfo in the address, a blank username. */
+    private fun clean(c: Connection): Connection =
+        c.copy(username = c.username?.trim()?.ifBlank { null }, serverUrl = ConnectionUrl.stripUserInfo(c.serverUrl))
+
+    /** The port-forward switch off when there is a command (the command stays, visible, for the user to arm); nothing to switch otherwise. */
+    private fun disarmed(c: Connection): Connection =
+        if (c.tunnelCommand.isNullOrBlank()) c.copy(tunnelCommand = null, tunnelEnabled = null) else c.copy(tunnelEnabled = false)
+
+    private fun applyTunnelPolicy(c: Connection, policy: TunnelPolicy): Connection = when (policy) {
+        TunnelPolicy.Keep -> if (c.tunnelCommand.isNullOrBlank()) c.copy(tunnelCommand = null, tunnelEnabled = null) else c
+        TunnelPolicy.Disarm -> disarmed(c)
+        TunnelPolicy.Drop -> c.copy(tunnelCommand = null, tunnelEnabled = null)
     }
 
     private fun parseLegacy(text: String, idGenerator: () -> String): List<Connection> =
         lenient.decodeFromString<List<LegacyConnection>>(text)
             .mapIndexed { index, entry -> mapLegacy(entry, index, idGenerator()) }
 
-    // Our own export format. Ids are regenerated on import (see import), so a username would be a
-    // dangling keychain reference — drop it like the legacy path does; and never let `user:pw@` userinfo
-    // from a hand-edited file into the store. A tunnel command is a command line the launcher would
-    // run on Launch: a file from elsewhere must not be able to plant one, so it is dropped too (audited)
-    // and set by hand on this machine.
+    // Our own export format, every setting as the file has it. Never let `user:pw@` userinfo from a
+    // hand-edited file into the store. Ids are regenerated on import (see import); a username then has no
+    // saved password here (the keychain entry is per connection), which only means the password is
+    // entered once more. Port-forward commands come through as parsed — [import] applies the caller's
+    // TunnelPolicy to them.
     private fun parseGestalt(text: String): Parsed {
         val file = lenient.decodeFromString<GestaltFile>(text)
-        val withTunnel = file.connections.count { it.hasTunnel }
-        if (withTunnel > 0) AuditLog.event("import.tunnelCommand", "dropped" to withTunnel, "result" to "NOT_IMPORTED")
-        return Parsed(
-            file.connections.map { it.copy(username = null, tunnelCommand = null, tunnelEnabled = null, serverUrl = ConnectionUrl.stripUserInfo(it.serverUrl)) },
-            file.folders,
-        )
+        return Parsed(file.connections.map { clean(it) }, file.folders, file.icons)
     }
 
     @Serializable
@@ -139,19 +170,22 @@ object ConnectionImport {
         val version: Int = 1,
         val connections: List<Connection> = emptyList(),
         val folders: List<Folder> = emptyList(),
+        val icons: List<ExportedIcon> = emptyList(),
     )
 
     /**
      * The legacy MCAL element schema — the exact 14 fields the real export carries, all defaulted so a
      * missing field never fails the parse (paired with `ignoreUnknownKeys`/`isLenient`). `customJavaHome`
-     * is an optional extra honored when a CUSTOM java home is present. Any `username`/`password` an export
-     * may carry is deliberately NOT declared here, so [lenient] drops it — credentials are never imported.
+     * is an optional extra honored when a CUSTOM java home is present; `username` pre-fills the login the
+     * way it did there. A `password` an export may carry is deliberately NOT declared here, so [lenient]
+     * drops it — a secret is never imported.
      */
     @Serializable
     private data class LegacyConnection(
         val id: String = "",
         val name: String = "",
         val address: String = "",
+        val username: String = "",
         val javaHome: String = "DEFAULT",
         val javaHomeBundledValue: String = "Java 17",
         val javaFxHome: String = "",
@@ -173,7 +207,7 @@ object ConnectionImport {
             id = id,
             name = entry.name.ifBlank { "Imported ${index + 1}" },
             serverUrl = baseUrl,
-            username = null,             // never import credentials
+            username = entry.username.trim().ifBlank { null }, // the login name is a setting; the password never comes along
             pinnedCertSha256 = null,
             legacyTlsCompatibility = entry.useLegacyDHSettings,
             group = null,
@@ -236,20 +270,54 @@ object ConnectionImport {
     // --- import (dedupe into a store) --------------------------------------------------------------
 
     /** Read [path] and import into [store]. */
-    fun importFile(store: ConnectionStore, path: Path, policy: DedupePolicy = DedupePolicy.Merge): ImportSummary =
-        import(store, Files.readString(path), policy)
+    fun importFile(
+        store: ConnectionStore,
+        path: Path,
+        policy: DedupePolicy = DedupePolicy.Merge,
+        tunnels: TunnelPolicy = TunnelPolicy.Disarm,
+        icons: CustomIconStore? = null,
+    ): ImportSummary = import(store, Files.readString(path), policy, tunnels, icons)
 
     /**
      * Parse [text] and merge it into [store] under [policy]; persists once. The file's folders come
      * along under fresh ids (a folder is never deduplicated against an existing one — an import adds a
      * subtree at the top level, so nothing already in the tree is disturbed); an incoming connection
      * that lands in one keeps that placement, while a connection that matches an existing one keeps the
-     * existing folder.
+     * existing folder. Port-forward commands are handled under [tunnels] (audited). Given [icons], the
+     * custom icons the file carries are filed there (through the sanitizer) and the connections
+     * re-pointed at them; a custom icon that neither the file nor this machine has falls back to the
+     * default glyph.
      */
-    fun import(store: ConnectionStore, text: String, policy: DedupePolicy = DedupePolicy.Merge): ImportSummary {
+    fun import(
+        store: ConnectionStore,
+        text: String,
+        policy: DedupePolicy = DedupePolicy.Merge,
+        tunnels: TunnelPolicy = TunnelPolicy.Disarm,
+        icons: CustomIconStore? = null,
+    ): ImportSummary {
         val format = detectFormat(text)
         val parsed = parseAll(text)
-        val incoming = parsed.connections
+        val forwards = parsed.forwards.size
+        if (forwards > 0) AuditLog.event("import.tunnelCommand", "connections" to forwards, "policy" to tunnels.name.uppercase())
+
+        // Custom icons: file what the export carries, then re-point `custom:<id>` keys at what they landed on.
+        var filedIcons = 0
+        val iconKeyMap = HashMap<String, String>()
+        if (icons != null) {
+            parsed.icons.forEach { exported ->
+                val filed = icons.import(exported) ?: return@forEach
+                filedIcons++
+                iconKeyMap[CustomIconStore.KEY_PREFIX + exported.id] = filed.key
+            }
+        }
+        fun iconOf(c: Connection): String {
+            val id = CustomIconStore.idFromKey(c.icon) ?: return c.icon
+            iconKeyMap[c.icon]?.let { return it }
+            if (icons == null || icons.get(id) != null) return c.icon // not managing icons here, or already on this machine
+            return Connection.DEFAULT_ICON_KEY
+        }
+
+        val incoming = parsed.connections.map { applyTunnelPolicy(it, tunnels).let { c -> c.copy(icon = iconOf(c)) } }
         val result = store.list().toMutableList()
         val byKey = HashMap<String, Connection>()
         result.forEach { byKey[dedupeKey(it)] = it }
@@ -304,10 +372,10 @@ object ConnectionImport {
         store.replaceAll(result, newFolders)
         AuditLog.event(
             "connection.import",
-            "format" to format.name, "incoming" to incoming.size, "folders" to newFolders.size,
+            "format" to format.name, "incoming" to incoming.size, "folders" to newFolders.size, "icons" to filedIcons,
             "added" to added, "replaced" to replaced, "merged" to merged, "skipped" to skipped,
         )
-        return ImportSummary(format, incoming.size, added, replaced, merged, skipped)
+        return ImportSummary(format, incoming.size, added, replaced, merged, skipped, forwards, filedIcons)
     }
 
     // `https://h:8443` and `https://h:8443/` are the same server.
@@ -328,9 +396,16 @@ object ConnectionImport {
         return id
     }
 
-    /** Incoming config wins; existing id/sortOrder/group and existing username/pin are preserved. */
+    /**
+     * Incoming settings win; the existing id, placement (sortOrder/group/folder), timestamps and
+     * certificate pin — this machine's trust state — are preserved, and an optional setting the file
+     * lacks keeps its existing value. The port-forward switch is this machine's decision: when the
+     * command is unchanged the existing switch stands, so re-importing one's own export never disarms
+     * (or arms) a forward that was already set up here.
+     */
     private fun merge(existing: Connection, incoming: Connection): Connection = existing.copy(
         serverUrl = incoming.serverUrl,
+        username = incoming.username ?: existing.username,
         connectionMode = incoming.connectionMode,
         icon = incoming.icon,
         javaHome = incoming.javaHome,
@@ -340,6 +415,16 @@ object ConnectionImport {
         sslProtocols = incoming.sslProtocols,
         sslCipherSuites = incoming.sslCipherSuites,
         legacyTlsCompatibility = incoming.legacyTlsCompatibility,
+        webstartPath = incoming.webstartPath,
+        digestPath = incoming.digestPath,
+        closeAfterLaunch = incoming.closeAfterLaunch,
+        autoApproveCertificates = incoming.autoApproveCertificates,
         uiScale = incoming.uiScale ?: existing.uiScale,
+        tunnelCommand = incoming.tunnelCommand ?: existing.tunnelCommand,
+        tunnelEnabled = when {
+            incoming.tunnelCommand == null -> existing.tunnelEnabled
+            incoming.tunnelCommand.trim() == existing.tunnelCommand?.trim() -> existing.tunnelEnabled
+            else -> incoming.tunnelEnabled
+        },
     )
 }

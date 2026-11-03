@@ -13,8 +13,12 @@ import com.gestalt.launcher.diag.Diagnosis
 import com.gestalt.launcher.icon.CustomIconStore
 import com.gestalt.launcher.importer.ConnectionImport
 import com.gestalt.launcher.launch.LaunchPhase
+import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.tls.CertDetails
+import javafx.geometry.Insets
 import javafx.scene.Scene
+import javafx.scene.control.Label
+import javafx.scene.control.ScrollPane
 import javafx.scene.input.KeyCode
 import javafx.scene.input.KeyCodeCombination
 import javafx.scene.input.KeyCombination
@@ -27,6 +31,7 @@ import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.stage.FileChooser
 import javafx.stage.Stage
+import java.nio.file.Files
 import java.security.cert.X509Certificate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -236,13 +241,69 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
             extensionFilters += FileChooser.ExtensionFilter("Connection files (*.json)", "*.json")
         }
         val file = chooser.showOpenDialog(stage) ?: return
-        val result = runCatching { ConnectionImport.importFile(model.store, file.toPath()) }
-        result.onSuccess { s ->
-            model.refresh()
-            toast.show("Imported ${s.added} connection${if (s.added == 1) "" else "s"}", listOfNotNull(if (s.merged > 0) "${s.merged} merged" else null, if (s.skipped > 0) "${s.skipped} skipped" else null).joinToString(" · ").ifEmpty { file.name }, ToastHost.Kind.Success)
-        }.onFailure {
-            toast.show("Couldn’t import", "${file.name} isn’t a launcher export", ToastHost.Kind.Error)
+        val text = runCatching { Files.readString(file.toPath()) }.getOrElse {
+            toast.show("Couldn’t import", "${file.name} couldn’t be read", ToastHost.Kind.Error); return
         }
+        val parsed = runCatching { ConnectionImport.parseAll(text) }.getOrElse {
+            toast.show("Couldn’t import", "${file.name} isn’t a launcher export", ToastHost.Kind.Error); return
+        }
+        // A port-forward command is the one setting the launcher runs. Show what the file carries and let
+        // the user arm them now, or import them switched off to arm one by one.
+        val forwards = parsed.forwards
+        if (forwards.isEmpty()) runImport(file.name, text, ConnectionImport.TunnelPolicy.Drop)
+        else reviewForwards(file.name, forwards) { policy -> runImport(file.name, text, policy) }
+    }
+
+    private fun runImport(fileName: String, text: String, tunnels: ConnectionImport.TunnelPolicy) {
+        runCatching { ConnectionImport.import(model.store, text, ConnectionImport.DedupePolicy.Merge, tunnels, icons) }
+            .onSuccess { s ->
+                model.refresh()
+                val detail = listOfNotNull(
+                    if (s.merged > 0) "${s.merged} merged" else null,
+                    if (s.skipped > 0) "${s.skipped} skipped" else null,
+                    if (s.icons > 0) "${s.icons} icon${if (s.icons == 1) "" else "s"}" else null,
+                    if (s.forwards > 0 && tunnels == ConnectionImport.TunnelPolicy.Disarm) "port-forwards off until you turn them on" else null,
+                ).joinToString(" · ").ifEmpty { fileName }
+                toast.show("Imported ${s.added} connection${if (s.added == 1) "" else "s"}", detail, ToastHost.Kind.Success, 5000)
+            }
+            .onFailure { toast.show("Couldn’t import", it.message ?: "$fileName isn’t a launcher export", ToastHost.Kind.Error) }
+    }
+
+    /** The design's modal with the file's port-forward commands listed verbatim, name by name, and the choice of arming them. */
+    private fun reviewForwards(fileName: String, forwards: List<Connection>, proceed: (ConnectionImport.TunnelPolicy) -> Unit) {
+        val n = forwards.size
+        val list = VBox(6.0).apply {
+            styleClass += "modal-list-body"
+            // Every command, none elided: the user is approving what they can see.
+            for (c in forwards) {
+                children += Label(c.name.ifBlank { c.serverUrl }).apply { styleClass += "field-label"; minWidth = 0.0 }
+                children += Label(c.tunnelCommand.orEmpty().trim()).apply { styleClass += "mono"; isWrapText = true; minWidth = 0.0; VBox.setMargin(this, Insets(0.0, 0.0, 4.0, 0.0)) }
+            }
+        }
+        val scroll = ScrollPane(list).apply {
+            styleClass += "detail-scroll"
+            styleClass += "modal-list"
+            isFitToWidth = true
+            hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER
+            maxHeight = 260.0
+            VBox.setMargin(this, Insets(10.0, 0.0, 0.0, 0.0))
+        }
+        val card = VBox().apply {
+            styleClass += "modal-card"
+            children += Label("$fileName opens port-forwards").apply { styleClass += "card-title" }
+            children += Label(
+                "$n connection${if (n == 1) "" else "s"} in this file run${if (n == 1) "s" else ""} a command before launching. " +
+                    "The launcher will run these on your machine exactly as written — import them switched on only if you recognise them.",
+            ).apply { styleClass += "modal-body"; isWrapText = true; VBox.setMargin(this, Insets(8.0, 0.0, 0.0, 0.0)) }
+            children += scroll
+            children += HBox().apply {
+                styleClass += "modal-actions"
+                children += Controls.button("Cancel", Controls.ButtonKind.Ghost) { modal.close() }
+                children += Controls.button("Import, switched off", Controls.ButtonKind.Secondary) { modal.close(); proceed(ConnectionImport.TunnelPolicy.Disarm) }
+                children += Controls.button("Import, switched on", Controls.ButtonKind.Primary) { modal.close(); proceed(ConnectionImport.TunnelPolicy.Keep) }
+            }
+        }
+        modal.show(card, 560.0, escape = { modal.close() }, enter = { modal.close(); proceed(ConnectionImport.TunnelPolicy.Disarm) })
     }
 
     override fun exportConnections() {
@@ -252,8 +313,8 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
             extensionFilters += FileChooser.ExtensionFilter("Connection files (*.json)", "*.json")
         }
         val file = chooser.showSaveDialog(stage) ?: return
-        runCatching { model.store.exportTo(file.toPath()) }
-            .onSuccess { toast.show("Exported ${model.connections.size} connections", file.name, ToastHost.Kind.Success) }
+        runCatching { model.store.exportTo(file.toPath(), icons = icons) }
+            .onSuccess { toast.show("Exported ${model.connections.size} connections", "Every setting, folder and custom icon — saved passwords stay in this machine’s keychain", ToastHost.Kind.Success, 5000) }
             .onFailure { toast.show("Couldn’t export", it.message ?: it.javaClass.simpleName, ToastHost.Kind.Error) }
     }
 

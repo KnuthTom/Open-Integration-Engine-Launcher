@@ -15,6 +15,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.Base64
 
 @Serializable
 private data class IconIndex(val version: Int = 1, val icons: List<CustomIcon> = emptyList())
@@ -97,6 +98,31 @@ class CustomIconStore(private val dir: Path = AppPaths.iconsDir) {
         AuditLog.iconRenamed(id)
     }
 
+    /**
+     * The icon [id] as it travels in an exported connections file, or null when it is unknown or its
+     * file is missing.
+     */
+    fun export(id: String): ExportedIcon? {
+        val entry = icons[id] ?: return null
+        val bytes = bytes(id) ?: return null
+        return ExportedIcon(id = entry.id, label = entry.label, ext = entry.ext, data = Base64.getEncoder().encodeToString(bytes))
+    }
+
+    /**
+     * File an icon from an exported connections file: the bytes are decoded and go through [add] — the
+     * sanitizer and the size cap included — and the row they land on is returned (an icon already here
+     * is matched by content and keeps its label). Null when the data is not Base64 or the image is
+     * rejected; nothing is written then.
+     */
+    fun import(icon: ExportedIcon): CustomIcon? {
+        val data = icon.data.trim()
+        if (data.length > IconSanitizer.MAX_BYTES * 4 / 3 + 4) return null // over the cap before it is even decoded
+        val bytes = runCatching { Base64.getDecoder().decode(data) }.getOrNull() ?: return null
+        val ext = icon.ext.trim().lowercase().takeIf { it in ALLOWED_EXTS } ?: "png"
+        val label = icon.label.trim().filter { !it.isISOControl() }.take(MAX_LABEL).ifBlank { "Imported icon" }
+        return runCatching { add("$label.$ext", bytes) }.getOrNull()
+    }
+
     /** Remove an icon's row and its file. */
     fun delete(id: String) {
         val removed = icons.remove(id) ?: return
@@ -156,6 +182,9 @@ class CustomIconStore(private val dir: Path = AppPaths.iconsDir) {
         const val KEY_PREFIX = "custom:"
 
         const val INDEX_FILE = "index.json"
+
+        /** The longest label an imported icon keeps. */
+        const val MAX_LABEL = 64
 
         /** Hex chars of the content hash used as the stable id (64-bit handle — ample for a personal set). */
         const val ID_LENGTH = 16

@@ -38,7 +38,9 @@ The trust-critical surface is the most valuable to scrutinize:
   It is a byte source only: a pooled jar is used for a connection only when its server publishes that
   exact digest, and it still passes the gate (or a cached admission under the policy in force). A way
   to get bytes a server did not publish onto a classpath through the pool would be in scope.
-- **Local state the launcher runs from** — the tunnel command (never imported from a file), the
+- **Local state the launcher runs from** — the tunnel command (a file can carry one, but an import
+  shows every command it carries and brings them in switched off unless the user chooses otherwise;
+  a way to get one to run without that review would be in scope), the
   single-instance lock and its loopback hand-over (`instance.lock`: a per-run secret, loopback only,
   the only action is "show your window").
 

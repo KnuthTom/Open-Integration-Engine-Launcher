@@ -8,6 +8,8 @@ package com.gestalt.launcher.model
 
 import com.gestalt.launcher.AppPaths
 import com.gestalt.launcher.audit.AuditLog
+import com.gestalt.launcher.icon.CustomIconStore
+import com.gestalt.launcher.icon.ExportedIcon
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -29,6 +31,15 @@ private data class ConnectionsFile(
     val version: Int = ConnectionStore.SCHEMA_VERSION,
     val connections: List<Connection> = emptyList(),
     val folders: List<Folder> = emptyList(),
+)
+
+/** An exported file: the same shape plus the custom icons the exported connections use, so they travel too. */
+@Serializable
+private data class ExportFile(
+    val version: Int = ConnectionStore.SCHEMA_VERSION,
+    val connections: List<Connection> = emptyList(),
+    val folders: List<Folder> = emptyList(),
+    val icons: List<ExportedIcon> = emptyList(),
 )
 
 /**
@@ -253,10 +264,13 @@ class ConnectionStore(
     /**
      * Write connections to [target] as a schema-versioned Gestalt `connections.json` (ordered by
      * [Connection.sortOrder]). When [ids] is null all connections are written; otherwise only those
-     * whose id is in [ids] (used by multi-select "Export selected"). The same [secretScan] runs before
-     * the write, so an export can never carry a secret either.
+     * whose id is in [ids] (used by multi-select "Export selected"). Every setting a connection has
+     * goes along — the folder tree it sits in and, given [icons], the custom icons it uses — so an
+     * import on another machine rebuilds it as it was. Only what is not a setting stays behind: saved
+     * passwords live in the OS keychain and are never written. The same [secretScan] runs before the
+     * write, so an export can never carry a secret either.
      */
-    fun exportTo(target: Path, ids: Set<String>? = null) {
+    fun exportTo(target: Path, ids: Set<String>? = null, icons: CustomIconStore? = null) {
         val text = synchronized(lock) {
             val selected = if (ids == null) connections.values else connections.values.filter { it.id in ids }
             val ordered = selected.sortedWith(compareBy({ it.sortOrder }, { it.name.lowercase() }))
@@ -267,7 +281,9 @@ class ConnectionStore(
                 while (fid != null && wanted.add(fid)) fid = folders[fid]?.parentId
             }
             val exportedFolders = folders.values.filter { ids == null || it.id in wanted }
-            json.encodeToString(ConnectionsFile(connections = ordered, folders = exportedFolders))
+            val exportedIcons = if (icons == null) emptyList() else
+                ordered.mapNotNull { CustomIconStore.idFromKey(it.icon) }.distinct().mapNotNull { icons.export(it) }
+            json.encodeToString(ExportFile(connections = ordered, folders = exportedFolders, icons = exportedIcons))
         }
         secretScan(text)
         target.parent?.let { Files.createDirectories(it) }
@@ -383,8 +399,10 @@ class ConnectionStore(
         // Connection — whatever it is named — cannot silently smuggle a secret into config. A unit test
         // pins these sets to the serializers' descriptors, so adding a field without updating the list
         // fails the build rather than every save at runtime.
-        internal val ALLOWED_TOP_LEVEL = setOf("version", "connections", "folders")
+        internal val ALLOWED_TOP_LEVEL = setOf("version", "connections", "folders", "icons")
         internal val ALLOWED_FOLDER_KEYS = setOf("id", "name", "parentId", "sortOrder", "expanded")
+        /** An exported custom icon: its handle, label, type and the sanitized image bytes (Base64) — export files only. */
+        internal val ALLOWED_ICON_KEYS = setOf("id", "label", "ext", "data")
         internal val ALLOWED_CONNECTION_KEYS = setOf(
             "id", "name", "serverUrl", "username", "pinnedCertSha256",
             "legacyTlsCompatibility", "webstartPath", "digestPath",
@@ -423,6 +441,13 @@ class ConnectionStore(
                 val unknown = element.keys - ALLOWED_FOLDER_KEYS
                 check(unknown.isEmpty()) {
                     "refusing to persist unexpected field(s) on folders[$i] — possible secret leak: $unknown"
+                }
+            }
+            (root["icons"] as? JsonArray)?.forEachIndexed { i, element ->
+                check(element is JsonObject) { "icons[$i] must be a JSON object" }
+                val unknown = element.keys - ALLOWED_ICON_KEYS
+                check(unknown.isEmpty()) {
+                    "refusing to persist unexpected field(s) on icons[$i] — possible secret leak: $unknown"
                 }
             }
             val connections = root["connections"] as? JsonArray ?: return

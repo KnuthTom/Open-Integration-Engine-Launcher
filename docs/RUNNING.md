@@ -140,9 +140,13 @@ dropped network) is reopened on its own, a bounded number of times, so the clien
 (`audit.log`: `tunnel.reopen`, `tunnel.exited`). Upgrade the plugin when it prints "An outdated
 SessionManagerPlugin version detected".
 
-The tunnel command is local config like the Java home: it is exported with the connection but **never
-imported** from a file (a file from elsewhere must not be able to plant a command the launcher would
-run; `audit.log` records `import.tunnelCommand … NOT_IMPORTED`). Set it by hand on each machine.
+The tunnel command is exported with the connection like every other setting. It is the one setting the
+launcher *runs*, so an import that carries any shows them first — connection by connection, the command
+verbatim — and asks whether to bring them in **switched on** (you recognise them: your own export) or
+**switched off** (they arrive in the Connection card with the port-forward checkbox clear, to be turned
+on one at a time). A file from elsewhere can never plant a command that runs unseen. `audit.log`
+records `import.tunnelCommand … policy=KEEP|DISARM|DROP`. Re-importing your own export over connections
+that already exist here keeps each one's switch as it is when the command is unchanged.
 
 ## When something goes wrong in the window
 
@@ -328,12 +332,21 @@ What it does:
   (Default/Custom), legacy-DH toggle, optional pinned-cert SHA-256, and optional username/password that
   are written **only to the OS keychain** (never to `connections.json`). New / Save / Save As / Delete.
 - **Import / Export** — Import auto-detects the format by JSON root node (a top-level **array** is a legacy
-  MCAL export; an **object** with `connections` is a Gestalt export) and dedupes by name+base URL
-  (Merge/Replace/Skip, chosen in the toolbar); legacy `/webstart` is stripped, modes/icons/javaHome are
-  mapped, ids are regenerated, and **secrets are never imported**. Export writes a schema-versioned
-  Gestalt `connections.json` with no secrets. On first run, if `-Dgestalt.legacy.connections=<path>` (or
-  `GESTALT_LEGACY_CONNECTIONS`) points at a legacy file and the store is empty, it is imported
-  automatically.
+  MCAL export; an **object** with `connections` is the launcher's own export) and dedupes by name+base URL
+  (Merge/Replace/Skip; the JavaFX UI merges); legacy `/webstart` is stripped, modes/icons/javaHome are
+  mapped and the legacy username kept, ids are regenerated, and **a password is never imported**.
+  Export (sidebar ⋯ → *Export connections…*) writes a schema-versioned `connections.json` carrying
+  **every setting** — address, username, Java runtime and heap, JavaFX home, SSL options, legacy DH,
+  custom webstart/digest paths, display scale, close-after-launch, certificate auto-approve, the
+  port-forward command and its switch, the folder tree the connections sit in (with ancestors) and the
+  **custom icons** they use (the sanitized image bytes inline, re-sanitized and content-matched on
+  import) — and nothing that is not a setting: saved passwords live in the OS keychain and are entered
+  once more on the other machine; the certificate decisions (`trusted-certs.json`) are that machine's
+  trust state and are made again there. Importing that file on a fresh install rebuilds the connections
+  as they were; importing it where they already exist merges setting by setting and keeps what is the
+  machine's own (ids, placement, pins, each forward's switch when its command is unchanged). On first
+  run, if `-Dgestalt.legacy.connections=<path>` (or `GESTALT_LEGACY_CONNECTIONS`) points at a legacy
+  file and the store is empty, it is imported automatically.
 - **Launch** — runs the existing Phase 1/2 pipeline unchanged (`LauncherCore.launch`): fetch/parse JNLP
   → download + `CodebaseVerifier` (digest + signature, fail-closed) → spawn the Administrator child JVM.
   The connection's settings are applied to the child JVM (selected Java home, `-Xmx`, console window via

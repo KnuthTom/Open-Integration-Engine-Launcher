@@ -390,6 +390,10 @@
 
 .tooltip { -fx-background-color: -accent; -fx-text-fill: -accent-contrast; -fx-font-size: 12px; -fx-padding: 4 8 4 8; -fx-background-radius: 4; }
 
+/* Import review: the port-forward commands a file carries, in a bordered scrolling list like the certificate rows. */
+.modal-list { -fx-border-color: -border; -fx-border-radius: 6; -fx-border-width: 1; }
+.modal-list .modal-list-body { -fx-padding: 10 12 10 12; }
+
 /* Certificates dialog rows */
 .cert-list { -fx-border-color: -border; -fx-border-radius: 6; -fx-border-width: 1; -fx-background-color: transparent; }
 .cert-row { -fx-padding: 8 10 8 12; -fx-spacing: 10; -fx-alignment: center-left; -fx-cursor: hand; }

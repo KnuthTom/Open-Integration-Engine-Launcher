@@ -34,11 +34,11 @@ class ConnectionImportSingleEntryTest {
         assertEquals("8", c.javaHome.bundledVersion)
         assertEquals("1000m", c.heapSize)
         assertTrue(c.legacyTlsCompatibility)
-        assertNull(c.username) { "credentials are never imported" }
+        assertEquals("bob", c.username) { "the login name comes along; the password never does" }
     }
 
     @Test
-    @DisplayName("a single Gestalt connection object parses and drops any pasted credential")
+    @DisplayName("a single Gestalt connection object parses, username included")
     fun parsesSingleGestaltEntry() {
         val entry = """
             {"id":"abc","name":"Lab","serverUrl":"https://localhost:31065","username":"alice"}
@@ -47,7 +47,7 @@ class ConnectionImportSingleEntryTest {
         val c = ConnectionImport.parseSingleEntry(entry)!!
         assertEquals("Lab", c.name)
         assertEquals("https://localhost:31065", c.serverUrl)
-        assertNull(c.username) { "a pasted credential association is dropped" }
+        assertEquals("alice", c.username)
     }
 
     @Test

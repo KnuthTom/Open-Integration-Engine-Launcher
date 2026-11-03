@@ -73,8 +73,9 @@ data class Connection(
      * A command the launcher runs before launching to open the address's port — a port-forward: a
      * batch file that starts an AWS SSM port-forwarding session, an `ssh -L`, anything that makes the
      * address's host:port listen. The launcher waits for the port, launches, and tears the command (and
-     * what it spawned) down when the last Administrator launched through it exits. Trusted local config
-     * like [javaHome]; never imported from a connection file. Null: no tunnel.
+     * what it spawned) down when the last Administrator launched through it exits. Exported with the
+     * connection like every setting; an import brings it in only under the policy the UI chose after
+     * showing it (ConnectionImport.TunnelPolicy). Null: no tunnel.
      */
     val tunnelCommand: String? = null,
     /**
