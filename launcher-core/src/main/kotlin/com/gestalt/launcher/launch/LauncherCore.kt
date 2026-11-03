@@ -331,11 +331,12 @@ open class LauncherCore(
                     tunnels.recheck(connection, lease) { onPhase(LaunchPhase.Tunneling) }
                     onPhase(LaunchPhase.Launching)
                     val builder = ProcessBuilder(commandWithLogin(plan, autoLogin))
-                    // Display scale "windows": the child declares itself DPI-unaware through the Windows
-                    // application-compatibility layer, so Windows scales its whole window as a bitmap — the
-                    // uniform (if slightly soft) look, correctly sized on a high-DPI desktop, that the
-                    // Administrator had under the old launcher. The JVM itself draws at 100%.
-                    val windowsScaling = ChildJvmCommandBuilder.windowsScaling(connection) && AppPaths.isWindows
+                    // On a Windows desktop the child declares itself DPI-unaware through the application-
+                    // compatibility layer, so Windows scales its whole window as a bitmap, per monitor — the
+                    // uniform (if slightly soft) look, correctly sized on a high-DPI desktop and following the
+                    // screen it is on, that the Administrator had under the old launcher. The JVM itself draws
+                    // at 100% (ChildJvmCommandBuilder). Not a setting: Java's own scaling was tried and withdrawn.
+                    val windowsScaling = AppPaths.isWindows
                     if (windowsScaling) builder.environment()["__COMPAT_LAYER"] = "DPIUNAWARE"
                     val log = ClientLog.open(clientLogDir, plan, extraHeader = if (windowsScaling) listOf("# scaling: Windows (the child runs DPI-unaware: __COMPAT_LAYER=DPIUNAWARE)") else emptyList())
                     if (log != null) {

@@ -57,6 +57,7 @@ class LauncherPipelineTest {
         manifestText: String,
         jarBytes: ByteArray,
         mode: TrustMode = TrustMode.PIN_KNOWN_SIGNERS,
+        commandBuilder: ChildJvmCommandBuilder = ChildJvmCommandBuilder(),
     ): LauncherCore {
         val responses = mapOf(
             "${base}webstart" to jnlpXml.toByteArray(),
@@ -71,6 +72,7 @@ class LauncherPipelineTest {
             // A private publisher store so an "unknown signer" case here never pollutes the shared one.
             trustedSigners = com.gestalt.launcher.gate.TrustedSignerStore(cacheDir.resolveSibling("trusted-signers.json")),
             fetcherFactory = { FakeFetcher(responses) },
+            commandBuilder = commandBuilder,
         )
     }
 
@@ -427,30 +429,24 @@ class LauncherPipelineTest {
     }
 
     @Test
-    @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale (and the embedded JavaFX's glass scale on Java 9+); null and junk get the default 100%")
-    fun displayScaleIsPerConnection(@TempDir dir: Path) {
+    @DisplayName("display scale is not a setting: on a Windows desktop the JVM draws at 100% and the desktop scales the window; elsewhere Java follows the monitor; a stored uiScale is ignored")
+    fun displayScaleIsHardWired(@TempDir dir: Path) {
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val jarBytes = signedCoreJar(dir, ca, "CN=OIE,O=BrightCodeCompany OÜ,C=EE")
-        val launcher = launcher(dir.resolve("cache"), ca, jnlp(), manifestForCore(jarBytes), jarBytes)
+        val onWindows = launcher(dir.resolve("cache"), ca, jnlp(), manifestForCore(jarBytes), jarBytes, commandBuilder = ChildJvmCommandBuilder(windowsDesktop = true))
+        val elsewhere = launcher(dir.resolve("cache2"), ca, jnlp(), manifestForCore(jarBytes), jarBytes, commandBuilder = ChildJvmCommandBuilder(windowsDesktop = false))
 
-        val default = launcher.prepareLaunch(connection()).command
-        assertTrue(ChildJvmCommandBuilder.windowsScaling(connection())) { "Windows scaling by default" }
-        assertTrue(default.contains("-Dsun.java2d.uiScale=1.0")) { "under Windows scaling the JVM draws at 100%; the desktop scales the window" }
-        if (Runtime.version().feature() >= 9) {
-            assertTrue(default.contains("-Dglass.win.uiScale=100%") && default.contains("-Dglass.gtk.uiScale=100%")) { "the embedded JavaFX follows Swing's scale: $default" }
-            assertTrue(default.contains("-Dswing.aatext=true") && default.contains("-Dawt.useSystemAAFontSettings=lcd") && default.contains("-Dsun.java2d.d3d=false")) { "text rendering pinned: $default" }
+        for (stored in listOf(null, "1.25", "0.75", "monitor", "windows", "9; -javaagent:x")) {
+            val win = onWindows.prepareLaunch(connection().copy(uiScale = stored)).command
+            assertTrue(win.contains("-Dsun.java2d.uiScale=${ChildJvmCommandBuilder.WINDOWS_UI_SCALE}")) { "uiScale=$stored: on Windows the JVM draws at 100%, the desktop scales the window: $win" }
+            assertEquals(1, win.count { it.startsWith("-Dsun.java2d.uiScale=") }) { "one factor, the hard-wired one: $win" }
+            assertTrue(win.none { it.contains("javaagent") }) { "a stored value never reaches the command line" }
+            if (Runtime.version().feature() >= 9) {
+                assertTrue(win.contains("-Dglass.win.uiScale=100%") && win.contains("-Dglass.gtk.uiScale=100%")) { "the embedded JavaFX is pinned to Swing's 100%: $win" }
+                assertTrue(win.contains("-Dswing.aatext=true") && win.contains("-Dawt.useSystemAAFontSettings=lcd") && win.contains("-Dsun.java2d.d3d=false")) { "text rendering pinned: $win" }
+            }
+            val other = elsewhere.prepareLaunch(connection().copy(uiScale = stored)).command
+            assertTrue(other.none { it.contains("uiScale") }) { "uiScale=$stored: off Windows no factor is set, Java follows each monitor's DPI: $other" }
         }
-        val monitor = launcher.prepareLaunch(connection().copy(uiScale = "monitor")).command
-        assertTrue(monitor.none { it.contains("uiScale") }) { "Monitor: no factor at all, Java follows each monitor's DPI: $monitor" }
-        assertEquals(ChildJvmCommandBuilder.Scaling.Monitor, ChildJvmCommandBuilder.scalingOf(connection().copy(uiScale = "Monitor")))
-        val threeQuarters = launcher.prepareLaunch(connection().copy(uiScale = "0.75")).command
-        assertTrue(threeQuarters.contains("-Dsun.java2d.uiScale=0.75"))
-        if (Runtime.version().feature() >= 9) assertTrue(threeQuarters.contains("-Dglass.win.uiScale=75%"))
-        assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "0.5")).command.contains("-Dsun.java2d.uiScale=0.5"))
-        val junk = launcher.prepareLaunch(connection().copy(uiScale = "9; -javaagent:x")).command
-        assertTrue(junk.contains("-Dsun.java2d.uiScale=1.0") && junk.none { it.contains("javaagent") }) { "junk never reaches the command line; it falls to the default (Windows scaling)" }
-        assertTrue(ChildJvmCommandBuilder.windowsScaling(connection().copy(uiScale = "Windows")))
-        assertFalse(ChildJvmCommandBuilder.windowsScaling(connection().copy(uiScale = "1.0")))
-        assertEquals(ChildJvmCommandBuilder.Scaling.Fixed("1.25"), ChildJvmCommandBuilder.scalingOf(connection().copy(uiScale = " 1.25 ")))
     }
 }

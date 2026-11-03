@@ -168,38 +168,31 @@ go through (hashed and compared to what *that* server publishes, then the gate o
 A corrupt entry hashes wrong, is dropped, and the jar is fetched. Entries unused for 90 days are pruned.
 `launch.timing` reports `fromPool=` beside `cachedAdmissions=`.
 
-## Display scale and the Administrator's rendering
+## How the Administrator is scaled and drawn
 
-The Java runtime card's **Display scale** (Windows · Monitor | 150% · 125% · 100% · 75% — one choice
-across both groups) decides who scales the Administrator on a high-DPI desktop, per connection:
+There is no display-scale setting. On a Windows desktop the Administrator is scaled by **Windows**: the
+JVM draws at 100% (`sun.java2d.uiScale=1.0`, the embedded JavaFX — the tag editor is a `JFXPanel` —
+pinned to the same with `glass.win.uiScale` / `glass.gtk.uiScale`, since on its own it would follow the
+monitor and sit at 150% inside a 100% window) and the child runs DPI-unaware
+(`__COMPAT_LAYER=DPIUNAWARE` in its environment), so the desktop scales the whole window as a bitmap,
+**per monitor**: drag it to a screen with a different scale setting and it takes that screen's size, the
+way any older program does. The size you expect, everything in step, slightly soft — the look the
+Administrator had under the old launcher. The client log header says `# scaling: Windows`.
 
-- **Windows** (the default) hands the scaling to the desktop: the JVM draws at 100% and the child runs
-  DPI-unaware (`__COMPAT_LAYER=DPIUNAWARE` in its environment), so Windows scales the whole window as a
-  bitmap, **per monitor** — drag the window to a screen with a different scale setting and it takes
-  that screen's size, the way any older program does. The size you expect, everything in step, slightly
-  soft; the look the Administrator had under the old launcher. The client log header says
-  `# scaling: Windows` when it is in force. (On other platforms this is simply 100%.)
-- **Monitor** sets no factor at all and lets Java 9+ follow each monitor's own DPI as the window moves
-  between screens: pixel-sharp where the desktop runs at 100% or 200%, but at 125% or 150% it is Java
-  scaling a UI laid out for 100% — text stays sharp, one-pixel borders and bitmap icons come out uneven.
-- **A percentage** is `sun.java2d.uiScale`, an absolute factor Java applies on every monitor alike:
-  **100% is the Administrator at its own size, every pixel drawn 1:1** — crisp, but small on a high-DPI
-  screen and not following the desktop. Other factors have Monitor's unevenness; 150% can run past the
-  screen edge.
+Java's own scaling (`sun.java2d.uiScale` at 125%, 150%, or following the monitor) was offered in 1.1.x
+and withdrawn: the client's Swing look-and-feel was laid out for 100%, so a fractional factor keeps
+text sharp but leaves one-pixel borders and bitmap icons uneven, a fixed factor never follows the
+monitor, and users said they would not use it for that reason alone. A `uiScale` a connection still
+carries from an older `connections.json` is ignored. On other platforms no factor is set and Java 9+
+follows each monitor's DPI itself; Java 8 is scaled by the desktop everywhere.
 
-Java 8 ignores `uiScale` whatever is chosen; its window is scaled by Windows the same way.
-
-What else the launcher sets for the client's rendering on Java 9+: with a fixed factor (Windows or a
-percentage) the embedded JavaFX (the tag editor is a `JFXPanel`) gets the same one (`glass.win.uiScale`
-/ `glass.gtk.uiScale` — on its own it would follow the monitor's DPI and sit at 150% inside a 100%
-window; under Monitor both toolkits follow the monitor on their own); Swing text is drawn with **subpixel
+What else the launcher sets for the client's rendering on Java 9+: Swing text is drawn with **subpixel
 (LCD) antialiasing**, pinned (`awt.useSystemAAFontSettings=lcd`, `swing.aatext=true` — Java 9+
 rasterizes with FreeType, and its grayscale antialiasing comes out light and thin; LCD is what the
-desktop's own text uses and keeps the weight even at every scale); and the **software pipeline** rather
-than Direct3D (`sun.java2d.d3d=false` — the GPU path composites fractional-scale glyphs and one-pixel
-lines and softens or unevens them; the Swing UI needs no GPU). What it cannot change: the client's
-fonts and look-and-feel (the Administrator sets them itself). The client log header records every
-option that was in force.
+desktop's own text uses and keeps the weight even); and the **software pipeline** rather than Direct3D
+(`sun.java2d.d3d=false` — the GPU path composites one-pixel lines and glyphs and softens or unevens
+them; the Swing UI needs no GPU). What it cannot change: the client's fonts and look-and-feel (the
+Administrator sets them itself). The client log header records every option that was in force.
 
 A first launch pulls every jar through the connection (minutes over an SSM forward); the launch toast
 carries a progress bar that fills jar by jar, and the Launch button counts them, so a long download
@@ -337,7 +330,7 @@ What it does:
   mapped and the legacy username kept, ids are regenerated, and **a password is never imported**.
   Export (sidebar ⋯ → *Export connections…*) writes a schema-versioned `connections.json` carrying
   **every setting** — address, username, Java runtime and heap, JavaFX home, SSL options, legacy DH,
-  custom webstart/digest paths, display scale, close-after-launch, certificate auto-approve, the
+  custom webstart/digest paths, close-after-launch, certificate auto-approve, the
   port-forward command and its switch, the folder tree the connections sit in (with ancestors) and the
   **custom icons** they use (the sanitized image bytes inline, re-sanitized and content-matched on
   import) — and nothing that is not a setting: saved passwords live in the OS keychain and are entered

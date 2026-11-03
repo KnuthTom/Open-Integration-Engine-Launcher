@@ -6,6 +6,7 @@
 
 package com.gestalt.launcher.launch
 
+import com.gestalt.launcher.AppPaths
 import com.gestalt.launcher.gate.AdmittedJar
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.JavaHomeMode
@@ -51,6 +52,8 @@ import java.nio.file.Path
  */
 class ChildJvmCommandBuilder(
     private val javaExe: String = defaultJavaExe(),
+    /** Whether the launcher runs on a Windows desktop, where the desktop scales the Administrator's window (see [build]). */
+    private val windowsDesktop: Boolean = AppPaths.isWindows,
 ) {
     fun build(
         connection: Connection,
@@ -101,35 +104,25 @@ class ChildJvmCommandBuilder(
             cmd += "-Djdk.tls.ephemeralDHKeySize=legacy"
         }
 
-        // Display scale (sun.java2d.uiScale): the connection's factor when well-formed, else 100% — the
-        // Administrator at its own size, every pixel of its Swing UI drawn 1:1, which is the crisp look.
-        // Any other factor is Java scaling a UI laid out for 100%, and fractional ones leave seams. Java 8
-        // ignores the property (Windows scales the whole window itself); on Java 9+ it replaces the
-        // DPI-derived scale the JVM would otherwise apply.
-        // Who scales the Administrator on a high-DPI desktop — see [scalingOf]:
-        //  - Windows (the default): the JVM draws at 100% and the child runs DPI-unaware (LauncherCore sets
-        //    the compatibility layer), so Windows scales the whole window as a bitmap, per monitor.
-        //  - Monitor: no factor at all; Java 9+ follows each monitor's DPI itself (crisp at 200%, seams at 150%).
-        //  - A percentage: a fixed absolute factor on every monitor.
-        val scaling = scalingOf(connection)
-        val uiScale: String? = when (scaling) {
-            Scaling.Windows -> DEFAULT_UI_SCALE
-            Scaling.Monitor -> null
-            is Scaling.Fixed -> scaling.factor
-        }
-        uiScale?.let { cmd += "-Dsun.java2d.uiScale=$it" }
-
+        // Display scale is not a setting. On a Windows desktop the Administrator is scaled by Windows: the
+        // JVM draws at 100% (`sun.java2d.uiScale=1.0`, the embedded JavaFX pinned to the same — its tag
+        // editor is a JFXPanel, and on its own JavaFX would follow the monitor's DPI and sit at 150% inside
+        // a 100% window) and the child runs DPI-unaware (LauncherCore sets `__COMPAT_LAYER=DPIUNAWARE`), so
+        // the desktop scales the whole window as a bitmap, per monitor, following whichever screen it is
+        // on: uniform, correctly sized, slightly soft — the look the Administrator had under the old
+        // launcher. Java's own fractional scaling was offered and withdrawn: sharp text, but one-pixel
+        // borders and icons come out uneven and the factor never follows the monitor. Elsewhere no factor
+        // is set and Java 9+ follows each monitor's DPI itself. A `uiScale` a connection still carries
+        // from an older file is ignored.
         val targetMajor = targetMajor(connection, javaHome)
-        if (targetMajor >= 9) {
-            // The Administrator embeds JavaFX (its tag editor is a JFXPanel). JavaFX scales by the monitor's
-            // DPI on its own, so with a fixed Swing factor a 100% Swing window would carry a 150% JavaFX
-            // panel: give it the same factor (glass takes a percentage). Windows and GTK name the property
-            // differently. Following the monitor, both toolkits do that on their own.
-            uiScale?.let { factor ->
-                val percent = (factor.toDouble() * 100).toInt()
-                cmd += "-Dglass.win.uiScale=$percent%"
-                cmd += "-Dglass.gtk.uiScale=$percent%"
+        if (windowsDesktop) {
+            cmd += "-Dsun.java2d.uiScale=$WINDOWS_UI_SCALE"
+            if (targetMajor >= 9) {
+                cmd += "-Dglass.win.uiScale=100%"
+                cmd += "-Dglass.gtk.uiScale=100%"
             }
+        }
+        if (targetMajor >= 9) {
             // Text: subpixel (LCD) antialiasing, pinned. Java 9+ rasterizes with FreeType, and grayscale AA
             // there comes out light and thin; LCD rendering is what the desktop's own text uses and keeps the
             // weight even. The software pipeline rather than Direct3D: D3D composites fractional-scale glyphs
@@ -230,36 +223,10 @@ class ChildJvmCommandBuilder(
             resourcesDir = System.getProperty("compose.application.resources.dir"),
         )
 
-    /** How the Administrator is scaled, from the connection's `uiScale` — see [scalingOf]. */
-    sealed class Scaling {
-        object Windows : Scaling()
-        object Monitor : Scaling()
-        data class Fixed(val factor: String) : Scaling()
-    }
-
     companion object {
         private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
-        /** 0.5 … 4, optionally with two decimals: "1", "1.0", "1.25", "1.5", "2". */
-        private val UI_SCALE_PATTERN = Regex("^(0\\.[5-9]\\d?|[1-3](\\.\\d{1,2})?|4(\\.0{1,2})?)$")
-        /** The factor the JVM draws at under Windows scaling: the Administrator's own size. */
-        const val DEFAULT_UI_SCALE = "1.0"
-        /** The `uiScale` value that hands scaling to Windows (the child runs DPI-unaware) — also what null means. */
-        const val WINDOWS_SCALING = "windows"
-        /** The `uiScale` value that lets Java follow each monitor's DPI itself. */
-        const val MONITOR_SCALING = "monitor"
-
-        /** Null or blank, "windows", or anything unrecognised → Windows; "monitor" → Monitor; a well-formed factor → Fixed. */
-        fun scalingOf(connection: Connection): Scaling {
-            val v = connection.uiScale?.trim()?.lowercase().orEmpty()
-            return when {
-                v.isEmpty() || v == WINDOWS_SCALING -> Scaling.Windows
-                v == MONITOR_SCALING -> Scaling.Monitor
-                v.matches(UI_SCALE_PATTERN) -> Scaling.Fixed(v)
-                else -> Scaling.Windows
-            }
-        }
-
-        fun windowsScaling(connection: Connection): Boolean = scalingOf(connection) == Scaling.Windows
+        /** The factor the JVM draws at on a Windows desktop, where the desktop scales the window (see [build]). */
+        const val WINDOWS_UI_SCALE = "1.0"
         private const val MAX_MODULE_ARGS = 256
 
         /** The only JVM-arg flags the launcher will accept from a (untrusted) server JNLP. */

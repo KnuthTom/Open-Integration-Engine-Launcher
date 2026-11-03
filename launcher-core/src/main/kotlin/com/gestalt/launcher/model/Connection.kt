@@ -35,11 +35,8 @@ import java.net.URI
  *   "Date added" sort. Null for rows that predate the field — sorted as oldest.
  * @property lastLaunchedAt ISO-8601 instant of the last launch this launcher started for it; the
  *   "Last launched" sort and the header's "Launched 12 min ago". Null = never launched from here.
- * @property uiScale who scales the Administrator on a high-DPI desktop (ChildJvmCommandBuilder.scalingOf):
- *   null or "windows" (the default) — the JVM draws at 100% and Windows scales the whole window as a
- *   bitmap, per monitor, the child running DPI-unaware: uniform, correctly sized, a little soft;
- *   "monitor" — Java follows each monitor's DPI itself (crisp at 200%, seams at 150%); or a fixed factor
- *   ("1.5", "1.25", "1.0", "0.75" — `sun.java2d.uiScale`) on every monitor.
+ * @property uiScale no longer a setting (1.1.3): the Administrator is scaled by the Windows desktop
+ *   (ChildJvmCommandBuilder) whatever this says. Kept so files written by older versions still load.
  */
 @Serializable
 data class Connection(

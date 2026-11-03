@@ -10,7 +10,6 @@ import com.gestalt.fx.model.LaunchState
 import com.gestalt.fx.model.LauncherModel
 import com.gestalt.fx.model.TreeRows
 import com.gestalt.launcher.icon.CustomIconStore
-import com.gestalt.launcher.launch.ChildJvmCommandBuilder
 import com.gestalt.launcher.launch.LaunchPhase
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.JavaHomeConfig
@@ -108,10 +107,6 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val heapSeg = Controls.Segmented(listOf("512m" to "512m", "1g" to "1g", "2g" to "2g", "4g" to "4g"), mono = true) { v -> update { it.copy(heapSize = v) } }
     private val heapError = Label("Use a size like 1024m or 2g").apply { styleClass += "field-error"; isVisible = false; isManaged = false }
     private val consoleSwitch = Controls.Switch { on -> update { it.copy(showJavaConsole = on) } }
-    // One setting, two groups (who scales, or a fixed factor): exactly one segment across both is lit.
-    private val scaleWhoSeg = Controls.Segmented(listOf(ChildJvmCommandBuilder.WINDOWS_SCALING to "Windows", ChildJvmCommandBuilder.MONITOR_SCALING to "Monitor")) { v -> update { it.copy(uiScale = v) } }
-    private val scalePctSeg = Controls.Segmented(listOf("1.5" to "150%", "1.25" to "125%", "1.0" to "100%", "0.75" to "75%")) { v -> update { it.copy(uiScale = v) } }
-    private val scaleNote = Label().apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
 
     // certificates card
     private val reviewBadge = Label().apply { styleClass += "badge-warn"; isVisible = false; isManaged = false }
@@ -210,13 +205,13 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         // Rows with fixed-size controls wrap onto a second line when the card is narrow, instead of running past its edge.
         val heapRow = VBox(4.0, FlowPane(8.0, 6.0, heapField, heapSeg).apply { alignment = Pos.CENTER_LEFT; minWidth = 0.0 }, heapError)
         val consoleRow = HBox(10.0, consoleSwitch, Label("Open a console window alongside the Administrator").apply { styleClass += "field-note"; minWidth = 0.0 }).apply { alignment = Pos.CENTER_LEFT }
-        val scaleRow = VBox(4.0, FlowPane(8.0, 6.0, scaleWhoSeg, scalePctSeg).apply { alignment = Pos.CENTER_LEFT; minWidth = 0.0 }, scaleNote).apply { minWidth = 0.0 }
+        // No display-scale control: on Windows the desktop scales the Administrator's window (the child runs
+        // DPI-unaware), per monitor — hard-wired in ChildJvmCommandBuilder / LauncherCore.
         val javaCard = Controls.card("Java runtime", Controls.fieldGrid().apply {
             row(0, "Java home", javaRow)
             row(1, "JavaFX home", fxRow)
             row(2, "Max heap", heapRow)
             row(3, "Java console", consoleRow)
-            row(4, "Display scale", scaleRow)
         })
         customJavaField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(javaHome = it.javaHome.copy(customPath = v)) } }
         javaFxField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(javaFxHome = v?.takeIf { s -> s.isNotBlank() }) } }
@@ -373,22 +368,6 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             val heapOk = heap.isEmpty() || HEAP_PATTERN.matches(heap)
             heapError.isVisible = !heapOk; heapError.isManaged = !heapOk
             consoleSwitch.on = d.showJavaConsole
-            val scaling = ChildJvmCommandBuilder.scalingOf(d)
-            val scaleKey = when (scaling) {
-                ChildJvmCommandBuilder.Scaling.Windows -> ChildJvmCommandBuilder.WINDOWS_SCALING
-                ChildJvmCommandBuilder.Scaling.Monitor -> ChildJvmCommandBuilder.MONITOR_SCALING
-                is ChildJvmCommandBuilder.Scaling.Fixed -> scaling.factor
-            }
-            scaleWhoSeg.value = scaleKey // a key the group lacks lights none of its segments
-            scalePctSeg.value = scaleKey
-            scaleNote.text = when (scaling) {
-                ChildJvmCommandBuilder.Scaling.Windows ->
-                    "Windows scales the whole window the way it scales any older program, per monitor — drag it to another screen and it follows that screen's setting: the size you expect, everything in step, slightly soft. The look the Administrator had under the old launcher."
-                ChildJvmCommandBuilder.Scaling.Monitor ->
-                    "Java follows each monitor's own scale setting as the window moves between screens: pixel-sharp at 100% and 200%; at 125% or 150% one-pixel borders and icons come out uneven."
-                is ChildJvmCommandBuilder.Scaling.Fixed ->
-                    "Java draws the Administrator at this one size on every monitor: 100% is pixel-exact; larger keeps text sharp but leaves one-pixel borders and icons uneven, and 150% can run past the screen edge."
-            }
 
             renderCertificates(d)
             autoApprove.on = d.autoApproveCertificates
