@@ -101,19 +101,35 @@ class ChildJvmCommandBuilder(
             cmd += "-Djdk.tls.ephemeralDHKeySize=legacy"
         }
 
-        // Display scale (sun.java2d.uiScale): the connection's factor when well-formed, else the default
-        // (75% — the Administrator's windows are laid out for a 100% screen and overflow a high-DPI one at
-        // the system scale). Java 8 ignores the property; on Java 9+ it replaces the DPI-derived scale the
-        // JVM would otherwise apply to Swing.
+        // Display scale (sun.java2d.uiScale): the connection's factor when well-formed, else 100% — the
+        // Administrator at its own size, every pixel of its Swing UI drawn 1:1, which is the crisp look.
+        // Any other factor is Java scaling a UI laid out for 100%, and fractional ones leave seams. Java 8
+        // ignores the property (Windows scales the whole window itself); on Java 9+ it replaces the
+        // DPI-derived scale the JVM would otherwise apply.
         val uiScale = connection.uiScale?.trim()?.takeIf { it.matches(UI_SCALE_PATTERN) } ?: DEFAULT_UI_SCALE
         cmd += "-Dsun.java2d.uiScale=$uiScale"
+
+        val targetMajor = targetMajor(connection, javaHome)
+        if (targetMajor >= 9) {
+            // The Administrator embeds JavaFX (its tag editor is a JFXPanel). JavaFX scales by the monitor's
+            // DPI on its own, so without this a 100% Swing window carries a 150% JavaFX panel: give it the
+            // same factor (glass takes a percentage). Windows and GTK name the property differently.
+            val percent = (uiScale.toDouble() * 100).toInt()
+            cmd += "-Dglass.win.uiScale=$percent%"
+            cmd += "-Dglass.gtk.uiScale=$percent%"
+            // Swing text antialiased the way the desktop renders its own (subpixel where the desktop does);
+            // Java 9+ rasterizes with FreeType and, left to defaults, reads the desktop hints anyway — this
+            // pins it so a session with the hints unavailable (a remote desktop) does not fall to aliased text.
+            cmd += "-Dawt.useSystemAAFontSettings=on"
+            cmd += "-Dswing.aatext=true"
+        }
 
         extraSystemProperties.forEach { (k, v) -> cmd += "-D$k=$v" }
 
         // The modern Mirth client needs JPMS module-encapsulation flags to run on Java 9+. Pass ONLY the
         // curated allowlist from the server's JNLP (never -D/-javaagent/-X), and only on a Java 9+ target
         // where the flags are valid — on Java 8 they'd abort the JVM. See [curateModuleArgs] for why safe.
-        if (targetMajor(connection, javaHome) >= 9) {
+        if (targetMajor >= 9) {
             cmd += curateModuleArgs(serverJvmArgs)
         }
 
@@ -203,8 +219,8 @@ class ChildJvmCommandBuilder(
         private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
         /** 0.5 … 4, optionally with two decimals: "1", "1.0", "1.25", "1.5", "2". */
         private val UI_SCALE_PATTERN = Regex("^(0\\.[5-9]\\d?|[1-3](\\.\\d{1,2})?|4(\\.0{1,2})?)$")
-        /** The display scale a connection gets when it has none set. */
-        const val DEFAULT_UI_SCALE = "0.75"
+        /** The display scale a connection gets when it has none set: the Administrator's own size. */
+        const val DEFAULT_UI_SCALE = "1.0"
         private const val MAX_MODULE_ARGS = 256
 
         /** The only JVM-arg flags the launcher will accept from a (untrusted) server JNLP. */

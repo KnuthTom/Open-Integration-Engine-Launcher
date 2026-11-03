@@ -164,18 +164,22 @@ go through (hashed and compared to what *that* server publishes, then the gate o
 A corrupt entry hashes wrong, is dropped, and the jar is fetched. Entries unused for 90 days are pruned.
 `launch.timing` reports `fromPool=` beside `cachedAdmissions=`.
 
-## Display scale
+## Display scale and the Administrator's rendering
 
-The Java runtime card's **Display scale** (Auto · 100% · 75% · 50%) is the Administrator's
-`sun.java2d.uiScale`, per connection — an absolute factor: 100% is the client's unscaled size whatever
-Windows is set to. Windows cannot size the Administrator to the screen (its DPI scaling is what makes
-the client overflow a high-DPI desktop), so **Auto**, the default, does it: the client's windows are laid
-out for roughly 2560 × 1440 physical pixels at 100%, and Auto takes the primary screen's physical size
-and picks the largest factor that keeps that on the screen — 75% on a 1920 × 1080 display, 100% on
-2560 × 1440, 125% on 4K, 50% on a 1366 × 768 laptop. The card's note shows what Auto resolves to on
-this machine; it is resolved at launch, on the machine that launches, so a connection on Auto stays
-Auto when exported. Java 8 ignores the property (Windows scales the whole window instead); on Java 17 it
-replaces the DPI-derived scale. Without a screen (the CLI) the engine's default is 75%.
+The Java runtime card's **Display scale** (100% · 75% · 50%) is the Administrator's `sun.java2d.uiScale`,
+per connection — an absolute factor: **100%, the default, is the Administrator at its own size, every
+pixel of its Swing UI drawn 1:1**, which is the crisp look. Smaller factors fit more of it on a small or
+high-DPI screen; a fractional factor is Java scaling a UI laid out for 100% and leaves seams and soft
+edges in places (the client's old Swing look-and-feel was never built for it). Java 8 ignores the
+property and Windows scales the whole window itself.
+
+What else the launcher sets for the client's rendering on Java 9+: the embedded JavaFX (the tag editor
+is a `JFXPanel`) gets the same factor (`glass.win.uiScale` / `glass.gtk.uiScale` — on its own it would
+follow the monitor's DPI and sit at 150% inside a 100% window), and Swing text is antialiased the way
+the desktop renders its own (`awt.useSystemAAFontSettings=on`, `swing.aatext=true`). What it cannot
+change: the client's fonts and look-and-feel (the Administrator sets them itself), and the rasterizer
+(Java 9+ uses FreeType, Java 8 used T2K — text is drawn a little lighter on 17 than MCAL drew it on 8).
+The client log header records every option that was in force.
 
 ## Sign-in (auto-login)
 

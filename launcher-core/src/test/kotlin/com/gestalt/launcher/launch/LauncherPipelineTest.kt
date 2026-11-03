@@ -427,17 +427,23 @@ class LauncherPipelineTest {
     }
 
     @Test
-    @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale; null and junk get the default 0.75")
+    @DisplayName("display scale is per connection: a well-formed factor becomes -Dsun.java2d.uiScale (and the embedded JavaFX's glass scale on Java 9+); null and junk get the default 100%")
     fun displayScaleIsPerConnection(@TempDir dir: Path) {
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val jarBytes = signedCoreJar(dir, ca, "CN=OIE,O=BrightCodeCompany OÜ,C=EE")
         val launcher = launcher(dir.resolve("cache"), ca, jnlp(), manifestForCore(jarBytes), jarBytes)
 
-        assertTrue(launcher.prepareLaunch(connection()).command.contains("-Dsun.java2d.uiScale=0.75")) { "75% by default: the Administrator fits a high-DPI screen" }
-        assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "1.0")).command.contains("-Dsun.java2d.uiScale=1.0"))
-        assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "1.25")).command.contains("-Dsun.java2d.uiScale=1.25"))
+        val default = launcher.prepareLaunch(connection()).command
+        assertTrue(default.contains("-Dsun.java2d.uiScale=1.0")) { "100% by default: the Administrator at its own size" }
+        if (Runtime.version().feature() >= 9) {
+            assertTrue(default.contains("-Dglass.win.uiScale=100%") && default.contains("-Dglass.gtk.uiScale=100%")) { "the embedded JavaFX follows Swing's scale: $default" }
+            assertTrue(default.contains("-Dswing.aatext=true"))
+        }
+        val threeQuarters = launcher.prepareLaunch(connection().copy(uiScale = "0.75")).command
+        assertTrue(threeQuarters.contains("-Dsun.java2d.uiScale=0.75"))
+        if (Runtime.version().feature() >= 9) assertTrue(threeQuarters.contains("-Dglass.win.uiScale=75%"))
         assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "0.5")).command.contains("-Dsun.java2d.uiScale=0.5"))
         val junk = launcher.prepareLaunch(connection().copy(uiScale = "9; -javaagent:x")).command
-        assertTrue(junk.contains("-Dsun.java2d.uiScale=0.75") && junk.none { it.contains("javaagent") }) { "junk never reaches the command line; the default does" }
+        assertTrue(junk.contains("-Dsun.java2d.uiScale=1.0") && junk.none { it.contains("javaagent") }) { "junk never reaches the command line; the default does" }
     }
 }

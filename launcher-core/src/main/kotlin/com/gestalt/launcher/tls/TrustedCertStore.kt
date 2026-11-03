@@ -196,6 +196,12 @@ class TrustedCertStore(private val file: Path = AppPaths.dataDir.resolve(FILE_NA
                 .copy(status = status, decidedAt = now(), autoApproved = autoApproved && status == CertTrustStatus.TRUSTED)
                 .withSeenAt(host, connectionId)
             entries[fp] = updated
+            // A decision about what this host presents now retires what it presented before and was never
+            // decided (a rotated certificate's PENDING entry): a review item nobody could act on otherwise.
+            if (host != null) {
+                val stale = entries.values.filter { it.sha256 != fp && it.status == CertTrustStatus.PENDING && host in it.hosts }
+                stale.forEach { entries.remove(it.sha256); AuditLog.event("servercert.forget", "host" to host, "sha256" to it.sha256, "reason" to "superseded by a decision for this host") }
+            }
             save()
             updated
         }

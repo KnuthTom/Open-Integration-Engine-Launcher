@@ -6,11 +6,11 @@
 
 package com.gestalt.fx.ui
 
-import com.gestalt.fx.model.DisplayScale
 import com.gestalt.fx.model.LaunchState
 import com.gestalt.fx.model.LauncherModel
 import com.gestalt.fx.model.TreeRows
 import com.gestalt.launcher.icon.CustomIconStore
+import com.gestalt.launcher.launch.ChildJvmCommandBuilder
 import com.gestalt.launcher.launch.LaunchPhase
 import com.gestalt.launcher.model.Connection
 import com.gestalt.launcher.model.JavaHomeConfig
@@ -27,6 +27,7 @@ import javafx.scene.control.PasswordField
 import javafx.scene.control.ScrollPane
 import javafx.scene.control.TextField
 import javafx.scene.layout.BorderPane
+import javafx.scene.layout.FlowPane
 import javafx.scene.layout.GridPane
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Priority
@@ -107,14 +108,14 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val heapSeg = Controls.Segmented(listOf("512m" to "512m", "1g" to "1g", "2g" to "2g", "4g" to "4g"), mono = true) { v -> update { it.copy(heapSize = v) } }
     private val heapError = Label("Use a size like 1024m or 2g").apply { styleClass += "field-error"; isVisible = false; isManaged = false }
     private val consoleSwitch = Controls.Switch { on -> update { it.copy(showJavaConsole = on) } }
-    private val scaleSeg = Controls.Segmented<String?>(listOf(null to "Auto", "1.0" to "100%", "0.75" to "75%", "0.5" to "50%")) { v -> update { it.copy(uiScale = v) } }
-    private val scaleNote = Label().apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
+    private val scaleSeg = Controls.Segmented(listOf("1.0" to "100%", "0.75" to "75%", "0.5" to "50%")) { v -> update { it.copy(uiScale = v) } }
+    private val scaleNote = Label("100% is the Administrator's own size; smaller fits more of it on a small or high-DPI screen").apply { styleClass += "field-note"; isWrapText = true; minWidth = 0.0 }
 
     // certificates card
     private val reviewBadge = Label().apply { styleClass += "badge-warn"; isVisible = false; isManaged = false }
     private val reviewButton = Controls.button("Review", Controls.ButtonKind.Outline, Icons.glyph("shield-check", 14.0)) { host.openCertificates() }
     private val certIcon = StackPane()
-    private val certLabel = Label().apply { styleClass += "strong" }
+    private val certLabel = Label().apply { styleClass += "strong"; minWidth = Region.USE_PREF_SIZE }
     private val certDetail = Label().apply { styleClass += "small"; styleClass += "muted"; minWidth = 0.0 }
     private val autoApprove = Controls.CheckRow("Auto-approve new certificates") { on -> host.setAutoApprove(on) }
 
@@ -161,7 +162,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             StackPane.setMargin(pencil, Insets(0.0, -1.0, -1.0, 0.0))
             minWidth = 40.0; prefWidth = 40.0; maxWidth = 40.0; minHeight = 40.0; prefHeight = 40.0; maxHeight = 40.0
         }
-        iconButton.setOnAction { host.launchActive() }
+        iconButton.setOnAction { host.changeIcon() } // the tile is the connection's icon, not a second Launch: clicking it changes the icon, like the pencil
+        iconButton.tooltip = javafx.scene.control.Tooltip("Change icon")
         val sub = HBox(Icons.glyph("folder", 12.0), pathLabel, Label("·"), lastLabel).apply { styleClass += "header-sub" }
         val titles = VBox(4.0, nameField, sub).apply { minWidth = 0.0; HBox.setHgrow(this, Priority.ALWAYS) }
         nameField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(name = v.orEmpty()) } }
@@ -199,11 +201,12 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         // The note goes under the choice, not beside it: beside it, the two fought for the half-width card and the choice lost.
         val javaRow = VBox(
             4.0,
-            HBox(8.0, javaButton, customJavaField, browseJava).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(customJavaField, Priority.ALWAYS); customJavaField.minWidth = 0.0 },
+            HBox(8.0, javaButton, customJavaField, browseJava).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(customJavaField, Priority.ALWAYS); customJavaField.minWidth = 0.0; minWidth = 0.0 },
             javaNote,
         ).apply { minWidth = 0.0 }
         val fxRow = HBox(8.0, javaFxField, browseFx).apply { alignment = Pos.CENTER_LEFT; HBox.setHgrow(javaFxField, Priority.ALWAYS); javaFxField.minWidth = 0.0 }
-        val heapRow = VBox(4.0, HBox(8.0, heapField, heapSeg).apply { alignment = Pos.CENTER_LEFT }, heapError)
+        // Rows with fixed-size controls wrap onto a second line when the card is narrow, instead of running past its edge.
+        val heapRow = VBox(4.0, FlowPane(8.0, 6.0, heapField, heapSeg).apply { alignment = Pos.CENTER_LEFT; minWidth = 0.0 }, heapError)
         val consoleRow = HBox(10.0, consoleSwitch, Label("Open a console window alongside the Administrator").apply { styleClass += "field-note"; minWidth = 0.0 }).apply { alignment = Pos.CENTER_LEFT }
         val scaleRow = VBox(4.0, scaleSeg, scaleNote).apply { minWidth = 0.0 }
         val javaCard = Controls.card("Java runtime", Controls.fieldGrid().apply {
@@ -220,7 +223,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val certHead = HBox(12.0, Label("Certificates").apply { styleClass += "card-title" }, Controls.spacer(), reviewButton).apply { styleClass += "card-head" }
         reviewButton.graphic = HBox(8.0, Icons.glyph("shield-check", 14.0), Label("Review"), reviewBadge).apply { alignment = Pos.CENTER_LEFT }
         reviewButton.text = ""
-        val certRow = HBox(8.0, Label("This server").apply { styleClass += "muted" }, certIcon, certLabel, certDetail).apply { alignment = Pos.CENTER_LEFT; padding = Insets(12.0, 0.0, 0.0, 0.0); HBox.setHgrow(certDetail, Priority.ALWAYS) }
+        // The status words keep their width; only the fingerprint · expiry detail gives way when the card is narrow.
+        val certRow = HBox(8.0, Label("This server").apply { styleClass += "muted"; minWidth = Region.USE_PREF_SIZE }, certIcon, certLabel, certDetail).apply { alignment = Pos.CENTER_LEFT; padding = Insets(12.0, 0.0, 0.0, 0.0); HBox.setHgrow(certDetail, Priority.ALWAYS) }
         val autoRow = HBox(10.0, autoApprove, Label("Skips the trust prompt").apply { styleClass += "field-note"; minWidth = 0.0 }).apply { alignment = Pos.CENTER_LEFT; padding = Insets(10.0, 0.0, 0.0, 0.0) }
         val certCard = Controls.card("Certificates", VBox(certRow, autoRow), head = certHead)
 
@@ -248,7 +252,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         (leftCards + rightCards).forEach { GridPane.setHgrow(it, Priority.ALWAYS); it.maxWidth = Double.MAX_VALUE; GridPane.setValignment(it, javafx.geometry.VPos.TOP) }
         layoutCards(true)
         scroll.content = body
-        body.widthProperty().addListener { _, _, w -> val two = w.toDouble() >= 700.0; if (two != twoColumns) { layoutCards(two); refreshTls() } }
+        // Two columns only when each card can hold its widest row (a segmented control beside its field);
+        // below that the cards stack, rather than their rows running past the card's edge.
+        body.widthProperty().addListener { _, _, w -> val two = w.toDouble() >= TWO_COLUMN_MIN_WIDTH; if (two != twoColumns) { layoutCards(two); refreshTls() } }
 
         // --- footer ---
         closeAfter.on = model.closeAfterLaunch.get()
@@ -365,9 +371,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
             val heapOk = heap.isEmpty() || HEAP_PATTERN.matches(heap)
             heapError.isVisible = !heapOk; heapError.isManaged = !heapOk
             consoleSwitch.on = d.showJavaConsole
-            scaleSeg.value = d.uiScale?.trim()?.takeIf { it.isNotEmpty() }
-            val autoPct = runCatching { (DisplayScale.autoForPrimaryScreen().toDouble() * 100).toInt() }.getOrNull()
-            scaleNote.text = "Auto picks the largest scale that keeps the Administrator on this screen" + (autoPct?.let { " — $it% here" } ?: "") + "; 100% is its unscaled size"
+            scaleSeg.value = d.uiScale?.trim()?.takeIf { it.isNotEmpty() } ?: ChildJvmCommandBuilder.DEFAULT_UI_SCALE
 
             renderCertificates(d)
             autoApprove.on = d.autoApproveCertificates
@@ -533,6 +537,8 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     }
 
     companion object {
+        /** Two cards of 128 px labels + the widest row (~260 px) + card padding, plus the body's gaps. */
+        private const val TWO_COLUMN_MIN_WIDTH = 820.0
         private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
         const val SSL_DEFAULT = "TLSv1.3,TLSv1.2"
         const val CIPHER_DEFAULT = "TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256"

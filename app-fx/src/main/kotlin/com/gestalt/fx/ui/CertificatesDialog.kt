@@ -80,7 +80,7 @@ class CertificatesDialog(private val model: LauncherModel, private val modal: Mo
         abstract val isCurrent: Boolean
         data class Cert(val entry: TrustedCert, override val isCurrent: Boolean) : Row() {
             override val key get() = "cert:${entry.sha256}"
-            override val rank get() = when { entry.status == CertTrustStatus.PENDING -> 0; entry.status == CertTrustStatus.REJECTED -> 3; entry.isExpired() -> 1; else -> 2 }
+            override val rank get() = when { entry.status == CertTrustStatus.PENDING -> 0; entry.status == CertTrustStatus.REJECTED -> 3; entry.isExpired() -> 2; else -> 2 }
         }
         data class Signer(val entry: TrustedSigner) : Row() {
             override val key get() = "signer:${entry.sha256}"
@@ -95,7 +95,7 @@ class CertificatesDialog(private val model: LauncherModel, private val modal: Mo
         val certs = model.trustedCerts.list().map { e -> Row.Cert(e, isCurrent = (hostPort != null && hostPort in e.hosts) || (c != null && c.id in e.connectionIds)) }
         val signers = model.trustedSigners.list().map { Row.Signer(it) }
         val all = certs + signers
-        val shown = if (reviewOnly) all.filter { it.rank <= 1 } else all
+        val shown = if (reviewOnly) all.filter { it.rank == 0 } else all
         return shown.sortedWith(compareBy<Row> { if (it.isCurrent) 0 else 1 }.thenBy { it.rank }.thenBy { title(it).lowercase() })
     }
 
@@ -106,7 +106,9 @@ class CertificatesDialog(private val model: LauncherModel, private val modal: Mo
 
     private fun rebuild() {
         val all = model.trustedCerts.list().size + model.trustedSigners.list().size
-        val needs = model.trustedCerts.list().count { it.status == CertTrustStatus.PENDING || it.isExpired() } + model.trustedSigners.pending().size
+        // What needs a decision: the undecided. An expired-but-trusted certificate is shown as Expired, not
+        // counted here — there is no decision that clears it (the server has to renew), so it must not be a count that never goes away.
+        val needs = model.trustedCerts.pending().size + model.trustedSigners.pending().size
         val seg = Controls.Segmented(listOf(false to "All $all", true to "Needs review $needs")) { v -> reviewOnly = v; rebuild() }
         seg.value = reviewOnly
         segHolder.children.setAll(seg)
@@ -145,22 +147,21 @@ class CertificatesDialog(private val model: LauncherModel, private val modal: Mo
         }
         head.children += HBox(6.0).apply {
             alignment = Pos.CENTER_RIGHT
-            minWidth = 132.0; prefWidth = 132.0
+            minWidth = 196.0; prefWidth = 196.0
+            // Every row can be removed — an undecided one too, so nothing awaiting review is ever stuck there.
             when (row) {
                 is Row.Cert -> {
+                    children += Controls.button("Remove", Controls.ButtonKind.Ghost, small = true) { model.trustedCerts.remove(row.entry.sha256); changed() }
                     if (row.entry.status == CertTrustStatus.PENDING) {
                         children += Controls.button("Reject", Controls.ButtonKind.Ghost, small = true) { model.trustedCerts.rejectListed(row.entry.sha256); changed() }
                         children += Controls.button("Trust", Controls.ButtonKind.Primary, small = true) { model.trustedCerts.trustListed(row.entry.sha256); changed() }
-                    } else {
-                        children += Controls.button("Remove", Controls.ButtonKind.Ghost, small = true) { model.trustedCerts.remove(row.entry.sha256); changed() }
                     }
                 }
                 is Row.Signer -> {
+                    children += Controls.button("Remove", Controls.ButtonKind.Ghost, small = true) { model.trustedSigners.remove(row.entry.sha256); changed() }
                     if (row.entry.status == CertTrustStatus.PENDING) {
                         children += Controls.button("Reject", Controls.ButtonKind.Ghost, small = true) { model.trustedSigners.reject(row.entry.sha256); changed() }
                         children += Controls.button("Trust", Controls.ButtonKind.Primary, small = true) { model.trustedSigners.trust(row.entry.sha256); changed() }
-                    } else {
-                        children += Controls.button("Remove", Controls.ButtonKind.Ghost, small = true) { model.trustedSigners.remove(row.entry.sha256); changed() }
                     }
                 }
             }

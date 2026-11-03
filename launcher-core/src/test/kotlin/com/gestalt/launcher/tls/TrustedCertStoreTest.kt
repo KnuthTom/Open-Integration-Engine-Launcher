@@ -106,6 +106,26 @@ class TrustedCertStoreTest {
     }
 
     @Test
+    @DisplayName("a decision for a host retires that host's older undecided certificates — a rotated cert's PENDING entry is not a review item forever")
+    fun decisionRetiresStalePending(@TempDir dir: Path) {
+        val store = TrustedCertStore(dir.resolve("trusted-certs.json"))
+        val old = leaf("old"); val new = leaf("new"); val elsewhere = leaf("elsewhere")
+        store.markPending(old, "s:8443", "c1")
+        store.markPending(elsewhere, "t:8443", "c1")
+
+        store.trust(new, "s:8443", "c1")
+
+        assertNull(store.statusOf(old)) { "the certificate s:8443 presented before, never decided, is gone" }
+        assertEquals(CertTrustStatus.TRUSTED, store.statusOf(new))
+        assertEquals(CertTrustStatus.PENDING, store.statusOf(elsewhere)) { "another host's undecided certificate is untouched" }
+        assertTrue(store.pending().none { "s:8443" in it.hosts })
+
+        // Deciding the same certificate again (idempotent) changes nothing else.
+        store.trust(new, "s:8443", "c2")
+        assertEquals(1, store.list().count { "s:8443" in it.hosts })
+    }
+
+    @Test
     @DisplayName("TLS policy: rejected fails, trusted passes by fingerprint, unknown surfaces with the chain, hostname follows suit")
     fun policy(@TempDir dir: Path) {
         val trusted = leaf("trusted"); val rejected = leaf("rejected"); val unknown = leaf("unknown")

@@ -72,7 +72,6 @@ class LauncherModelTest {
         trustedSigners = TrustedSignerStore(dir.resolve("trusted-signers.json")),
         ui = { it.run() },
         launcherFactory = { launcher },
-        autoScale = { "0.75" },
     )
 
     private fun await(what: String, timeoutMs: Long = 5_000, cond: () -> Boolean) {
@@ -303,32 +302,6 @@ class LauncherModelTest {
 
         launcher.spawned.forEach { it.exit() }
         await("cleared") { m.launchState(c.id) == null }
-    }
-
-    @Test
-    @DisplayName("display scale: a connection on Auto launches with the scale resolved for this screen, and stays Auto; its own scale is passed as it is")
-    fun autoScaleResolvedAtLaunch(@TempDir dir: Path) {
-        val launcher = FakeLauncher()
-        val m = model(dir, launcher)
-        val c = m.newConnection(null)
-        assertNull(m.store.get(c.id)!!.uiScale) { "new connections are on Auto" }
-
-        m.launch(c.id)
-        assertTrue(launcher.called.await(5, TimeUnit.SECONDS))
-        assertEquals("0.75", launcher.lastConnection!!.uiScale) { "resolved for the screen (the test's stand-in)" }
-        assertNull(m.store.get(c.id)!!.uiScale) { "the saved connection stays on Auto" }
-        await("running") { m.launchState(c.id)?.phase == LaunchPhase.Running }
-        launcher.spawned.forEach { it.exit() }
-        await("cleared") { m.launchState(c.id) == null }
-
-        m.updateDraft { it.copy(uiScale = "1.0") }
-        assertTrue(m.save())
-        m.flushPendingSave()
-        val launcher2 = FakeLauncher()
-        val m2 = model(dir, launcher2)
-        m2.launch(c.id)
-        assertTrue(launcher2.called.await(5, TimeUnit.SECONDS))
-        assertEquals("1.0", launcher2.lastConnection!!.uiScale)
     }
 
     @Test
