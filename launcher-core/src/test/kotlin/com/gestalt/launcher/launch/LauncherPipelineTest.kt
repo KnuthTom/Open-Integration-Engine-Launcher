@@ -434,20 +434,23 @@ class LauncherPipelineTest {
         val launcher = launcher(dir.resolve("cache"), ca, jnlp(), manifestForCore(jarBytes), jarBytes)
 
         val default = launcher.prepareLaunch(connection()).command
-        assertTrue(default.contains("-Dsun.java2d.uiScale=1.0")) { "100% by default: the Administrator at its own size" }
+        assertTrue(ChildJvmCommandBuilder.windowsScaling(connection())) { "Windows scaling by default" }
+        assertTrue(default.contains("-Dsun.java2d.uiScale=1.0")) { "under Windows scaling the JVM draws at 100%; the desktop scales the window" }
         if (Runtime.version().feature() >= 9) {
             assertTrue(default.contains("-Dglass.win.uiScale=100%") && default.contains("-Dglass.gtk.uiScale=100%")) { "the embedded JavaFX follows Swing's scale: $default" }
             assertTrue(default.contains("-Dswing.aatext=true") && default.contains("-Dawt.useSystemAAFontSettings=lcd") && default.contains("-Dsun.java2d.d3d=false")) { "text rendering pinned: $default" }
         }
+        val monitor = launcher.prepareLaunch(connection().copy(uiScale = "monitor")).command
+        assertTrue(monitor.none { it.contains("uiScale") }) { "Monitor: no factor at all, Java follows each monitor's DPI: $monitor" }
+        assertEquals(ChildJvmCommandBuilder.Scaling.Monitor, ChildJvmCommandBuilder.scalingOf(connection().copy(uiScale = "Monitor")))
         val threeQuarters = launcher.prepareLaunch(connection().copy(uiScale = "0.75")).command
         assertTrue(threeQuarters.contains("-Dsun.java2d.uiScale=0.75"))
         if (Runtime.version().feature() >= 9) assertTrue(threeQuarters.contains("-Dglass.win.uiScale=75%"))
         assertTrue(launcher.prepareLaunch(connection().copy(uiScale = "0.5")).command.contains("-Dsun.java2d.uiScale=0.5"))
         val junk = launcher.prepareLaunch(connection().copy(uiScale = "9; -javaagent:x")).command
-        assertTrue(junk.contains("-Dsun.java2d.uiScale=1.0") && junk.none { it.contains("javaagent") }) { "junk never reaches the command line; the default does" }
-        val windows = connection().copy(uiScale = "Windows")
-        assertTrue(ChildJvmCommandBuilder.windowsScaling(windows))
-        assertTrue(launcher.prepareLaunch(windows).command.contains("-Dsun.java2d.uiScale=1.0")) { "Windows scaling: the JVM draws at 100%, the desktop scales the window" }
-        assertFalse(ChildJvmCommandBuilder.windowsScaling(connection()))
+        assertTrue(junk.contains("-Dsun.java2d.uiScale=1.0") && junk.none { it.contains("javaagent") }) { "junk never reaches the command line; it falls to the default (Windows scaling)" }
+        assertTrue(ChildJvmCommandBuilder.windowsScaling(connection().copy(uiScale = "Windows")))
+        assertFalse(ChildJvmCommandBuilder.windowsScaling(connection().copy(uiScale = "1.0")))
+        assertEquals(ChildJvmCommandBuilder.Scaling.Fixed("1.25"), ChildJvmCommandBuilder.scalingOf(connection().copy(uiScale = " 1.25 ")))
     }
 }

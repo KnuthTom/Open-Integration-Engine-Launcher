@@ -134,7 +134,12 @@ object Controls {
     class Segmented<T>(private val options: List<Pair<T, String>>, mono: Boolean = false, private val onSelect: (T) -> Unit) : HBox() {
         private val buttons = ArrayList<Pair<T, Button>>()
         var value: T? = null
-            set(v) { field = v; buttons.forEach { (k, b) -> if (k == v) b.styleClass.add("on") else b.styleClass.remove("on") } }
+            set(v) {
+                field = v
+                // Exactly one lit segment: set idempotently (a style class list keeps duplicates, and one
+                // `remove` takes only one of them — which is how a segment once stayed lit beside the new one).
+                buttons.forEach { (k, b) -> if (k == v) { if ("on" !in b.styleClass) b.styleClass.add("on") } else b.styleClass.removeAll("on") }
+            }
 
         init {
             styleClass += "segmented"
@@ -159,7 +164,7 @@ object Controls {
         var on: Boolean = false
             set(v) {
                 field = v
-                if (v) styleClass.add("on") else styleClass.remove("on")
+                if (v) { if ("on" !in styleClass) styleClass.add("on") } else styleClass.removeAll("on")
                 StackPane.setAlignment(knob, if (v) Pos.CENTER_RIGHT else Pos.CENTER_LEFT)
             }
 
@@ -179,7 +184,7 @@ object Controls {
         var on: Boolean = false
             set(v) {
                 field = v
-                if (v) styleClass.add("on") else styleClass.remove("on")
+                if (v) { if ("on" !in styleClass) styleClass.add("on") } else styleClass.removeAll("on")
                 mark.children.first().isVisible = v
             }
 

@@ -166,26 +166,29 @@ A corrupt entry hashes wrong, is dropped, and the jar is fetched. Entries unused
 
 ## Display scale and the Administrator's rendering
 
-The Java runtime card's **Display scale** (Windows · 150% · 125% · 100% · 75%) decides who scales the
-Administrator on a high-DPI desktop, per connection:
+The Java runtime card's **Display scale** (Windows · Monitor | 150% · 125% · 100% · 75% — one choice
+across both groups) decides who scales the Administrator on a high-DPI desktop, per connection:
 
-- **A percentage** is `sun.java2d.uiScale`, an absolute factor: **100%, the default, is the Administrator
-  at its own size, every pixel of its Swing UI drawn 1:1** — crisp, but small on a high-DPI screen.
-  Any other factor is Java scaling a UI laid out for 100%: text stays sharp (rasterized at the new
-  size), but one-pixel borders and bitmap icons come out uneven in places — the client's old Swing
-  look-and-feel was never built for it. 125% is usually the readable size; 150% can run past the
+- **Windows** (the default) hands the scaling to the desktop: the JVM draws at 100% and the child runs
+  DPI-unaware (`__COMPAT_LAYER=DPIUNAWARE` in its environment), so Windows scales the whole window as a
+  bitmap, **per monitor** — drag the window to a screen with a different scale setting and it takes
+  that screen's size, the way any older program does. The size you expect, everything in step, slightly
+  soft; the look the Administrator had under the old launcher. The client log header says
+  `# scaling: Windows` when it is in force. (On other platforms this is simply 100%.)
+- **Monitor** sets no factor at all and lets Java 9+ follow each monitor's own DPI as the window moves
+  between screens: pixel-sharp where the desktop runs at 100% or 200%, but at 125% or 150% it is Java
+  scaling a UI laid out for 100% — text stays sharp, one-pixel borders and bitmap icons come out uneven.
+- **A percentage** is `sun.java2d.uiScale`, an absolute factor Java applies on every monitor alike:
+  **100% is the Administrator at its own size, every pixel drawn 1:1** — crisp, but small on a high-DPI
+  screen and not following the desktop. Other factors have Monitor's unevenness; 150% can run past the
   screen edge.
-- **Windows** hands the scaling to the desktop: the JVM draws at 100% and the child runs DPI-unaware
-  (`__COMPAT_LAYER=DPIUNAWARE` in its environment), so Windows scales the whole window as a bitmap —
-  the size you expect, everything in step, slightly soft. This is the look the Administrator had under
-  the old launcher; users who find Java's fractional scaling wrong usually want this one. The client log
-  header says `# scaling: Windows` when it is in force. (On other platforms it is simply 100%.)
 
 Java 8 ignores `uiScale` whatever is chosen; its window is scaled by Windows the same way.
 
-What else the launcher sets for the client's rendering on Java 9+: the embedded JavaFX (the tag editor
-is a `JFXPanel`) gets the same factor (`glass.win.uiScale` / `glass.gtk.uiScale` — on its own it would
-follow the monitor's DPI and sit at 150% inside a 100% window); Swing text is drawn with **subpixel
+What else the launcher sets for the client's rendering on Java 9+: with a fixed factor (Windows or a
+percentage) the embedded JavaFX (the tag editor is a `JFXPanel`) gets the same one (`glass.win.uiScale`
+/ `glass.gtk.uiScale` — on its own it would follow the monitor's DPI and sit at 150% inside a 100%
+window; under Monitor both toolkits follow the monitor on their own); Swing text is drawn with **subpixel
 (LCD) antialiasing**, pinned (`awt.useSystemAAFontSettings=lcd`, `swing.aatext=true` — Java 9+
 rasterizes with FreeType, and its grayscale antialiasing comes out light and thin; LCD is what the
 desktop's own text uses and keeps the weight even at every scale); and the **software pipeline** rather
