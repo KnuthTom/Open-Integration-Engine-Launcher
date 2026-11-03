@@ -50,15 +50,18 @@ class AppStateTest {
     }
 
     @Test
-    @DisplayName("import populates the list with regenerated ids and drops secrets")
+    @DisplayName("import populates the list with regenerated ids, keeps the login name and drops the secret")
     fun importWiring(@TempDir dir: Path) {
         val state = newState(dir)
         importLegacy(state, dir)
 
         assertEquals(2, state.connections.size)
         assertEquals(2, state.connections.map { it.id }.distinct().size) { "duplicate legacy ids regenerated" }
-        assertTrue(state.connections.all { it.username == null })
-        assertFalse(Files.readString(dir.resolve("connections.json")).contains("sekret-pw"))
+        assertEquals("u", state.connections.first { it.name == "Beta" }.username) { "the username is a setting and comes along" }
+        assertTrue(state.connections.first { it.name == "Alpha" }.username == null)
+        val onDisk = Files.readString(dir.resolve("connections.json"))
+        assertFalse(onDisk.contains("sekret-pw"))
+        assertFalse(onDisk.contains("password", ignoreCase = true))
     }
 
     @Test
