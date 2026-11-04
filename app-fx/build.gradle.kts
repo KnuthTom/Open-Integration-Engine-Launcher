@@ -123,6 +123,11 @@ val stageClientRuntimes by tasks.registering {
     // The vendor is an input so a switch of runtime (plain → JavaFX-bearing) re-runs the staging.
     inputs.property("runtimeFlavour", "zulu-fx")
     inputs.property("versions", bundledJavaVersions.joinToString(","))
+    // The Administrator's process host is compiled into each runtime's bin on Windows (see brandClientRuntimes below).
+    inputs.file(packagingDir.file("AdministratorHost.cs"))
+    inputs.file(packagingDir.file("app.ico"))
+    inputs.property("hostVersion", appVersion)
+    inputs.property("hostVendor", appVendor)
     outputs.dir(runtimesRoot)
     val downloadDir = layout.buildDirectory.dir("runtimes-download")
     doLast {
@@ -160,6 +165,7 @@ val stageClientRuntimes by tasks.registering {
             buildOps.fs.copy { from(home); into(staged) }
             logger.lifecycle("Staged JRE $v -> $staged")
         }
+        if (composeOs == "windows") brandClientRuntimes(root)
     }
 }
 
@@ -227,72 +233,62 @@ compose.desktop {
 // Task Manager names a process by its executable's FileDescription, and a Zulu javaw.exe says "Zulu
 // Platform x64 Architecture". So each bundled runtime gets a host of its own in bin\ — a tiny program
 // that hands the command line to the runtime's jli.dll exactly as javaw.exe does and runs the client in
-// its own process (packaging/AdministratorHost.cs) — compiled here with the C# compiler every Windows
-// carries (.NET Framework 4.x, through PowerShell), its version resource carrying the product name.
-// ChildJvmCommandBuilder starts the client through it when it is there. No Azul binary is altered.
+// its own process (packaging/AdministratorHost.cs) — compiled by stageClientRuntimes (one task owns the
+// runtimes directory) with the C# compiler every Windows carries (.NET Framework 4.x, through a
+// PowerShell script file — never a -Command string, whose inner quotes the CRT would strip), its
+// version resource carrying the product name. ChildJvmCommandBuilder starts the client through it when
+// it is there. No Azul binary is altered.
 val administratorHostName = "OpenIntegrationEngineAdministrator"
-val brandClientRuntimes by tasks.registering {
-    group = "distribution"
-    description = "Compile the Administrator's process host (its Task Manager name) into each bundled runtime's bin (Windows)."
-    dependsOn(stageClientRuntimes)
-    val runtimesRoot = appResourcesDir.map { it.dir("$osArchToken/runtimes") }
-    val source = packagingDir.file("AdministratorHost.cs")
-    val icon = packagingDir.file("app.ico")
-    inputs.file(source)
-    inputs.file(icon)
-    inputs.property("version", appVersion)
-    inputs.property("vendor", appVendor)
-    inputs.property("versions", bundledJavaVersions.joinToString(","))
-    onlyIf { composeOs == "windows" }
-    outputs.files(bundledJavaVersions.flatMap { v ->
-        listOf("$administratorHostName.exe", "$administratorHostName-console.exe").map { runtimesRoot.map { r -> r.file("jre$v/bin/$it") } }
-    })
-    doLast {
-        val stamped = layout.buildDirectory.file("administrator-host/AdministratorHost.cs").get().asFile
-        stamped.parentFile.mkdirs()
-        val fourPart = appVersion.split('.').map { it.filter(Char::isDigit).ifEmpty { "0" } }.let { (it + listOf("0", "0", "0", "0")).take(4) }.joinToString(".")
-        stamped.writeText(
-            source.asFile.readText()
-                .replace("@VERSION@", fourPart)
-                .replace("@VENDOR@", appVendor.replace("\"", "\\\""))
-                .replace("@COPYRIGHT@", "© the Open Integration Engine Launcher contributors. MPL-2.0."),
-        )
-        for (v in bundledJavaVersions) {
-            val bin = File(runtimesRoot.get().asFile, "jre$v/bin")
-            check(File(bin, "jli.dll").isFile) { "no jli.dll in $bin — the runtime is not a Windows JRE" }
-            for ((name, console) in listOf("$administratorHostName.exe" to false, "$administratorHostName-console.exe" to true)) {
-                val out = File(bin, name)
-                val options = buildString {
-                    append(if (console) "/target:exe" else "/target:winexe")
-                    append(" /platform:anycpu /optimize+ /nologo")
-                    append(" /win32icon:\"").append(icon.asFile.absolutePath).append('"')
-                    if (console) append(" /define:CONSOLE")
-                }
-                val script = """
-                    ${'$'}ErrorActionPreference = 'Stop'
-                    ${'$'}cp = New-Object System.CodeDom.Compiler.CompilerParameters
-                    ${'$'}cp.GenerateExecutable = ${'$'}true
-                    ${'$'}cp.GenerateInMemory = ${'$'}false
-                    ${'$'}cp.OutputAssembly = '${out.absolutePath.replace("'", "''")}'
-                    ${'$'}cp.CompilerOptions = '${options.replace("'", "''")}'
-                    ${'$'}cp.ReferencedAssemblies.Add('System.dll') | Out-Null
-                    ${'$'}provider = New-Object Microsoft.CSharp.CSharpCodeProvider
-                    ${'$'}result = ${'$'}provider.CompileAssemblyFromFile(${'$'}cp, '${stamped.absolutePath.replace("'", "''")}')
-                    if (${'$'}result.Errors.HasErrors) { ${'$'}result.Errors | ForEach-Object { Write-Host ${'$'}_.ToString() }; exit 1 }
-                """.trimIndent()
-                buildOps.exec.exec {
-                    commandLine("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
-                }
-                check(out.isFile) { "the Administrator host was not produced at $out" }
-                logger.lifecycle("Built ${out.name} into $bin")
+val administratorHostSource = packagingDir.file("AdministratorHost.cs")
+val administratorHostIcon = packagingDir.file("app.ico")
+
+/** Compile the host into `<runtime>/bin` for every bundled runtime under [runtimesRoot]. Windows only. */
+fun brandClientRuntimes(runtimesRoot: File) {
+    val work = layout.buildDirectory.dir("administrator-host").get().asFile.apply { mkdirs() }
+    val stamped = File(work, "AdministratorHost.cs")
+    val fourPart = appVersion.split('.').map { it.filter(Char::isDigit).ifEmpty { "0" } }.let { (it + listOf("0", "0", "0", "0")).take(4) }.joinToString(".")
+    stamped.writeText(
+        administratorHostSource.asFile.readText()
+            .replace("@VERSION@", fourPart)
+            .replace("@VENDOR@", appVendor.replace("\"", "\\\""))
+            .replace("@COPYRIGHT@", "© the Open Integration Engine Launcher contributors. MPL-2.0."),
+    )
+    fun ps(s: String) = "'" + s.replace("'", "''") + "'"
+    for (v in bundledJavaVersions) {
+        val bin = File(runtimesRoot, "jre$v/bin")
+        check(File(bin, "jli.dll").isFile) { "no jli.dll in $bin — the runtime is not a Windows JRE" }
+        for ((name, console) in listOf("$administratorHostName.exe" to false, "$administratorHostName-console.exe" to true)) {
+            val out = File(bin, name)
+            val options = (if (console) "/target:exe" else "/target:winexe") +
+                " /platform:anycpu /optimize+ /nologo /win32icon:\"" + administratorHostIcon.asFile.absolutePath + "\"" +
+                (if (console) " /define:CONSOLE" else "")
+            val script = File(work, "build-${if (console) "console" else "windowed"}.ps1")
+            script.writeText(
+                """
+                ${'$'}ErrorActionPreference = 'Stop'
+                ${'$'}cp = New-Object System.CodeDom.Compiler.CompilerParameters
+                ${'$'}cp.GenerateExecutable = ${'$'}true
+                ${'$'}cp.GenerateInMemory = ${'$'}false
+                ${'$'}cp.OutputAssembly = ${ps(out.absolutePath)}
+                ${'$'}cp.CompilerOptions = ${ps(options)}
+                ${'$'}cp.ReferencedAssemblies.Add('System.dll') | Out-Null
+                ${'$'}provider = New-Object Microsoft.CSharp.CSharpCodeProvider
+                ${'$'}result = ${'$'}provider.CompileAssemblyFromFile(${'$'}cp, ${ps(stamped.absolutePath)})
+                if (${'$'}result.Errors.HasErrors) { ${'$'}result.Errors | ForEach-Object { Write-Host ${'$'}_.ToString() }; exit 1 }
+                """.trimIndent(),
+            )
+            buildOps.exec.exec {
+                commandLine("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script.absolutePath)
             }
+            check(out.isFile) { "the Administrator host was not produced at $out" }
+            logger.lifecycle("Built ${out.name} into $bin")
         }
     }
 }
 
-// prepareAppResources copies appResourcesRootDir into the image — it must wait for the runtimes and their hosts.
+// prepareAppResources copies appResourcesRootDir into the image — it must wait for the runtimes (and their hosts).
 tasks.matching { it.name == "prepareAppResources" }
-    .configureEach { dependsOn(stageClientRuntimes, brandClientRuntimes) }
+    .configureEach { dependsOn(stageClientRuntimes) }
 
 // --- Portable build: zip the app-image with the portable sentinel beside the executable ----------
 // Installers stay per-user (no sentinel); only THIS zip carries the sentinel, so the portable build

@@ -383,11 +383,15 @@ What it does:
   custom webstart/digest paths, close-after-launch, certificate auto-approve, the
   port-forward command and its switch, the folder tree the connections sit in (with ancestors) and the
   **custom icons** they use (the sanitized image bytes inline, re-sanitized and content-matched on
-  import) — and nothing that is not a setting: saved passwords live in the OS keychain and are entered
-  once more on the other machine; the certificate decisions (`trusted-certs.json`) are that machine's
-  trust state and are made again there. Importing that file on a fresh install rebuilds the connections
-  as they were; importing it where they already exist merges setting by setting and keeps what is the
-  machine's own (ids, placement, pins, each forward's switch when its command is unchanged). On first
+  import; only icons the connections use, at most 256) — and nothing that is not a setting: saved
+  passwords live in the OS keychain and are entered once more on the other machine, and **trust is
+  never taken from a file** — a certificate pin or the auto-approve switch in an imported file is
+  dropped (a planted pin would skip the certificate review; a planted auto-approve would accept
+  whatever the server presents), and the certificate decisions (`trusted-certs.json`) are made again on
+  the importing machine. Importing that file on a fresh install rebuilds the connections as they were;
+  importing it where they already exist merges setting by setting and keeps what is the machine's own
+  (ids, placement, pins, auto-approve, each forward's switch when its command is unchanged). A file over
+  32 MB is refused; the import runs in the background with a progress toast. On first
   run, if `-Dgestalt.legacy.connections=<path>` (or `GESTALT_LEGACY_CONNECTIONS`) points at a legacy
   file and the store is empty, it is imported automatically.
 - **Launch** — runs the existing Phase 1/2 pipeline unchanged (`LauncherCore.launch`): fetch/parse JNLP

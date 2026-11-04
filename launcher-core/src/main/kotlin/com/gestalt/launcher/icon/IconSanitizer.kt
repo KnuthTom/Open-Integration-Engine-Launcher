@@ -224,8 +224,23 @@ object IconSanitizer {
     // --- raster ------------------------------------------------------------------------------------
 
     private fun raster(input: ByteArray, ext: String): SanitizedIcon {
+        // The dimensions come from the header, before any pixel is decoded: a small file can declare a
+        // raster of thousands of pixels a side, and decoding it first would allocate all of it.
         val image = try {
-            ImageIO.read(ByteArrayInputStream(input))
+            ImageIO.createImageInputStream(ByteArrayInputStream(input)).use { stream ->
+                val reader = ImageIO.getImageReaders(stream).asSequence().firstOrNull() ?: reject("not a readable ${ext.uppercase()} image")
+                try {
+                    reader.setInput(stream, true, true)
+                    val w = reader.getWidth(0)
+                    val h = reader.getHeight(0)
+                    if (w > MAX_DIMENSION || h > MAX_DIMENSION) reject("the image is ${w}×${h}px; the limit is ${MAX_DIMENSION}px per side")
+                    reader.read(0)
+                } finally {
+                    reader.dispose()
+                }
+            }
+        } catch (e: IconRejectedException) {
+            throw e
         } catch (e: Exception) {
             null
         } ?: reject("not a readable ${ext.uppercase()} image")

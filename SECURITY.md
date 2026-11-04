@@ -40,7 +40,9 @@ The trust-critical surface is the most valuable to scrutinize:
   to get bytes a server did not publish onto a classpath through the pool would be in scope.
 - **Local state the launcher runs from** — the tunnel command (a file can carry one, but an import
   shows every command it carries and brings them in switched off unless the user chooses otherwise;
-  a way to get one to run without that review would be in scope), the
+  a way to get one to run without that review would be in scope), the trust decisions (an imported
+  file's certificate pin and auto-approve switch are dropped — a way to plant trust through an import
+  would be in scope), the
   single-instance lock and its loopback hand-over (`instance.lock`: a per-run secret, loopback only,
   the only action is "show your window").
 

@@ -137,9 +137,19 @@ object ConnectionImport {
         }
     }
 
-    /** Our own format, as the file has it, minus what must never come in: `user:pw@` userinfo in the address, a blank username. */
-    private fun clean(c: Connection): Connection =
-        c.copy(username = c.username?.trim()?.ifBlank { null }, serverUrl = ConnectionUrl.stripUserInfo(c.serverUrl))
+    /**
+     * Our own format, as the file has it, minus what must never come in: `user:pw@` userinfo in the
+     * address, a blank username — and the **trust decisions**, which are this machine's to make: a
+     * certificate pin (on the next start it would become a trusted fingerprint, and the review the
+     * launcher asks for on first contact would never appear for that certificate) and the auto-approve
+     * switch (which would accept whatever the server presents at the first launch).
+     */
+    private fun clean(c: Connection): Connection = c.copy(
+        username = c.username?.trim()?.ifBlank { null },
+        serverUrl = ConnectionUrl.stripUserInfo(c.serverUrl),
+        pinnedCertSha256 = null,
+        autoApproveCertificates = false,
+    )
 
     /** The port-forward switch off when there is a command (the command stays, visible, for the user to arm); nothing to switch otherwise. */
     private fun disarmed(c: Connection): Connection =
@@ -300,11 +310,16 @@ object ConnectionImport {
         val forwards = parsed.forwards.size
         if (forwards > 0) AuditLog.event("import.tunnelCommand", "connections" to forwards, "policy" to tunnels.name.uppercase())
 
-        // Custom icons: file what the export carries, then re-point `custom:<id>` keys at what they landed on.
+        // Custom icons: file what the export carries — only icons an incoming connection uses, and no more
+        // than MAX_ICONS, so a file cannot make the launcher decode and index thousands of images — then
+        // re-point `custom:<id>` keys at what they landed on.
         var filedIcons = 0
         val iconKeyMap = HashMap<String, String>()
         if (icons != null) {
-            parsed.icons.forEach { exported ->
+            val wanted = parsed.connections.mapNotNull { CustomIconStore.idFromKey(it.icon) }.toSet()
+            val carried = parsed.icons.filter { it.id in wanted }.distinctBy { it.id }
+            if (carried.size > MAX_ICONS) AuditLog.event("import.icons", "carried" to carried.size, "filed" to MAX_ICONS, "result" to "CAPPED")
+            carried.take(MAX_ICONS).forEach { exported ->
                 val filed = icons.import(exported) ?: return@forEach
                 filedIcons++
                 iconKeyMap[CustomIconStore.KEY_PREFIX + exported.id] = filed.key
@@ -355,6 +370,7 @@ object ConnectionImport {
                         val replacement = candidate.copy(
                             id = match.id, sortOrder = match.sortOrder, group = match.group,
                             folderId = match.folderId, addedAt = match.addedAt, lastLaunchedAt = match.lastLaunchedAt,
+                            pinnedCertSha256 = match.pinnedCertSha256, autoApproveCertificates = match.autoApproveCertificates,
                         )
                         result[result.indexOfFirst { it.id == match.id }] = replacement
                         byKey[key] = replacement
@@ -378,6 +394,9 @@ object ConnectionImport {
         return ImportSummary(format, incoming.size, added, replaced, merged, skipped, forwards, filedIcons)
     }
 
+    /** The most custom icons one import files — ample for a personal set; past it the rest fall to the default glyph. */
+    const val MAX_ICONS = 256
+
     // `https://h:8443` and `https://h:8443/` are the same server.
     private fun dedupeKey(c: Connection): String =
         c.name.trim().lowercase() + "|" + c.serverUrl.trim().trimEnd('/').lowercase()
@@ -397,11 +416,11 @@ object ConnectionImport {
     }
 
     /**
-     * Incoming settings win; the existing id, placement (sortOrder/group/folder), timestamps and
-     * certificate pin — this machine's trust state — are preserved, and an optional setting the file
-     * lacks keeps its existing value. The port-forward switch is this machine's decision: when the
-     * command is unchanged the existing switch stands, so re-importing one's own export never disarms
-     * (or arms) a forward that was already set up here.
+     * Incoming settings win; the existing id, placement (sortOrder/group/folder), timestamps and the
+     * trust decisions — the certificate pin and the auto-approve switch, this machine's — are preserved,
+     * and an optional setting the file lacks keeps its existing value. The port-forward switch is this
+     * machine's decision too: when the command is unchanged the existing switch stands, so re-importing
+     * one's own export never disarms (or arms) a forward that was already set up here.
      */
     private fun merge(existing: Connection, incoming: Connection): Connection = existing.copy(
         serverUrl = incoming.serverUrl,
@@ -418,7 +437,6 @@ object ConnectionImport {
         webstartPath = incoming.webstartPath,
         digestPath = incoming.digestPath,
         closeAfterLaunch = incoming.closeAfterLaunch,
-        autoApproveCertificates = incoming.autoApproveCertificates,
         uiScale = incoming.uiScale ?: existing.uiScale,
         tunnelCommand = incoming.tunnelCommand ?: existing.tunnelCommand,
         tunnelEnabled = when {

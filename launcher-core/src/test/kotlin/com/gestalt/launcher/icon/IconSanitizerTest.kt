@@ -160,6 +160,27 @@ class IconSanitizerTest {
     }
 
     @Test
+    @DisplayName("a tiny PNG whose header declares a huge raster is rejected from the header, before any pixel is decoded")
+    fun hugeDeclaredRasterRejectedFromTheHeader() {
+        // Signature + IHDR (20000 × 20000, 8-bit RGBA) + IEND: 57 bytes that would decode to 1.6 GB.
+        val out = java.io.ByteArrayOutputStream()
+        out.write(byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 0x0D, 0x0A, 0x1A, 0x0A))
+        fun chunk(type: String, body: ByteArray) {
+            val len = java.nio.ByteBuffer.allocate(4).putInt(body.size).array()
+            val typeBytes = type.toByteArray(Charsets.US_ASCII)
+            val crc = java.util.zip.CRC32().apply { update(typeBytes); update(body) }.value.toInt()
+            out.write(len); out.write(typeBytes); out.write(body); out.write(java.nio.ByteBuffer.allocate(4).putInt(crc).array())
+        }
+        chunk("IHDR", java.nio.ByteBuffer.allocate(13).putInt(20_000).putInt(20_000).put(8).put(6).put(0).put(0).put(0).array())
+        chunk("IEND", ByteArray(0))
+        val before = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }
+        val ex = assertThrows(IconRejectedException::class.java) { IconSanitizer.sanitize("huge.png", out.toByteArray()) }
+        assertTrue(ex.message!!.contains("20000") && ex.message!!.contains("limit")) { "rejected by its declared size: ${ex.message}" }
+        val after = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }
+        assertTrue(after - before < 64L * 1024 * 1024) { "no raster was allocated (grew by ${(after - before) / 1024} KB)" }
+    }
+
+    @Test
     @DisplayName("a non-image masquerading as .png is rejected")
     fun fakePngRejected() {
         assertThrows(IconRejectedException::class.java) {

@@ -213,7 +213,9 @@ class TunnelManager(
                     // A process that lives on after its session ended (a batch file parked on `pause`, say) is a
                     // dead forward with a pulse: reopen it in place for everyone holding it, then join.
                     if (sessionEndedIn(current) || !probe(host, port)) {
-                        reopenInPlace(connection, current, endpoint, "its session ended under ${current.users} holder(s)", onWaiting)
+                        // The forward's own endpoint (the command as it was started, re-pointed or not), never one
+                        // re-derived here: a later recheck reopens with the same, and the lease reports the same port.
+                        reopenInPlace(connection, current, current.endpoint ?: endpoint, "its session ended under ${current.users} holder(s)", onWaiting)
                     }
                     current.users++
                     return Lease(this, connection.id, managed = true, entry = current)
@@ -249,7 +251,7 @@ class TunnelManager(
      * id in brackets). Basic mode services one connection at a time, so the launcher fetches one thing at
      * a time through it. False for a multiplexing forward, a hand-started tunnel, or no tunnel.
      */
-    fun isBasicForward(connectionId: String): Boolean = logHasLine(connectionId, BASIC_MODE_LINE)
+    fun isBasicForward(connectionId: String): Boolean = logHasLine(connectionId, BASIC_MODE_LINE, tail = false)
 
     /**
      * True when the forward the launcher runs for [connectionId] accepted the launcher's connection and
@@ -284,19 +286,37 @@ class TunnelManager(
      */
     fun sessionEnded(connectionId: String): Boolean = live[connectionId]?.let { sessionEndedIn(it) } ?: false
 
-    private fun sessionEndedIn(entry: Live): Boolean = entry.log?.let { logHas(it, SESSION_ENDED_LINE) } ?: false
+    private fun sessionEndedIn(entry: Live): Boolean = entry.log?.let { logHas(it, SESSION_ENDED_LINE, tail = true) } ?: false
 
     /** True when the forward's plugin printed that it is outdated (`WARNING: An outdated SessionManagerPlugin version detected`). */
     fun outdatedPlugin(connectionId: String): Boolean = logHasLine(connectionId, OUTDATED_PLUGIN_LINE)
 
-    private fun logHasLine(connectionId: String, pattern: Regex): Boolean {
+    private fun logHasLine(connectionId: String, pattern: Regex, tail: Boolean = true): Boolean {
         val entry = live[connectionId] ?: return false
         val logs = entry.logs + listOfNotNull(entry.log)
-        return logs.any { logHas(it, pattern) }
+        return logs.any { logHas(it, pattern, tail) }
     }
 
-    private fun logHas(log: Path, pattern: Regex): Boolean =
-        runCatching { Files.readAllLines(log, Charset.defaultCharset()).any { pattern.matches(it.trim()) } }.getOrDefault(false)
+    /**
+     * Whether a line of [log] matches [pattern]. The lines looked for are ASCII and the file mixes the
+     * launcher's UTF-8 header with whatever code page the command writes in, so it is read as Latin-1 —
+     * a decoder that never fails on a byte. With [tail] only the last [LOG_TAIL_BYTES] are read: the
+     * session's end and the refusal come last, and a watcher reading every couple of seconds must not
+     * re-read a log that grows for hours.
+     */
+    private fun logHas(log: Path, pattern: Regex, tail: Boolean): Boolean = runCatching {
+        val text = if (!tail) String(Files.readAllBytes(log), StandardCharsets.ISO_8859_1) else {
+            val size = Files.size(log)
+            if (size <= LOG_TAIL_BYTES) String(Files.readAllBytes(log), StandardCharsets.ISO_8859_1)
+            else java.io.RandomAccessFile(log.toFile(), "r").use { f ->
+                f.seek(size - LOG_TAIL_BYTES)
+                val bytes = ByteArray(LOG_TAIL_BYTES.toInt())
+                f.readFully(bytes)
+                String(bytes, StandardCharsets.ISO_8859_1)
+            }
+        }
+        text.lineSequence().any { pattern.matches(it.trim()) }
+    }.getOrDefault(false)
 
     /**
      * When the forward dies on its own while Administrators still depend on it (an SSM session timing
@@ -574,6 +594,8 @@ class TunnelManager(
         const val DEFAULT_TIMEOUT_MS = 60_000L
         const val REMOTE_PORTS_FILE = "remote-ports.json"
         private const val POLL_MS = 100L // the forward is usable the moment its port answers; a tighter poll shaves the wait
+        /** How much of a log's end is read for the session's end and the refusal (the lines come last). */
+        private const val LOG_TAIL_BYTES = 64L * 1024
         private const val CONNECT_PROBE_MS = 400
         /** Unexpected exits reopened per [REOPEN_WINDOW_MS] before the launcher gives the forward up. */
         internal const val REOPEN_LIMIT = 3

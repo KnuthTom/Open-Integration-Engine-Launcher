@@ -81,8 +81,10 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         scene = Scene(root, 1120.0, 760.0)
         fun palette() = Theme.applyPalette(scene, model.accent.get(), model.background.get())
         palette()
-        model.accent.addListener { _, _, _ -> palette() }
-        model.background.addListener { _, _, _ -> palette() }
+        // The picker's custom-colour dialog pushes values as sliders move; one re-skin per pause, not per pixel.
+        val paletteDebounce = javafx.animation.PauseTransition(javafx.util.Duration.millis(120.0)).apply { setOnFinished { palette() } }
+        model.accent.addListener { _, _, _ -> paletteDebounce.playFromStart() }
+        model.background.addListener { _, _, _ -> paletteDebounce.playFromStart() }
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED) { e -> onShortcut(e) }
 
@@ -243,6 +245,11 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
             extensionFilters += FileChooser.ExtensionFilter("Connection files (*.json)", "*.json")
         }
         val file = chooser.showOpenDialog(stage) ?: return
+        if (importing) { toast.show("An import is already running", file.name, ToastHost.Kind.Info); return }
+        val size = runCatching { Files.size(file.toPath()) }.getOrDefault(0L)
+        if (size > MAX_IMPORT_BYTES) {
+            toast.show("Couldn’t import", "${file.name} is ${size / (1024 * 1024)} MB; a connections file is at most ${MAX_IMPORT_BYTES / (1024 * 1024)} MB", ToastHost.Kind.Error); return
+        }
         val text = runCatching { Files.readString(file.toPath()) }.getOrElse {
             toast.show("Couldn’t import", "${file.name} couldn’t be read", ToastHost.Kind.Error); return
         }
@@ -256,19 +263,28 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         else reviewForwards(file.name, forwards) { policy -> runImport(file.name, text, policy) }
     }
 
+    private var importing = false
+
+    /** The import itself — icons through the sanitizer, the store rewritten — runs off the FX thread; the window hears the outcome. */
     private fun runImport(fileName: String, text: String, tunnels: ConnectionImport.TunnelPolicy) {
-        runCatching { ConnectionImport.import(model.store, text, ConnectionImport.DedupePolicy.Merge, tunnels, icons) }
-            .onSuccess { s ->
-                model.refresh()
-                val detail = listOfNotNull(
-                    if (s.merged > 0) "${s.merged} merged" else null,
-                    if (s.skipped > 0) "${s.skipped} skipped" else null,
-                    if (s.icons > 0) "${s.icons} icon${if (s.icons == 1) "" else "s"}" else null,
-                    if (s.forwards > 0 && tunnels == ConnectionImport.TunnelPolicy.Disarm) "port-forwards off until you turn them on" else null,
-                ).joinToString(" · ").ifEmpty { fileName }
-                toast.show("Imported ${s.added} connection${if (s.added == 1) "" else "s"}", detail, ToastHost.Kind.Success, 5000)
+        importing = true
+        toast.show("Importing…", fileName, ToastHost.Kind.Progress, 60_000)
+        Thread({
+            val result = runCatching { ConnectionImport.import(model.store, text, ConnectionImport.DedupePolicy.Merge, tunnels, icons) }
+            javafx.application.Platform.runLater {
+                importing = false
+                result.onSuccess { s ->
+                    model.refresh()
+                    val detail = listOfNotNull(
+                        if (s.merged > 0) "${s.merged} merged" else null,
+                        if (s.skipped > 0) "${s.skipped} skipped" else null,
+                        if (s.icons > 0) "${s.icons} icon${if (s.icons == 1) "" else "s"}" else null,
+                        if (s.forwards > 0 && tunnels == ConnectionImport.TunnelPolicy.Disarm) "port-forwards off until you turn them on" else null,
+                    ).joinToString(" · ").ifEmpty { fileName }
+                    toast.show("Imported ${s.added} connection${if (s.added == 1) "" else "s"}", detail, ToastHost.Kind.Success, 5000)
+                }.onFailure { toast.show("Couldn’t import", it.message ?: "$fileName isn’t a launcher export", ToastHost.Kind.Error) }
             }
-            .onFailure { toast.show("Couldn’t import", it.message ?: "$fileName isn’t a launcher export", ToastHost.Kind.Error) }
+        }, "import").apply { isDaemon = true }.start()
     }
 
     /** The design's modal with the file's port-forward commands listed verbatim, name by name, and the choice of arming them. */
@@ -279,7 +295,8 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
             // Every command, none elided: the user is approving what they can see.
             for (c in forwards) {
                 children += Label(c.name.ifBlank { c.serverUrl }).apply { styleClass += "field-label"; minWidth = 0.0 }
-                children += Label(c.tunnelCommand.orEmpty().trim()).apply { styleClass += "mono"; isWrapText = true; minWidth = 0.0; VBox.setMargin(this, Insets(0.0, 0.0, 4.0, 0.0)) }
+                val command = c.tunnelCommand.orEmpty().trim().let { if (it.length > MAX_SHOWN_COMMAND) it.take(MAX_SHOWN_COMMAND) + " … (${it.length} characters)" else it }
+                children += Label(command).apply { styleClass += "mono"; isWrapText = true; minWidth = 0.0; VBox.setMargin(this, Insets(0.0, 0.0, 4.0, 0.0)) }
             }
         }
         val scroll = ScrollPane(list).apply {
@@ -577,5 +594,12 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         shutDown = true
         if (stage.isShowing) saveGeometry() // a hidden stage reports no useful geometry; the linger saved it
         model.shutdown()
+    }
+
+    companion object {
+        /** A connections file bigger than this is not read at all — an export of hundreds of connections with icons is well under a megabyte. */
+        private const val MAX_IMPORT_BYTES = 32L * 1024 * 1024
+        /** How much of a port-forward command the review card shows before eliding. */
+        private const val MAX_SHOWN_COMMAND = 1_000
     }
 }

@@ -270,6 +270,7 @@ class LauncherModelTest {
         m.accent.set("#1F66B3")
         m.background.set("#101418")
         m.closeAfterLaunch.set(true)
+        m.flushPendingSave() // colour picks are written once the hand rests; closing flushes them
         val again = LauncherPrefs(dir.resolve("ui-prefs.properties"))
         assertEquals(SortMode.Recent, again.sort)
         assertTrue(again.foldersFirst)

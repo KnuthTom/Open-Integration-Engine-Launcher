@@ -283,7 +283,7 @@ class ConnectionImportTest {
         assertEquals("/mirth/webstart", merged.webstartPath)
         assertEquals("/mirth/digest", merged.digestPath)
         assertEquals(CloseAfterLaunch.On, merged.closeAfterLaunch)
-        assertTrue(merged.autoApproveCertificates)
+        assertFalse(merged.autoApproveCertificates) { "auto-approve is this machine's trust decision, never a file's" }
         assertEquals("monitor", merged.uiScale)
         assertTrue(merged.showJavaConsole && merged.legacyTlsCompatibility)
         assertEquals(JavaHomeMode.Bundled, merged.javaHome.mode)
@@ -333,8 +333,11 @@ class ConnectionImportTest {
         assertEquals(filed.key, back.icon) { "the connection points at the icon as filed on this machine" }
         assertEquals("lab", filed.label)
         assertTrue(targetIcons.bytes(filed.id)!!.isNotEmpty())
-        // Everything but the identity the importing machine assigns.
-        val expected = full.copy(id = back.id, icon = back.icon, folderId = back.folderId, sortOrder = back.sortOrder, addedAt = back.addedAt, lastLaunchedAt = null)
+        // Everything but the identity the importing machine assigns — and the trust decisions, which are its own to make.
+        val expected = full.copy(
+            id = back.id, icon = back.icon, folderId = back.folderId, sortOrder = back.sortOrder, addedAt = back.addedAt, lastLaunchedAt = null,
+            pinnedCertSha256 = null, autoApproveCertificates = false,
+        )
         assertEquals(expected, back)
         val site = target.getFolder(back.folderId!!)!!
         assertEquals("Site", site.name)
@@ -346,6 +349,44 @@ class ConnectionImportTest {
         assertEquals(1, targetIcons.list().size)
         assertEquals(2, target.list().size)
         assertEquals(true, target.list().first { it.name == "Everything" }.tunnelEnabled) { "an unchanged command keeps the local switch" }
+    }
+
+    @Test
+    @DisplayName("trust never comes from a file: a pin and the auto-approve switch are dropped on import, kept on a merge, and a Replace keeps this machine's")
+    fun trustDecisionsAreTheMachinesOwn(@TempDir dir: Path) {
+        val pin = "ab".repeat(32)
+        val text = """{"version":2,"connections":[{"id":"x","name":"Planted","serverUrl":"https://engine.example.internal:8443","pinnedCertSha256":"$pin","autoApproveCertificates":true}]}"""
+        val fresh = ConnectionStore(dir.resolve("fresh.json"))
+        ConnectionImport.import(fresh, text, DedupePolicy.Merge)
+        val added = fresh.list().single()
+        assertNull(added.pinnedCertSha256) { "a planted pin would skip the certificate review on the next start" }
+        assertFalse(added.autoApproveCertificates) { "a planted auto-approve would accept whatever the server presents" }
+        assertFalse(added.isPinned)
+
+        for (policy in listOf(DedupePolicy.Merge, DedupePolicy.Replace)) {
+            val store = ConnectionStore(dir.resolve("existing-$policy.json"))
+            store.add(Connection(id = "mine", name = "Planted", serverUrl = "https://engine.example.internal:8443", pinnedCertSha256 = "cd".repeat(32), autoApproveCertificates = true))
+            ConnectionImport.import(store, text, policy)
+            val mine = store.get("mine")!!
+            assertEquals("cd".repeat(32), mine.pinnedCertSha256) { "$policy keeps the machine's pin" }
+            assertTrue(mine.autoApproveCertificates) { "$policy keeps the machine's auto-approve" }
+        }
+    }
+
+    @Test
+    @DisplayName("icons: only those an incoming connection uses are filed, and no more than MAX_ICONS")
+    fun iconsBoundedAndReferenced(@TempDir dir: Path) {
+        val icons = CustomIconStore(dir.resolve("icons"))
+        val svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M2 2h20v20H2z"/></svg>"""
+        val data = java.util.Base64.getEncoder().encodeToString(svg.toByteArray())
+        val unreferenced = (1..3).joinToString(",") { """{"id":"${"%016x".format(it.toLong())}","label":"stray $it","ext":"svg","data":"$data"}""" }
+        val text = """{"version":2,"connections":[{"id":"x","name":"Uses one","serverUrl":"https://h:8443","icon":"custom:feedfacefeedface"}],""" +
+            """"icons":[{"id":"feedfacefeedface","label":"used","ext":"svg","data":"$data"},$unreferenced]}"""
+        val store = ConnectionStore(dir.resolve("connections.json"))
+        val summary = ConnectionImport.import(store, text, DedupePolicy.Merge, ConnectionImport.TunnelPolicy.Drop, icons)
+        assertEquals(1, summary.icons) { "the three stray icons are not decoded or filed" }
+        assertEquals(1, icons.list().size)
+        assertEquals(icons.list().single().key, store.list().single().icon)
     }
 
     @Test

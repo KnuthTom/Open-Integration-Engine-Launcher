@@ -248,8 +248,9 @@ class LauncherModel(
         foldersFirst.addListener { _, _, v -> prefs.foldersFirst = v; rebuildRows() }
         filter.addListener { _, _, _ -> rebuildRows() }
         closeAfterLaunch.addListener { _, _, v -> prefs.closeAfterLaunch = v }
-        accent.addListener { _, _, v -> prefs.accent = v }
-        background.addListener { _, _, v -> prefs.background = v }
+        // A colour pick arrives per slider movement from the picker's custom dialog: the preference file is written once the hand rests.
+        accent.addListener { _, _, _ -> schedulePaletteSave() }
+        background.addListener { _, _, _ -> schedulePaletteSave() }
         draft.addListener { _, _, _ -> recomputeDirty() }
     }
 
@@ -685,6 +686,23 @@ class LauncherModel(
         val pending = synchronized(persistLock) { pendingSave.also { pendingSave = null } }
         if (pending != null && pending.cancel(false)) runCatching { store.save() }
         else pending?.let { runCatching { it.get(5, TimeUnit.SECONDS) } }
+        val palette = synchronized(persistLock) { pendingPalette.also { pendingPalette = null } }
+        if (palette != null && palette.cancel(false)) savePalette()
+    }
+
+    private var pendingPalette: ScheduledFuture<*>? = null
+
+    private fun schedulePaletteSave() {
+        synchronized(persistLock) {
+            pendingPalette?.cancel(false)
+            pendingPalette = persistExecutor.schedule({ savePalette() }, 300, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun savePalette() {
+        val a = accent.get()
+        val b = background.get()
+        runCatching { prefs.batch { this.accent = a; this.background = b } }
     }
 
     /**
