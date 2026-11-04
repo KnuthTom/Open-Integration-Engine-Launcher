@@ -52,7 +52,7 @@ import java.nio.file.Path
  */
 class ChildJvmCommandBuilder(
     private val javaExe: String = defaultJavaExe(),
-    /** Whether the launcher runs on a Windows desktop, where the desktop scales the Administrator's window (see [build]). */
+    /** Whether the launcher runs on Windows: the desktop scales the Administrator's window (see [build]) and the client runs through its host (see [javaExeIn]). */
     private val windowsDesktop: Boolean = AppPaths.isWindows,
 ) {
     fun build(
@@ -169,17 +169,25 @@ class ChildJvmCommandBuilder(
     }
 
     /**
-     * The java binary inside [home] — on Windows `java.exe` when the console is requested, otherwise the
-     * windowless `javaw.exe`; on other platforms `java`. Falls back to the launcher's own [javaExe].
+     * The java binary inside [home] — on Windows the Administrator's own process host when the runtime
+     * carries one (`bin/OpenIntegrationEngineAdministrator.exe`, or the `-console` variant when the
+     * console is requested: the package builds it into each bundled runtime, so Task Manager names the
+     * process "Open Integration Engine Administrator" rather than by the JVM vendor's javaw.exe), else
+     * `java.exe` / `javaw.exe`; on other platforms `java`. Falls back to the launcher's own [javaExe].
      */
     private fun javaExeIn(home: Path?, connection: Connection): String {
-        val windows = System.getProperty("os.name").orEmpty().lowercase().contains("win")
+        val windows = windowsDesktop
+        val bin = home?.resolve("bin") ?: return javaExe
+        if (windows) {
+            val host = bin.resolve(if (connection.showJavaConsole) "$ADMINISTRATOR_HOST-console.exe" else "$ADMINISTRATOR_HOST.exe")
+            if (Files.isRegularFile(host) && Files.isRegularFile(bin.resolve("jli.dll"))) return host.toString()
+        }
         val binary = when {
             windows && connection.showJavaConsole -> "java.exe"
             windows -> "javaw.exe"
             else -> "java"
         }
-        return home?.resolve("bin")?.resolve(binary)?.toString() ?: javaExe
+        return bin.resolve(binary).toString()
     }
 
     /**
@@ -225,6 +233,8 @@ class ChildJvmCommandBuilder(
 
     companion object {
         private val HEAP_PATTERN = Regex("^\\d+[kKmMgG]?$")
+        /** The Administrator's process host on Windows (`<name>.exe` / `<name>-console.exe` in a bundled runtime's bin); see [javaExeIn]. */
+        const val ADMINISTRATOR_HOST = "OpenIntegrationEngineAdministrator"
         /** The factor the JVM draws at on a Windows desktop, where the desktop scales the window (see [build]). */
         const val WINDOWS_UI_SCALE = "1.0"
         private const val MAX_MODULE_ARGS = 256

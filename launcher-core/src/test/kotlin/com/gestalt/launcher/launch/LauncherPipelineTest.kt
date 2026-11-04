@@ -327,7 +327,7 @@ class LauncherPipelineTest {
             Files.writeString(home.resolve("release"), "JAVA_VERSION=\"$v\"\n")
         }
         val launcherJdk = dir.resolve("launcher-jdk").resolve("bin").resolve("java")
-        fun launcherFor(version: String, resourcesDir: Path?): LauncherCore {
+        fun launcherFor(version: String, resourcesDir: Path?, windows: Boolean = false): LauncherCore {
             val responses = mapOf(
                 "${base}webstart" to jnlpWithArgs(version, sha256Base64(jarBytes)).toByteArray(),
                 "${base}core.jar" to jarBytes,
@@ -339,8 +339,8 @@ class LauncherPipelineTest {
                 trustStore = TrustStore.of(ca.cert),
                 signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS,
                 gateMode = TrustMode.PIN_KNOWN_SIGNERS,
-                cacheDir = dir.resolve("cache-$version-${resourcesDir != null}"),
-                commandBuilder = ChildJvmCommandBuilder(javaExe = launcherJdk.toString()),
+                cacheDir = dir.resolve("cache-$version-${resourcesDir != null}-$windows"),
+                commandBuilder = ChildJvmCommandBuilder(javaExe = launcherJdk.toString(), windowsDesktop = windows),
                 trustedSigners = com.gestalt.launcher.gate.TrustedSignerStore(dir.resolve("trusted-signers.json")),
                 fetcherFactory = { FakeFetcher(responses) },
             )
@@ -354,6 +354,16 @@ class LauncherPipelineTest {
             val explicit17 = connection().copy(javaHome = com.gestalt.launcher.model.JavaHomeConfig(com.gestalt.launcher.model.JavaHomeMode.Bundled, "17"))
             assertEquals(jre17, javaDirOf(launcherFor("4.4.2", resources).prepareLaunch(explicit17).command)) { "an explicit choice is honoured" }
             assertEquals(launcherJdk.parent.parent, javaDirOf(launcherFor("4.4.2", null).prepareLaunch(connection()).command)) { "nothing staged → the launcher's own JVM" }
+
+            // On Windows the client runs through its own process host when the package built one into the runtime.
+            val onWindows = launcherFor("4.7.0", resources, windows = true)
+            assertEquals("javaw.exe", Path.of(onWindows.prepareLaunch(connection()).command[0]).fileName.toString()) { "no host in the runtime: the JVM's own windowless launcher" }
+            Files.writeString(jre17.resolve("bin").resolve("jli.dll"), "")
+            Files.writeString(jre17.resolve("bin").resolve("${ChildJvmCommandBuilder.ADMINISTRATOR_HOST}.exe"), "")
+            Files.writeString(jre17.resolve("bin").resolve("${ChildJvmCommandBuilder.ADMINISTRATOR_HOST}-console.exe"), "")
+            assertEquals("${ChildJvmCommandBuilder.ADMINISTRATOR_HOST}.exe", Path.of(onWindows.prepareLaunch(connection()).command[0]).fileName.toString()) { "the host: Task Manager names the process by it" }
+            assertEquals("${ChildJvmCommandBuilder.ADMINISTRATOR_HOST}-console.exe", Path.of(onWindows.prepareLaunch(connection().copy(showJavaConsole = true)).command[0]).fileName.toString()) { "the console variant when a console is asked for" }
+            assertEquals(jre17, javaDirOf(onWindows.prepareLaunch(connection()).command)) { "still that runtime's bin" }
         } finally {
             if (previous == null) System.clearProperty("compose.application.resources.dir") else System.setProperty("compose.application.resources.dir", previous)
         }

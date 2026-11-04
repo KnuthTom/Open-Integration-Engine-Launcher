@@ -112,6 +112,23 @@ from 4.7, the servers' own support matrix; `Custom` is unchanged. For a dev run 
 image, set `-Dgestalt.java.8.home` / `-Dgestalt.java.17.home` (or `GESTALT_JAVA_8_HOME` /
 `GESTALT_JAVA_17_HOME`); if no bundled runtime is found, the launcher falls back to its own JVM.
 
+### Process names (Windows)
+
+Task Manager names a process by its executable's **FileDescription**. The launcher's own exe gets the
+jpackage `description` — *Open Integration Engine Launcher*. The Administrator runs on a bundled Zulu
+runtime whose `javaw.exe` says *Zulu Platform x64 Architecture*, so `:app-fx:brandClientRuntimes`
+(Windows only, after `stageClientRuntimes`) compiles a process host of our own into each runtime's
+`bin\`: `OpenIntegrationEngineAdministrator.exe` (and a `-console` variant), from
+`app-fx/packaging/AdministratorHost.cs`, with the C# compiler every Windows carries (.NET Framework
+4.x, through PowerShell — no toolchain to install) and the app icon. The host does what `javaw.exe`
+does: hands the command line to the runtime's `jli.dll`, which finds the JRE from the host's location,
+reads `jvm.cfg`, loads `jvm.dll` and runs the client **in that process** — so the window belongs to
+a process named *Open Integration Engine Administrator*. No Azul binary is copied or altered.
+`ChildJvmCommandBuilder` starts the client through the host whenever the runtime carries one, else
+through `javaw.exe` / `java.exe` as before (a Custom Java home, a dev run, other platforms). One
+gap: when the Administrator relaunches itself to change its heap, the relaunched process is the
+runtime's own `javaw.exe` again.
+
 ### App icon
 
 The OS icon (Start menu / taskbar / Dock / installer) is the ring-and-dot mark checked in under

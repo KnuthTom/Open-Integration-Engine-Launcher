@@ -85,7 +85,8 @@ object ProcessTree {
     private fun isJava(h: ProcessHandle): Boolean {
         val command = runCatching { h.info().command().orElse(null) }.getOrNull() ?: return true // unknown: keep it
         val name = command.replace('\\', '/').substringAfterLast('/').lowercase()
-        return name == "java" || name == "javaw" || name == "java.exe" || name == "javaw.exe"
+        return name == "java" || name == "javaw" || name == "java.exe" || name == "javaw.exe" ||
+            name.startsWith(ChildJvmCommandBuilder.ADMINISTRATOR_HOST.lowercase()) // the client's own process host on Windows
     }
 
     private fun startedAfter(h: ProcessHandle, since: Instant): Boolean =

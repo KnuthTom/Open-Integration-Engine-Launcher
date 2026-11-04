@@ -173,6 +173,14 @@ on one at a time). A file from elsewhere can never plant a command that runs uns
 records `import.tunnelCommand … policy=KEEP|DISARM|DROP`. Re-importing your own export over connections
 that already exist here keeps each one's switch as it is when the command is unchanged.
 
+## Process names
+
+In Task Manager the launcher is *Open Integration Engine Launcher* and a running client is *Open
+Integration Engine Administrator* (its window title names the connection): the package builds a
+process host into each bundled runtime, and the launcher starts the client through it (see
+PACKAGING.md, *Process names*). A client on a Custom Java home, or started from a dev run, shows the
+JVM's own name.
+
 ## The launcher's colours
 
 The paintbrush in the header (left of Launch) opens the **Colors** card: **Background** and **Launcher
