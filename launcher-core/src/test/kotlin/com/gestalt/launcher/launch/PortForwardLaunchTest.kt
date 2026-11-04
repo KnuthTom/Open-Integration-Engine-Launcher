@@ -318,10 +318,12 @@ class PortForwardLaunchTest {
      * A forward whose session accepts on some remote ports and refuses on others, as the SSM plugin reports
      * it, with fetches that only succeed while the forward points at a port the engine answers on.
      */
-    private class PortAwareForward(private val answering: Set<Int>) {
+    private class PortAwareForward(private val answering: Set<Int>, private val failure: () -> IOException = { IOException("Connection reset") }) {
         val started = ArrayList<String>()
         val processes = ArrayList<FakeTunnelProcess>()
         @Volatile var current: Int? = null
+        /** Fetch attempts per remote port. */
+        val fetches = HashMap<Int, Int>()
         val starter = com.gestalt.launcher.tunnel.TunnelManager.ProcessStarter { command, _, log ->
             val line = command.last()
             started += line
@@ -336,7 +338,8 @@ class PortForwardLaunchTest {
         val probe: (String, Int) -> Boolean = { _, _ -> processes.lastOrNull()?.isAlive == true }
         fun fetcher(canned: Map<String, ByteArray>): ArtifactFetcher = object : ArtifactFetcher {
             override fun fetchBytes(uri: URI): ByteArray {
-                if (current !in answering) throw IOException("Connection reset")
+                synchronized(fetches) { fetches[current ?: -1] = (fetches[current ?: -1] ?: 0) + 1 }
+                if (current !in answering) throw failure()
                 return canned[uri.toString()] ?: throw IOException("no canned response for $uri")
             }
         }
@@ -459,6 +462,36 @@ class PortForwardLaunchTest {
         assertTrue(ex.message!!.contains("outdated")) { "the plugin's own warning is passed on: ${ex.message}" }
         assertTrue(forward.processes.none { it.isAlive })
         assertFalse(tunnels.hasLiveTunnels())
+    }
+
+    @Test
+    @DisplayName("the refusal surfacing as a connect failure (as it does through an SSM forward) still falls back — and after one knock, not five")
+    fun refusalAsConnectFailureStillFallsBack(@TempDir dir: Path) {
+        val base = "https://localhost:31065/"
+        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
+        val jarBytes = signedCoreJar(dir, ca)
+        val forward = PortAwareForward(answering = setOf(8443)) { ConnectException("Connection refused: connect") }
+        val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
+            logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
+            cacheDir = dir.resolve("tunnel-cache"),
+        )
+        val core = LauncherCore(
+            trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = TrustMode.PIN_KNOWN_SIGNERS,
+            cacheDir = dir.resolve("cache"), tunnels = tunnels, fetcherFactory = { forward.fetcher(responses(base, jarBytes)) },
+            serverLeafProbe = { error("not an https trust failure") }, sleeper = {},
+        )
+        val command = "aws ssm start-session --target mi-0123456789abcdef0 --document-name AWS-StartPortForwardingSession --parameters \"localPortNumber=31065,portNumber=8000\""
+        val conn = Connection(id = "t", name = "Forwarded", serverUrl = base, tunnelCommand = command)
+
+        val process = core.launch(conn)
+        try {
+            assertEquals(listOf(8000, 8443), forward.started.map { Regex("portNumber=(\\d+)").find(it)!!.groupValues[1].toInt() }) { "8000 refused → 8443" }
+            assertEquals(1, forward.fetches[8000]) { "the refusal is read after the first failed fetch; no further knocks: ${forward.fetches}" }
+            assertEquals(8443, tunnels.rememberedRemotePort("t"))
+        } finally {
+            process.destroyForcibly()
+            process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
+        }
     }
 
     @Test

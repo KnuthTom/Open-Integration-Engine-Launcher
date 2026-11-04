@@ -22,7 +22,7 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
 - Release binaries are **UNSIGNED** (community). A **v1.0.1** Windows MSI (the Compose UI) exists;
   **v1.1.x** are the first releases of the JavaFX UI (`:app-fx`), built with `./gradlew :app-fx:packageMsi`;
   bump `gestaltVersion` before every MSI — Windows Installer will not upgrade a product over the same version.
-- **1.1.3** (JavaFX UI): port-forward resilience (refused-port fallback, sessions that end under the
+- **1.1.4** (JavaFX UI): port-forward resilience (refused-port fallback, sessions that end under the
   launcher, `pause`-parked scripts), the shared jar pool, full export/import round trip (trust never
   from a file), Windows scaling hard-wired, launcher colours, Quit, branded Windows process names.
 - **330+ tests pass** (`./gradlew build`).

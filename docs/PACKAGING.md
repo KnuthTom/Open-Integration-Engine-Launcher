@@ -172,7 +172,7 @@ tests). The current mode is shown in **Settings → About** ("Portable" vs "Inst
 
 ## Versioning / metadata
 
-The version is single-sourced from **`gestaltVersion`** in `gradle.properties` (currently `1.1.3`) and
+The version is single-sourced from **`gestaltVersion`** in `gradle.properties` (currently `1.1.4`) and
 flows into the root project version, the jpackage `packageVersion`, the CycloneDX SBOM, and a generated
 `build-info.properties` resource. **Settings → About** shows the app name, version (+ git commit), the
 vendor (**Gestalt Diagnostics**), the build time, the bundled runtimes, and the layout mode.

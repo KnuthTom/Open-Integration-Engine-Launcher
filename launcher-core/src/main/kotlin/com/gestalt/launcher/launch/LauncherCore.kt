@@ -366,9 +366,9 @@ open class LauncherCore(
                     // server side refused the destination port, that — not "connection reset" — is the failure,
                     // and the engine's usual ports are worth a try. Asked before the lease goes, since releasing
                     // the last lease tears the forward (and its log) down; and given a moment, since the plugin
-                    // writes the line around the time it drops the connection, not strictly before. Not asked
-                    // when the local port itself refused the connect (the forward's listener is gone — the session
-                    // ended; the server side never came into it), which also spares that wait.
+                    // writes the line around the time it drops the connection, not strictly before. Asked whatever
+                    // the exception looks like: through a forward the server side's refusal surfaces as a connect
+                    // failure too (1.1.3 skipped the question for those and lost the fallback).
                     // The forward's session ended under the launcher (the plugin's `Exiting session`), so every
                     // connect was refused — nothing the server did. Reopen once and prepare again; a session that
                     // ends again the moment the launcher connects is reported as that, with the plugin's own
@@ -381,7 +381,7 @@ open class LauncherCore(
                     val forwardedTo = lease?.remotePort
                     try {
                         if (lease != null && t is IOException) {
-                            refusedBeyondTheForward = !isTransientConnect(t) && tunnels.destinationRefused(connection.id, REFUSAL_GRACE_MS)
+                            refusedBeyondTheForward = tunnels.destinationRefused(connection.id, REFUSAL_GRACE_MS)
                             sessionEndedUnderUs = lease.managed && !refusedBeyondTheForward && (tunnels.sessionEnded(connection.id) || lease.replacedUnder)
                             outdatedPlugin = sessionEndedUnderUs && tunnels.outdatedPlugin(connection.id)
                         }
@@ -485,9 +485,10 @@ open class LauncherCore(
                 return block()
             } catch (e: Exception) {
                 if (attempt >= maxAttempts || !isTransientConnect(e)) throw e
-                // A refused connect on a forward whose session has ended will be refused again: let the launch
-                // loop reopen the forward now rather than after every attempt and its backoff.
-                if (tunnels.sessionEnded(connection.id)) throw e
+                // No point knocking again on a forward whose session has ended, or whose server side has
+                // already refused the port: the launch loop reopens or re-points it now, not after every attempt
+                // and its backoff.
+                if (tunnels.sessionEnded(connection.id) || tunnels.destinationRefused(connection.id)) throw e
                 sleeper((250L * attempt).coerceAtMost(2_000L))
             }
         }
