@@ -173,15 +173,21 @@ on one at a time). A file from elsewhere can never plant a command that runs uns
 records `import.tunnelCommand … policy=KEEP|DISARM|DROP`. Re-importing your own export over connections
 that already exist here keeps each one's switch as it is when the command is unchanged.
 
-## The launcher's colour
+## The launcher's colours
 
-The header's colour swatch (left of Launch) opens a palette — JavaFX's own picker: a swatch grid and
-*Custom Color…* with RGB/HSB sliders. The pick becomes the launcher's **accent**: the Launch button,
-the selected row, switches, check rows and focus rings, with hover/active tones, the text on it (ink
-or white by luminance), the soft fill and the selection tint derived from it (`Theme.applyAccent`:
-looked-up colours set inline on the scene root, so every node follows at once). Stored as
-`fx.accent=#RRGGBB` in `ui-prefs.properties`; the default is the design's graphite. The light register
-is the only one — the dark theme toggle is gone.
+Two swatches in the header (left of Launch) — **Background color** and **Launcher color** — each open
+JavaFX's own picker: a swatch grid and *Custom Color…* with RGB/HSB sliders, the design's default in
+the custom row. The background is the surface; the whole neutral register is derived from it by
+luminance — on a light background ink text, raised cards toward white, sunken fields, borders and hover
+tints toward the ink; on a dark background light text and surfaces that step toward white in small
+amounts (the design's light and dark sheets, generalised to any colour), with the state colours (ok,
+warn, danger) of the matching register. The launcher colour is the **accent**: the Launch button, the
+selected row, switches, check rows and focus rings, with hover/active tones, the text on it (ink or
+white by luminance) and the soft fill and selection tint laid over the chosen background.
+`Theme.applyPalette` writes the palette as a stylesheet (`ui-theme-<bg>-<accent>.css` beside the
+data files; the previous one is removed) so popups — menus, tooltips, the toast — follow too. Stored
+as `fx.background` / `fx.accent` (`#RRGGBB`) in `ui-prefs.properties`; the dark theme toggle is gone,
+a dark background is a pick like any other.
 
 The header asks to save only for a change the user made: a launch stamps "last launched" on the saved
 connection without making the open form dirty, and Save never carries a stale stamp back.

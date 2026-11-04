@@ -268,14 +268,19 @@ class LauncherModelTest {
         m.sort.set(SortMode.Recent)
         m.foldersFirst.set(true)
         m.accent.set("#1F66B3")
+        m.background.set("#101418")
         m.closeAfterLaunch.set(true)
         val again = LauncherPrefs(dir.resolve("ui-prefs.properties"))
         assertEquals(SortMode.Recent, again.sort)
         assertTrue(again.foldersFirst)
         assertEquals("#1F66B3", again.accent)
+        assertEquals("#101418", again.background)
         assertTrue(again.closeAfterLaunch)
         again.accent = "not a colour"
-        assertEquals(LauncherPrefs.DEFAULT_ACCENT, LauncherPrefs(dir.resolve("ui-prefs.properties")).accent) { "a stray value reads as the default" }
+        again.background = ""
+        val third = LauncherPrefs(dir.resolve("ui-prefs.properties"))
+        assertEquals(LauncherPrefs.DEFAULT_ACCENT, third.accent) { "a stray value reads as the default" }
+        assertEquals(LauncherPrefs.DEFAULT_BACKGROUND, third.background)
     }
 
     @Test

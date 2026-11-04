@@ -91,8 +91,9 @@ class LauncherModel(
     val dirty: ReadOnlyBooleanProperty get() = dirtyWrapper.readOnlyProperty
 
     val closeAfterLaunch: BooleanProperty = SimpleBooleanProperty(prefs.closeAfterLaunch)
-    /** The launcher's colour (`#RRGGBB`), the user's pick — see Theme.applyAccent. */
+    /** The launcher's colour (the accent) and background, `#RRGGBB`, the user's picks — see Theme.applyPalette. */
     val accent: StringProperty = SimpleStringProperty(prefs.accent)
+    val background: StringProperty = SimpleStringProperty(prefs.background)
 
     val launches: ObservableMap<String, LaunchState> = FXCollections.observableHashMap()
 
@@ -248,6 +249,7 @@ class LauncherModel(
         filter.addListener { _, _, _ -> rebuildRows() }
         closeAfterLaunch.addListener { _, _, v -> prefs.closeAfterLaunch = v }
         accent.addListener { _, _, v -> prefs.accent = v }
+        background.addListener { _, _, v -> prefs.background = v }
         draft.addListener { _, _, _ -> recomputeDirty() }
     }
 

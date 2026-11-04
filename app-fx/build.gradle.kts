@@ -275,6 +275,7 @@ val profileFileNames = setOf(
     "admissions.json", "audit.log", "instance.lock", "ui-fonts.css",
 )
 val profileFileSuffixes = listOf(".dpapi", ".corrupt", "-tunnel.log")
+val profileFilePrefixes = listOf("ui-theme-") // the generated palette stylesheets (ui-theme-<bg>-<accent>.css)
 val profileDirName = "data" // the portable layout's state folder, should one be left beside an app-image that was run in place
 val verifyNoProfileData by tasks.registering {
     group = "verification"
@@ -284,7 +285,7 @@ val verifyNoProfileData by tasks.registering {
     doLast {
         val offenders = ArrayList<String>()
         fun check(name: String, where: String) {
-            if (name in profileFileNames || profileFileSuffixes.any { name.endsWith(it) }) offenders += where
+            if (name in profileFileNames || profileFileSuffixes.any { name.endsWith(it) } || profileFilePrefixes.any { name.startsWith(it) }) offenders += where
         }
         for (root in roots) {
             val dir = root.get().asFile

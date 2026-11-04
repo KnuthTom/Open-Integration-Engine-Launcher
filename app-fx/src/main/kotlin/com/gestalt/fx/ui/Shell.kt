@@ -78,10 +78,13 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         root.children += row
 
         scene = Scene(root, 1120.0, 760.0)
-        Theme.apply(scene, dark = false)
-        Theme.applyAccent(scene, model.accent.get())
-        detail.setAccent(model.accent.get())
-        model.accent.addListener { _, _, accent -> Theme.applyAccent(scene, accent); detail.setAccent(accent) }
+        fun palette() {
+            Theme.applyPalette(scene, model.accent.get(), model.background.get())
+            detail.setPalette(model.accent.get(), model.background.get())
+        }
+        palette()
+        model.accent.addListener { _, _, _ -> palette() }
+        model.background.addListener { _, _, _ -> palette() }
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED) { e -> onShortcut(e) }
 
@@ -391,6 +394,10 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
 
     override fun setAccent(hex: String) {
         model.accent.set(Theme.normalizeAccent(hex))
+    }
+
+    override fun setBackground(hex: String) {
+        model.background.set(Theme.normalizeBackground(hex))
     }
 
     // --- launch prompts ----------------------------------------------------------------------------

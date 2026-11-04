@@ -35,10 +35,15 @@ class LauncherPrefs(private val file: Path = AppPaths.dataDir.resolve("ui-prefs.
         get() = props.getProperty("mode", "Light").equals("Dark", ignoreCase = true)
         set(value) = put("mode", if (value) "Dark" else "Light")
 
-    /** The launcher's colour — `#RRGGBB`; anything else reads as the default graphite. */
+    /** The launcher's colour (the accent) — `#RRGGBB`; anything else reads as the default graphite. */
     var accent: String
-        get() = props.getProperty("fx.accent")?.trim()?.uppercase()?.takeIf { ACCENT.matches(it) } ?: DEFAULT_ACCENT
-        set(value) = put("fx.accent", value.trim().uppercase().takeIf { ACCENT.matches(it) })
+        get() = props.getProperty("fx.accent")?.trim()?.uppercase()?.takeIf { COLOR.matches(it) } ?: DEFAULT_ACCENT
+        set(value) = put("fx.accent", value.trim().uppercase().takeIf { COLOR.matches(it) })
+
+    /** The launcher's background — `#RRGGBB`; the neutral register (text, borders, surfaces) is derived from it. */
+    var background: String
+        get() = props.getProperty("fx.background")?.trim()?.uppercase()?.takeIf { COLOR.matches(it) } ?: DEFAULT_BACKGROUND
+        set(value) = put("fx.background", value.trim().uppercase().takeIf { COLOR.matches(it) })
 
     var closeAfterLaunch: Boolean
         get() = props.getProperty("closeAfterLaunch", "false").toBoolean()
@@ -120,6 +125,7 @@ class LauncherPrefs(private val file: Path = AppPaths.dataDir.resolve("ui-prefs.
 
     companion object {
         const val DEFAULT_ACCENT = "#2E3035"
-        private val ACCENT = Regex("^#[0-9A-F]{6}$")
+        const val DEFAULT_BACKGROUND = "#F7F7F8"
+        private val COLOR = Regex("^#[0-9A-F]{6}$")
     }
 }

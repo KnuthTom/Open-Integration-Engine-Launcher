@@ -53,6 +53,8 @@ interface DetailActions {
     fun changeIcon()
     /** The user picked the launcher's colour (`#RRGGBB`). */
     fun setAccent(hex: String)
+    /** The user picked the launcher's background (`#RRGGBB`). */
+    fun setBackground(hex: String)
     /** Auto-approve is a trust switch, not a form field: it applies to the saved connection at once. */
     fun setAutoApprove(on: Boolean)
     /** Save [password] for the active connection under the draft's username; applies at once. The array is zeroed by the callee. */
@@ -76,17 +78,21 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val lastLabel = Label()
     private val launchButton = Controls.button("Launch", Controls.ButtonKind.Primary, Icons.glyph("play", 14.0, "-accent-contrast", 2.0)) { host.launchActive() }
         .apply { styleClass += "launch-button" }
-    // The launcher's colour: JavaFX's own picker (a swatch grid plus "Custom Color…" with RGB/HSB sliders),
-    // dressed as one of the header's icon buttons and showing the current colour.
-    private var settingAccent = false
-    private val accentPicker = ColorPicker(Color.web(Theme.DEFAULT_ACCENT)).apply {
+    // The launcher's palette: two of JavaFX's own pickers (a swatch grid plus "Custom Color…" with RGB/HSB
+    // sliders), dressed as the header's icon buttons and showing the current colours — the background and
+    // the accent. The defaults sit in each picker's custom row so they are one click away.
+    private var settingPalette = false
+    private fun palettePicker(default: String, tip: String, onPick: (String) -> Unit) = ColorPicker(Color.web(default)).apply {
         styleClass += ColorPicker.STYLE_CLASS_BUTTON
         styleClass += "accent-picker"
-        tooltip = javafx.scene.control.Tooltip("Launcher color")
+        tooltip = javafx.scene.control.Tooltip(tip)
         isFocusTraversable = false
         minWidth = 32.0; prefWidth = 32.0; maxWidth = 32.0; minHeight = 32.0; prefHeight = 32.0; maxHeight = 32.0
-        valueProperty().addListener { _, _, c -> if (!settingAccent && c != null) host.setAccent(Theme.hex(c)) }
+        customColors += Color.web(default)
+        valueProperty().addListener { _, _, c -> if (!settingPalette && c != null) onPick(Theme.hex(c)) }
     }
+    private val backgroundPicker = palettePicker(Theme.DEFAULT_BACKGROUND, "Background color") { host.setBackground(it) }
+    private val accentPicker = palettePicker(Theme.DEFAULT_ACCENT, "Launcher color") { host.setAccent(it) }
     private val header = HBox().apply { styleClass += "detail-header" }
 
     // connection card
@@ -175,7 +181,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val sub = HBox(Icons.glyph("folder", 12.0), pathLabel, Label("·"), lastLabel).apply { styleClass += "header-sub" }
         val titles = VBox(4.0, nameField, sub).apply { minWidth = 0.0; HBox.setHgrow(this, Priority.ALWAYS) }
         nameField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(name = v.orEmpty()) } }
-        header.children.addAll(iconHolder, titles, accentPicker, launchButton)
+        header.children.addAll(iconHolder, titles, backgroundPicker, accentPicker, launchButton)
         header.alignment = Pos.CENTER_LEFT
 
         // --- cards ---
@@ -320,12 +326,17 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         host.savePassword(chars)
     }
 
-    /** Show [hex] in the picker (the pick came from elsewhere, or the stored preference at start-up). */
-    fun setAccent(hex: String) {
-        val c = Color.web(Theme.normalizeAccent(hex))
-        if (accentPicker.value == c) return
-        settingAccent = true
-        try { accentPicker.value = c } finally { settingAccent = false }
+    /** Show the palette in the pickers (the stored preference at start-up, or a pick made elsewhere). */
+    fun setPalette(accent: String, background: String) {
+        val a = Color.web(Theme.normalizeAccent(accent))
+        val b = Color.web(Theme.normalizeBackground(background))
+        settingPalette = true
+        try {
+            if (accentPicker.value != a) accentPicker.value = a
+            if (backgroundPicker.value != b) backgroundPicker.value = b
+        } finally {
+            settingPalette = false
+        }
     }
 
     // --- rendering --------------------------------------------------------------------------------
