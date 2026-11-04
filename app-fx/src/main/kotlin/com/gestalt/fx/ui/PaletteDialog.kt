@@ -23,8 +23,9 @@ import javafx.scene.paint.Color
 class PaletteDialog(private val modal: ModalHost, private val model: LauncherModel) {
 
     private var syncing = false
-    private val background = picker(Theme.DEFAULT_BACKGROUND) { model.background.set(it) }
-    private val accent = picker(Theme.DEFAULT_ACCENT) { model.accent.set(it) }
+    // Not `background`: inside a GridPane.apply block that name is the pane's own Region.background.
+    private val backgroundPicker = picker(Theme.DEFAULT_BACKGROUND) { model.background.set(it) }
+    private val accentPicker = picker(Theme.DEFAULT_ACCENT) { model.accent.set(it) }
 
     private fun picker(default: String, onPick: (String) -> Unit): ColorPicker = ColorPicker(Color.web(default)).apply {
         styleClass += "palette-picker"
@@ -36,8 +37,8 @@ class PaletteDialog(private val modal: ModalHost, private val model: LauncherMod
     fun show() {
         sync()
         val grid = Controls.fieldGrid(120.0).apply {
-            row(0, "Background", background)
-            row(1, "Launcher color", accent)
+            row(0, "Background", backgroundPicker)
+            row(1, "Launcher color", accentPicker)
             VBox.setMargin(this, Insets(14.0, 0.0, 0.0, 0.0))
         }
         val card = VBox().apply {
@@ -65,8 +66,8 @@ class PaletteDialog(private val modal: ModalHost, private val model: LauncherMod
     private fun sync() {
         syncing = true
         try {
-            background.value = Color.web(Theme.normalizeBackground(model.background.get()))
-            accent.value = Color.web(Theme.normalizeAccent(model.accent.get()))
+            backgroundPicker.value = Color.web(Theme.normalizeBackground(model.background.get()))
+            accentPicker.value = Color.web(Theme.normalizeAccent(model.accent.get()))
         } finally {
             syncing = false
         }
