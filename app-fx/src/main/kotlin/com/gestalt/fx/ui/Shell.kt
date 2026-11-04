@@ -51,6 +51,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     private val detail = DetailPane(model, this, icons)
     private val certificates = CertificatesDialog(model, modal) { detail.refreshCertificates() }
     private val iconDialog = IconDialog(modal, icons) { stage }
+    private val paletteDialog = PaletteDialog(modal, model)
     val scene: Scene
 
     init {
@@ -78,10 +79,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         root.children += row
 
         scene = Scene(root, 1120.0, 760.0)
-        fun palette() {
-            Theme.applyPalette(scene, model.accent.get(), model.background.get())
-            detail.setPalette(model.accent.get(), model.background.get())
-        }
+        fun palette() = Theme.applyPalette(scene, model.accent.get(), model.background.get())
         palette()
         model.accent.addListener { _, _, _ -> palette() }
         model.background.addListener { _, _, _ -> palette() }
@@ -392,13 +390,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         detail.refreshSignIn()
     }
 
-    override fun setAccent(hex: String) {
-        model.accent.set(Theme.normalizeAccent(hex))
-    }
-
-    override fun setBackground(hex: String) {
-        model.background.set(Theme.normalizeBackground(hex))
-    }
+    override fun pickColors() = paletteDialog.show()
 
     // --- launch prompts ----------------------------------------------------------------------------
 

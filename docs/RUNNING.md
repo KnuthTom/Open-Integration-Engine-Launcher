@@ -175,9 +175,9 @@ that already exist here keeps each one's switch as it is when the command is unc
 
 ## The launcher's colours
 
-Two swatches in the header (left of Launch) — **Background color** and **Launcher color** — each open
-JavaFX's own picker: a swatch grid and *Custom Color…* with RGB/HSB sliders, the design's default in
-the custom row. The background shades **the canvas behind the cards and nothing else**: the window's
+The paintbrush in the header (left of Launch) opens the **Colors** card: **Background** and **Launcher
+color**, each JavaFX's own picker — a swatch grid and *Custom Color…* with RGB/HSB sliders, the design's
+default in the custom row — applying as you pick, with *Reset to defaults*. The background shades **the canvas behind the cards and nothing else**: the window's
 chrome, the cards, fields and text keep the design's register, so the cards read as windows on a desk
 of that colour (text that sits on the canvas directly, the empty state, goes ink or white by the
 canvas's luminance). The launcher colour is the **accent**: the Launch button, the selected row,
