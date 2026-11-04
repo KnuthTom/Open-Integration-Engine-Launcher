@@ -372,7 +372,8 @@ open class LauncherCore(
                     // connect was refused — nothing the server did. Reopen once and prepare again; a session that
                     // ends again the moment the launcher connects is reported as that, with the plugin's own
                     // warning when it printed one (an outdated plugin has been seen to do exactly this).
-                    val sessionEndedUnderUs = lease != null && lease.managed && t is IOException && !refusedBeyondTheForward && tunnels.sessionEnded(connection.id)
+                    val sessionEndedUnderUs = lease != null && lease.managed && t is IOException && !refusedBeyondTheForward &&
+                        (tunnels.sessionEnded(connection.id) || lease.replacedUnder)
                     val outdatedPlugin = sessionEndedUnderUs && tunnels.outdatedPlugin(connection.id)
                     val forwardedTo = lease?.remotePort
                     lease?.close()

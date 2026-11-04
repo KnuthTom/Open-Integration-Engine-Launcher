@@ -306,6 +306,22 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         modal.show(card, 560.0, escape = { modal.close() }, enter = { modal.close(); proceed(ConnectionImport.TunnelPolicy.Disarm) })
     }
 
+    override fun quit() {
+        guard(proceed = {
+            val n = com.gestalt.launcher.tunnel.TunnelManager.shared.liveTunnels()
+            if (n == 0) { exitNow(); return@guard }
+            modal.confirm(
+                "Quit the launcher?",
+                if (n == 1) "A port-forward is open for a running Administrator. Quitting closes it, and that Administrator loses its server."
+                else "$n port-forwards are open for running Administrators. Quitting closes them, and those Administrators lose their servers.",
+                listOf(
+                    ModalAction("Cancel", Controls.ButtonKind.Secondary) {},
+                    ModalAction("Quit", Controls.ButtonKind.Danger) { exitNow() },
+                ),
+            )
+        })
+    }
+
     override fun exportConnections() {
         val chooser = FileChooser().apply {
             title = "Export connections"

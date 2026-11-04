@@ -61,6 +61,8 @@ class TunnelManager(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Re-pointed script copies and the remembered remote ports live here (a cache: losing it costs one retry). */
     private val cacheDir: Path = AppPaths.cacheDir.resolve("tunnel"),
+    /** How often a held forward's log is read for its session ending while the process lives on (see [watch]). */
+    private val sessionPollMs: Long = SESSION_POLL_MS,
 ) {
     /** Spawns the tunnel command (injected so the manager is tested without a real shell). */
     fun interface ProcessStarter {
@@ -71,6 +73,9 @@ class TunnelManager(
             fun real(): ProcessStarter = ProcessStarter { command, workingDir, log ->
                 val builder = ProcessBuilder(command).redirectErrorStream(true)
                 if (workingDir != null) builder.directory(workingDir.toFile())
+                // So a batch file can tell it runs under the launcher — `if not defined OIE_LAUNCHER pause`: a
+                // `pause` here has no one to press a key, and parks a dead session's window for ever.
+                builder.environment()[LAUNCHER_ENV] = "1"
                 if (log != null) builder.redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
                 else builder.redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 builder.start()
@@ -91,8 +96,16 @@ class TunnelManager(
         internal val entry: Live?,
     ) : AutoCloseable {
         private val closed = AtomicBoolean(false)
+        /** The forward's process generation when this lease was taken — see [replacedUnder]. */
+        private val generation: Int = entry?.generation ?: 0
         /** The remote port this forward points at, when the launcher opened it and the command names one. */
         val remotePort: Int? get() = entry?.remotePort
+        /**
+         * True when the forward's process was replaced since this lease was taken — its session ended or
+         * it exited and the manager reopened it in place. A fetch that failed meanwhile failed against a
+         * dead forward, not the server.
+         */
+        val replacedUnder: Boolean get() = entry != null && entry.generation != generation
         override fun close() {
             if (closed.compareAndSet(false, true) && managed && entry != null) manager.release(connectionId, entry)
         }
@@ -105,6 +118,8 @@ class TunnelManager(
             set(v) { field?.let { if (it != v) logs.add(it) }; field = v }
         /** Logs of the processes this forward has run before the current one (a reopen replaces the process and its log). */
         val logs = java.util.concurrent.CopyOnWriteArrayList<Path>()
+        /** Bumped each time the process is replaced in place (a reopen), so a lease can tell the forward it had is gone. */
+        @Volatile var generation = 0
         val remotePort: Int? get() = endpoint?.remotePort
         var users = 0
         /** Set before the launcher itself takes the process down, so its exit is not taken for a crash. */
@@ -157,6 +172,9 @@ class TunnelManager(
 
     /** True while the launcher runs a tunnel that a launched Administrator is using. */
     fun hasLiveTunnels(): Boolean = live.isNotEmpty()
+
+    /** How many forwards the launcher holds open right now (one per connection). */
+    fun liveTunnels(): Int = live.size
 
     /**
      * Run [listener] once the launcher runs no tunnels — at once if that is already so. The window uses it
@@ -288,33 +306,56 @@ class TunnelManager(
     private fun watch(connection: Connection, endpoint: Endpoint, entry: Live, process: Process) {
         process.onExit().thenRun {
             if (entry.closing || live[connection.id] !== entry || entry.process !== process) return@thenRun
-            Thread({ reopenAfterCrash(connection, endpoint, entry, process) }, "tunnel-reopen").apply { isDaemon = true }.start()
+            Thread({ reopenAfterCrash(connection, endpoint, entry, process, "exited while in use") }, "tunnel-reopen").apply { isDaemon = true }.start()
         }
+        // The session can end with the process still alive — the plugin exits on the agent's ChannelClosed
+        // and a batch file sits on its `pause` — so the log is read as well: a session that has ended is
+        // a crash, process or no process.
+        Thread({
+            while (entry.process === process && process.isAlive && live[connection.id] === entry && !entry.closing) {
+                try { Thread.sleep(sessionPollMs) } catch (e: InterruptedException) { return@Thread }
+                if (entry.process !== process || !process.isAlive || live[connection.id] !== entry || entry.closing) return@Thread
+                if (sessionEndedIn(entry)) {
+                    AuditLog.event("tunnel.sessionEnded", "connection" to connection.id, "port" to endpoint.port, "process" to "alive", "result" to "REOPEN")
+                    reopenAfterCrash(connection, endpoint, entry, process, "its session ended while in use")
+                    return@Thread
+                }
+            }
+        }, "tunnel-session-watch").apply { isDaemon = true }.start()
     }
 
-    private fun reopenAfterCrash(connection: Connection, endpoint: Endpoint, entry: Live, died: Process) {
+    /** The forward [died] (or its session did, [died] parked alive): reopen it for its holders, a bounded number of times. */
+    private fun reopenAfterCrash(connection: Connection, endpoint: Endpoint, entry: Live, died: Process, reason: String) {
         synchronized(lockFor(connection.id)) {
             if (entry.closing || live[connection.id] !== entry || entry.process !== died || entry.users <= 0) return
             val now = clock()
             while (entry.reopens.isNotEmpty() && now - entry.reopens.first() > REOPEN_WINDOW_MS) entry.reopens.removeFirst()
             if (entry.reopens.size >= REOPEN_LIMIT) {
                 AuditLog.event("tunnel.exited", "connection" to connection.id, "code" to runCatching { died.exitValue() }.getOrNull(), "result" to "GIVEN_UP")
+                entry.closing = true
+                runCatching { destroy(died) }
                 live.remove(connection.id)
                 notifyIfIdle()
                 return
             }
             entry.reopens.addLast(now)
-            AuditLog.event("tunnel.reopen", "connection" to connection.id, "port" to endpoint.port, "reason" to "exited while in use (code ${runCatching { died.exitValue() }.getOrNull()})")
+            AuditLog.event("tunnel.reopen", "connection" to connection.id, "port" to endpoint.port, "reason" to "$reason (code ${runCatching { died.exitValue() }.getOrNull() ?: "still running"})")
             try {
+                // A process that outlived its session is taken down (the whole tree) before the fresh one starts.
+                entry.closing = true
+                if (died.isAlive) destroy(died)
                 val (process, log) = start(connection, endpoint)
                 entry.process = process
                 entry.log = log
+                entry.generation++
+                entry.closing = false
                 awaitPort(entry, endpoint.host, endpoint.port)
                 AuditLog.event("tunnel.open", "connection" to connection.id, "port" to endpoint.port, "reopened" to true, "pid" to runCatching { process.pid() }.getOrNull(), "log" to (log?.toString() ?: "-"))
                 watch(connection, endpoint, entry, process)
             } catch (t: Throwable) {
                 if (t is InterruptedException) Thread.currentThread().interrupt()
                 AuditLog.event("tunnel.exited", "connection" to connection.id, "result" to "REOPEN_FAILED", "error" to (t.message ?: t.javaClass.simpleName))
+                entry.closing = true
                 runCatching { destroy(entry.process) }
                 live.remove(connection.id)
                 notifyIfIdle()
@@ -363,6 +404,7 @@ class TunnelManager(
         val (process, log) = start(connection, endpoint)
         entry.process = process
         entry.log = log
+        entry.generation++
         entry.closing = false
         try {
             awaitPort(entry, host, port)
@@ -540,6 +582,10 @@ class TunnelManager(
         private val BASIC_MODE_LINE = Regex("^Connection accepted for session [^\\[\\]\\s]+\\.$")
         private val DESTINATION_REFUSED_LINE = Regex("^Connection to destination port failed.*$")
         private val SESSION_ENDED_LINE = Regex("^Exiting session with sessionId: .*$")
+        /** How often a held forward's log is read for its session having ended. */
+        const val SESSION_POLL_MS = 2_000L
+        /** Set in the tunnel command's environment, so a script can skip what needs a person at the keyboard (`if not defined OIE_LAUNCHER pause`). */
+        const val LAUNCHER_ENV = "OIE_LAUNCHER"
         private val OUTDATED_PLUGIN_LINE = Regex("^WARNING: An outdated SessionManagerPlugin version detected.*$")
 
         /** The process-wide manager: launches share tunnels per connection, and exit tears them all down. */

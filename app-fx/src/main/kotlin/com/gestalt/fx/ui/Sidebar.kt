@@ -48,6 +48,8 @@ interface ShellActions {
     fun deleteFolder(id: String)
     fun importConnections()
     fun exportConnections()
+    /** End the launcher for real — port-forwards it holds for running Administrators included (asked first). */
+    fun quit()
 }
 
 /**
@@ -305,6 +307,10 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         Controls.menuSeparator(),
         Controls.menuItem("Import connections…", "import") { host.importConnections() },
         Controls.menuItem("Export connections…", "share") { host.exportConnections() },
+        Controls.menuSeparator(),
+        // Closing the window keeps the launcher alive while an Administrator runs through its port-forward
+        // (it lingers, hidden, and the next start brings it back); this is the way to end it for real.
+        Controls.menuItem("Quit launcher", "x") { host.quit() },
     )
 
     private fun showMenuFor(row: TreeRow?, x: Double, y: Double) {

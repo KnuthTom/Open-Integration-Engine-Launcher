@@ -86,7 +86,8 @@ class TunnelManagerTest {
         probe: (String, Int) -> Boolean,
         clock: () -> Long = { 0L },
         timeoutMs: Long = 60_000,
-    ) = TunnelManager(logDir = dir, starter = starter, probe = probe, sleeper = {}, timeoutMs = timeoutMs, clock = clock, cacheDir = dir.resolve("tunnel-cache"))
+        sessionPollMs: Long = 50,
+    ) = TunnelManager(logDir = dir, starter = starter, probe = probe, sleeper = {}, timeoutMs = timeoutMs, clock = clock, cacheDir = dir.resolve("tunnel-cache"), sessionPollMs = sessionPollMs)
 
     @Test
     @DisplayName("no tunnel command, or the port-forward switched off: nothing to acquire, nothing started")
@@ -272,6 +273,44 @@ class TunnelManagerTest {
         assertFalse(m.destinationRefused("other"))
         lease.close()
         assertFalse(m.destinationRefused("c1")) { "released: the forward and its log are no longer held" }
+    }
+
+    @Test
+    @DisplayName("a held forward whose session ends while its process lives on (a batch file parked on `pause`) is reopened for its holders; the lease knows its forward was replaced")
+    fun sessionEndingUnderAHeldForwardReopensIt(@TempDir dir: Path) {
+        val starter = Scripted()
+        val m = manager(dir, starter, { _, _ -> starter.processes.any { it.isAlive } })
+        val lease = m.acquire(connection())!!
+        assertFalse(lease.replacedUnder)
+        // The agent closes the session; the plugin exits; cmd.exe sits on `pause` — the process stays alive.
+        starter.logs[0]!!.let { Files.writeString(it, Files.readString(it) + "\nExiting session with sessionId: user-abc123.\n\nPress any key to continue . . .\n") }
+        awaitUntil("the dead session's forward is replaced") { starter.processes.size == 2 && starter.processes[1].isAlive }
+        assertTrue(starter.processes[0].destroyed.get()) { "the parked process was taken down with its session" }
+        assertEquals(1, m.holders("c1")) { "same holder, same lease" }
+        assertTrue(lease.replacedUnder) { "a fetch that failed meanwhile failed against the dead forward" }
+        assertFalse(m.sessionEnded("c1")) { "the fresh session has not ended" }
+        lease.close()
+        assertTrue(starter.processes[1].destroyed.get())
+        assertFalse(m.hasLiveTunnels())
+    }
+
+    @Test
+    @DisplayName("acquire on a held forward whose session has ended reopens it in place before joining")
+    fun acquireJoinsAReopenedForward(@TempDir dir: Path) {
+        val starter = Scripted()
+        // The watcher is slow here, so acquire finds the dead session itself.
+        // The first forward's port answers while it comes up; a reopened one answers while it lives.
+        val m = manager(dir, starter, { _, _ -> starter.processes.size == 1 || (starter.processes.lastOrNull()?.isAlive == true && starter.processes.size > 1) }, sessionPollMs = 60_000)
+        val first = m.acquire(connection())!!
+        starter.logs[0]!!.let { Files.writeString(it, Files.readString(it) + "\nExiting session with sessionId: user-abc123.\n") }
+        val second = m.acquire(connection())!!
+        assertEquals(2, starter.processes.size) { "reopened in place, then joined" }
+        assertTrue(starter.processes[0].destroyed.get())
+        assertEquals(2, m.holders("c1"))
+        assertTrue(first.replacedUnder)
+        assertFalse(second.replacedUnder) { "taken after the reopen" }
+        first.close(); second.close()
+        assertFalse(m.hasLiveTunnels())
     }
 
     @Test

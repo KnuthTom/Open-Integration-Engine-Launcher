@@ -145,12 +145,25 @@ dropped network) is reopened on its own, a bounded number of times, so the clien
 A session can also end **the moment the launcher connects** — the plugin prints `Exiting session with
 sessionId` right after `Connection accepted`, and an outdated plugin has been seen to do this on a
 multiplexed forward. The process may live on (a batch file that ends in `pause` sits at "Press any key"
-with the session gone), so the launcher reads the log, not just the process: a held forward whose
-session has ended is torn down (the whole tree, `pause` included) and reopened in place, the launch
-prepared again once (`audit.log`: `tunnel.sessionEnded … REOPEN`), and a session that ends again fails
-as *"The tunnel's session ended as soon as the launcher connected"*, passing on the plugin's own
-"outdated" warning when it printed one. **Upgrade the plugin** when it prints "An outdated
-SessionManagerPlugin version detected" — that warning is the first line of the tunnel log.
+with the session gone), so the launcher reads the log, not just the process — every couple of seconds
+while it holds the forward, and again when a launch joins or a fetch fails: a held forward whose
+session has ended is torn down (the whole tree, `pause` included) and reopened in place for the
+Administrators using it (`audit.log`: `tunnel.sessionEnded … REOPEN`, `tunnel.reopen`), a launch in
+flight is prepared again once, and a session that ends again on the fresh forward fails as *"The
+tunnel's session ended as soon as the launcher connected"*, passing on the plugin's own "outdated"
+warning when it printed one. **Upgrade the plugin** when it prints "An outdated SessionManagerPlugin
+version detected" — that warning is the first line of the tunnel log.
+
+Leave `pause` out of a batch file the launcher runs: nobody is at that keyboard, the launcher keeps the
+output in the tunnel log, and a parked window is what hides a dead session. A script shared with
+hand-use can test for the launcher — it sets `OIE_LAUNCHER=1` in the command's environment:
+`if not defined OIE_LAUNCHER pause`.
+
+Closing the window while an Administrator runs through a forward keeps the launcher alive, hidden
+(*lingering*); starting the launcher again brings that same instance back — so a new build, or a new
+install, only runs once that instance has gone. **⋯ → Quit launcher** ends it for real (it asks first
+when forwards are open, since those Administrators lose their server); otherwise it exits on its own
+when the last such Administrator closes.
 
 The tunnel command is exported with the connection like every other setting. It is the one setting the
 launcher *runs*, so an import that carries any shows them first — connection by connection, the command
