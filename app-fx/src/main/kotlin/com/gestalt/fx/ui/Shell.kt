@@ -78,9 +78,10 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         root.children += row
 
         scene = Scene(root, 1120.0, 760.0)
-        Theme.apply(scene, model.dark.get())
-        detail.setThemeDark(model.dark.get())
-        model.dark.addListener { _, _, dark -> Theme.apply(scene, dark); detail.setThemeDark(dark) }
+        Theme.apply(scene, dark = false)
+        Theme.applyAccent(scene, model.accent.get())
+        detail.setAccent(model.accent.get())
+        model.accent.addListener { _, _, accent -> Theme.applyAccent(scene, accent); detail.setAccent(accent) }
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED) { e -> onShortcut(e) }
 
@@ -388,8 +389,8 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         detail.refreshSignIn()
     }
 
-    override fun toggleTheme() {
-        model.dark.set(!model.dark.get())
+    override fun setAccent(hex: String) {
+        model.accent.set(Theme.normalizeAccent(hex))
     }
 
     // --- launch prompts ----------------------------------------------------------------------------

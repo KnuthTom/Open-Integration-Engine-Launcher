@@ -173,6 +173,19 @@ on one at a time). A file from elsewhere can never plant a command that runs uns
 records `import.tunnelCommand … policy=KEEP|DISARM|DROP`. Re-importing your own export over connections
 that already exist here keeps each one's switch as it is when the command is unchanged.
 
+## The launcher's colour
+
+The header's colour swatch (left of Launch) opens a palette — JavaFX's own picker: a swatch grid and
+*Custom Color…* with RGB/HSB sliders. The pick becomes the launcher's **accent**: the Launch button,
+the selected row, switches, check rows and focus rings, with hover/active tones, the text on it (ink
+or white by luminance), the soft fill and the selection tint derived from it (`Theme.applyAccent`:
+looked-up colours set inline on the scene root, so every node follows at once). Stored as
+`fx.accent=#RRGGBB` in `ui-prefs.properties`; the default is the design's graphite. The light register
+is the only one — the dark theme toggle is gone.
+
+The header asks to save only for a change the user made: a launch stamps "last launched" on the saved
+connection without making the open form dirty, and Save never carries a stale stamp back.
+
 ## When something goes wrong in the window
 
 An exception that escapes on the UI thread is written to `audit.log` as `launcher.error` (the class,

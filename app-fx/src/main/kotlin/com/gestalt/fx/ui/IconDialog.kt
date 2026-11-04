@@ -83,8 +83,8 @@ class IconDialog(private val modal: ModalHost, private val icons: CustomIconStor
         }
 
         val previews = HBox(8.0).apply {
-            children += previewBox("Light theme", previewLight, dark = false)
-            children += previewBox("Dark theme", previewDark, dark = true)
+            children += previewBox("On light", previewLight, dark = false)
+            children += previewBox("On dark", previewDark, dark = true)
         }
 
         val tilesScroll = ScrollPane(tiles).apply {

@@ -20,6 +20,7 @@ import com.gestalt.launcher.tls.TrustedCert
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.control.Button
+import javafx.scene.control.ColorPicker
 import javafx.scene.control.Label
 import javafx.scene.control.MenuButton
 import javafx.scene.control.PasswordField
@@ -33,6 +34,7 @@ import javafx.scene.layout.Priority
 import javafx.scene.layout.Region
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
+import javafx.scene.paint.Color
 import javafx.stage.DirectoryChooser
 import javafx.stage.FileChooser
 import java.io.File
@@ -49,7 +51,8 @@ interface DetailActions {
     fun newConnection()
     fun openCertificates()
     fun changeIcon()
-    fun toggleTheme()
+    /** The user picked the launcher's colour (`#RRGGBB`). */
+    fun setAccent(hex: String)
     /** Auto-approve is a trust switch, not a form field: it applies to the saved connection at once. */
     fun setAutoApprove(on: Boolean)
     /** Save [password] for the active connection under the draft's username; applies at once. The array is zeroed by the callee. */
@@ -73,8 +76,16 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val lastLabel = Label()
     private val launchButton = Controls.button("Launch", Controls.ButtonKind.Primary, Icons.glyph("play", 14.0, "-accent-contrast", 2.0)) { host.launchActive() }
         .apply { styleClass += "launch-button" }
-    private val themeButton = Controls.iconButton("moon", "Switch to dark theme") { host.toggleTheme() }.apply {
+    // The launcher's colour: JavaFX's own picker (a swatch grid plus "Custom Color…" with RGB/HSB sliders),
+    // dressed as one of the header's icon buttons and showing the current colour.
+    private var settingAccent = false
+    private val accentPicker = ColorPicker(Color.web(Theme.DEFAULT_ACCENT)).apply {
+        styleClass += ColorPicker.STYLE_CLASS_BUTTON
+        styleClass += "accent-picker"
+        tooltip = javafx.scene.control.Tooltip("Launcher color")
+        isFocusTraversable = false
         minWidth = 32.0; prefWidth = 32.0; maxWidth = 32.0; minHeight = 32.0; prefHeight = 32.0; maxHeight = 32.0
+        valueProperty().addListener { _, _, c -> if (!settingAccent && c != null) host.setAccent(Theme.hex(c)) }
     }
     private val header = HBox().apply { styleClass += "detail-header" }
 
@@ -164,7 +175,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         val sub = HBox(Icons.glyph("folder", 12.0), pathLabel, Label("·"), lastLabel).apply { styleClass += "header-sub" }
         val titles = VBox(4.0, nameField, sub).apply { minWidth = 0.0; HBox.setHgrow(this, Priority.ALWAYS) }
         nameField.textProperty().addListener { _, _, v -> if (!updating) update { it.copy(name = v.orEmpty()) } }
-        header.children.addAll(iconHolder, titles, themeButton, launchButton)
+        header.children.addAll(iconHolder, titles, accentPicker, launchButton)
         header.alignment = Pos.CENTER_LEFT
 
         // --- cards ---
@@ -309,9 +320,12 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         host.savePassword(chars)
     }
 
-    fun setThemeDark(dark: Boolean) {
-        Controls.setGlyph(themeButton, if (dark) "sun" else "moon")
-        themeButton.tooltip = javafx.scene.control.Tooltip(if (dark) "Switch to light theme" else "Switch to dark theme")
+    /** Show [hex] in the picker (the pick came from elsewhere, or the stored preference at start-up). */
+    fun setAccent(hex: String) {
+        val c = Color.web(Theme.normalizeAccent(hex))
+        if (accentPicker.value == c) return
+        settingAccent = true
+        try { accentPicker.value = c } finally { settingAccent = false }
     }
 
     // --- rendering --------------------------------------------------------------------------------

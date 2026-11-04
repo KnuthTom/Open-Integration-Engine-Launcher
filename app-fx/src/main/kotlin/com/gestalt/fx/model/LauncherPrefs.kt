@@ -30,9 +30,15 @@ class LauncherPrefs(private val file: Path = AppPaths.dataDir.resolve("ui-prefs.
         if (Files.isRegularFile(file)) runCatching { Files.newInputStream(file).use { props.load(it) } }
     }
 
+    /** Kept for the Compose app, which shares this file; the JavaFX UI has one register and an [accent] instead. */
     var dark: Boolean
         get() = props.getProperty("mode", "Light").equals("Dark", ignoreCase = true)
         set(value) = put("mode", if (value) "Dark" else "Light")
+
+    /** The launcher's colour — `#RRGGBB`; anything else reads as the default graphite. */
+    var accent: String
+        get() = props.getProperty("fx.accent")?.trim()?.uppercase()?.takeIf { ACCENT.matches(it) } ?: DEFAULT_ACCENT
+        set(value) = put("fx.accent", value.trim().uppercase().takeIf { ACCENT.matches(it) })
 
     var closeAfterLaunch: Boolean
         get() = props.getProperty("closeAfterLaunch", "false").toBoolean()
@@ -110,5 +116,10 @@ class LauncherPrefs(private val file: Path = AppPaths.dataDir.resolve("ui-prefs.
                 runCatching { Files.deleteIfExists(tmp) }
             }
         }
+    }
+
+    companion object {
+        const val DEFAULT_ACCENT = "#2E3035"
+        private val ACCENT = Regex("^#[0-9A-F]{6}$")
     }
 }

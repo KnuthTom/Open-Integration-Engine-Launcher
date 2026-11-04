@@ -261,18 +261,21 @@ class LauncherModelTest {
     }
 
     @Test
-    @DisplayName("sort, folders-first and the theme are remembered in the preferences")
+    @DisplayName("sort, folders-first, the launcher colour and close-after-launch are remembered in the preferences")
     fun prefsFollowProperties(@TempDir dir: Path) {
         val m = model(dir)
+        assertEquals(LauncherPrefs.DEFAULT_ACCENT, m.accent.get()) { "graphite until the user picks" }
         m.sort.set(SortMode.Recent)
         m.foldersFirst.set(true)
-        m.dark.set(true)
+        m.accent.set("#1F66B3")
         m.closeAfterLaunch.set(true)
         val again = LauncherPrefs(dir.resolve("ui-prefs.properties"))
         assertEquals(SortMode.Recent, again.sort)
         assertTrue(again.foldersFirst)
-        assertTrue(again.dark)
+        assertEquals("#1F66B3", again.accent)
         assertTrue(again.closeAfterLaunch)
+        again.accent = "not a colour"
+        assertEquals(LauncherPrefs.DEFAULT_ACCENT, LauncherPrefs(dir.resolve("ui-prefs.properties")).accent) { "a stray value reads as the default" }
     }
 
     @Test
@@ -330,6 +333,33 @@ class LauncherModelTest {
         await("progress seen") { seen == (2 to 3) }
         await("running") { m.launchState(c.id)?.phase == LaunchPhase.Running }
         assertEquals(0, m.launchState(c.id)!!.total) { "Running carries no jar progress" }
+        launcher.spawned.forEach { it.exit() }
+        await("cleared") { m.launchState(c.id) == null }
+    }
+
+    @Test
+    @DisplayName("a launch stamps 'last launched' on the saved connection without making the draft dirty, and a later Save keeps the stamp")
+    fun launchDoesNotDirtyTheDraft(@TempDir dir: Path) {
+        val launcher = FakeLauncher()
+        val m = model(dir, launcher)
+        val c = m.newConnection(null)
+        assertFalse(m.dirty.get())
+
+        m.launch(c.id)
+        assertTrue(launcher.called.await(5, TimeUnit.SECONDS))
+        await("running") { m.launchState(c.id)?.phase == LaunchPhase.Running }
+        val stamp = m.store.get(c.id)!!.lastLaunchedAt
+        assertNotNull(stamp) { "the store was stamped" }
+        assertFalse(m.dirty.get()) { "a launch is bookkeeping, not an edit — no 'Save changes?' for it" }
+        assertEquals(stamp, m.draft.get()!!.lastLaunchedAt) { "the header's 'Last launched' follows the stamp" }
+
+        // A real edit made before the launch still saves — and does not roll the stamp back.
+        m.updateDraft { it.copy(heapSize = "2g", lastLaunchedAt = null) }
+        assertTrue(m.dirty.get())
+        assertTrue(m.save())
+        assertEquals("2g", m.store.get(c.id)!!.heapSize)
+        assertEquals(stamp, m.store.get(c.id)!!.lastLaunchedAt) { "Save never overwrites the bookkeeping with the draft's stale copy" }
+        assertFalse(m.dirty.get())
         launcher.spawned.forEach { it.exit() }
         await("cleared") { m.launchState(c.id) == null }
     }

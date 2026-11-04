@@ -91,7 +91,8 @@ class LauncherModel(
     val dirty: ReadOnlyBooleanProperty get() = dirtyWrapper.readOnlyProperty
 
     val closeAfterLaunch: BooleanProperty = SimpleBooleanProperty(prefs.closeAfterLaunch)
-    val dark: BooleanProperty = SimpleBooleanProperty(prefs.dark)
+    /** The launcher's colour (`#RRGGBB`), the user's pick — see Theme.applyAccent. */
+    val accent: StringProperty = SimpleStringProperty(prefs.accent)
 
     val launches: ObservableMap<String, LaunchState> = FXCollections.observableHashMap()
 
@@ -126,7 +127,10 @@ class LauncherModel(
 
         override fun onRunning(id: String, instances: Int) {
             launches[id] = LaunchState(LaunchPhase.Running, instances)
-            store.markLaunched(id, now(), persist = false)
+            val stamped = store.markLaunched(id, now(), persist = false)
+            // The draft carries the stamp too: it is bookkeeping, not an edit, and must not read as one
+            // (nor overwrite the newer stamp on the next Save); the header's "Last launched" follows it.
+            if (stamped != null && activeId.get() == id) draft.get()?.let { draft.set(it.copy(lastLaunchedAt = stamped.lastLaunchedAt)) }
             schedulePersist()
             refresh()
             launchListener?.onRunning(id, instances)
@@ -243,7 +247,7 @@ class LauncherModel(
         foldersFirst.addListener { _, _, v -> prefs.foldersFirst = v; rebuildRows() }
         filter.addListener { _, _, _ -> rebuildRows() }
         closeAfterLaunch.addListener { _, _, v -> prefs.closeAfterLaunch = v }
-        dark.addListener { _, _, v -> prefs.dark = v }
+        accent.addListener { _, _, v -> prefs.accent = v }
         draft.addListener { _, _, _ -> recomputeDirty() }
     }
 
@@ -270,7 +274,8 @@ class LauncherModel(
     fun save(): Boolean {
         val d = draft.get() ?: return false
         val previous = store.get(d.id) ?: return false
-        store.update(d, persist = false)
+        // Settings are the draft's; the bookkeeping (when it was added, when it last launched) stays the store's.
+        store.update(d.copy(addedAt = previous.addedAt, lastLaunchedAt = previous.lastLaunchedAt), persist = false)
         followUsername(d.id, previous.username, d.username)
         schedulePersist()
         refresh()
@@ -651,9 +656,15 @@ class LauncherModel(
         rows.setAll(TreeRows.build(connections, folders, sort.get(), foldersFirst.get(), filter.get().orEmpty()))
     }
 
+    /**
+     * Dirty means the user changed a setting: the draft differs from the saved connection in something
+     * other than bookkeeping. A launch stamps `lastLaunchedAt` on the saved connection, and `addedAt` is
+     * set when it is stored — neither is an edit, so neither asks to be saved.
+     */
     private fun recomputeDirty() {
         val d = draft.get()
-        dirtyWrapper.set(d != null && d != store.get(d.id))
+        val saved = d?.let { store.get(it.id) }
+        dirtyWrapper.set(d != null && (saved == null || d.copy(addedAt = saved.addedAt, lastLaunchedAt = saved.lastLaunchedAt) != saved))
     }
 
     private val persistExecutor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "persist").apply { isDaemon = true } }

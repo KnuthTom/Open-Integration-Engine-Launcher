@@ -48,6 +48,15 @@
 .icon-button:hover, .icon-button:showing, .icon-button.on { -fx-background-color: -hover-strong; }
 .icon-button:focused { -fx-border-color: -focus-ring; -fx-border-width: 1; -fx-border-radius: 5; -fx-border-insets: 0; }
 
+/* The launcher-colour picker in the detail header: JavaFX's ColorPicker dressed as an icon button that shows the colour. */
+.accent-picker { -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 5; -fx-padding: 0; -fx-cursor: hand; -fx-color-label-visible: false; }
+.accent-picker:hover, .accent-picker:showing { -fx-background-color: -hover-strong; }
+.accent-picker > .label { -fx-padding: 0; -fx-alignment: center; -fx-content-display: graphic-only; }
+.accent-picker > .label > .picker-color { -fx-padding: 0; }
+.accent-picker > .label > .picker-color > .picker-color-rect { -fx-stroke: -border-strong; -fx-stroke-width: 1; -fx-arc-width: 8; -fx-arc-height: 8; -fx-scale-x: 1.35; -fx-scale-y: 1.35; }
+.accent-picker > .arrow-button { -fx-padding: 0; -fx-pref-width: 0; -fx-min-width: 0; -fx-max-width: 0; }
+.accent-picker > .arrow-button > .arrow { -fx-shape: null; -fx-padding: 0; }
+
 .filter-wrap { -fx-padding: 0 10 8 10; }
 .filter-wrap .text-input {
     -fx-pref-height: 28; -fx-min-height: 28; -fx-max-height: 28;
