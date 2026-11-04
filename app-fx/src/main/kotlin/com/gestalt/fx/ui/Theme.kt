@@ -190,7 +190,8 @@ object Theme {
      */
     fun literal(token: String): String = literals[token] ?: token
 
-    @Volatile private var literals: Map<String, String> = LIGHT
+    // Declared before `literals`: an object's properties initialise top to bottom.
     private val LIGHT = mapOf("-text" to "#1C1D20", "-text-muted" to "#5F6168", "-accent" to "#2E3035", "-ok" to "#237A47", "-danger" to "#B23B2E")
     private val DARK = mapOf("-text" to "#F2F3F5", "-text-muted" to "#A6A7AD", "-accent" to "#E9EAEC", "-ok" to "#6EE7A0", "-danger" to "#EF6B6B")
+    @Volatile private var literals: Map<String, String> = LIGHT
 }
