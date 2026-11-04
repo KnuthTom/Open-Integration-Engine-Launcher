@@ -7,6 +7,8 @@
 /* Dark theme — the design's graphite "operator" register: silver accent, color only for state. */
 .root {
     -surface: #0A0A0B;
+    -canvas: #0A0A0B;
+    -canvas-text: #F2F3F5;
     -surface-raised: #141416;
     -surface-sunken: #1B1B1E;
     -surface-overlay: rgba(0, 0, 0, 0.66);

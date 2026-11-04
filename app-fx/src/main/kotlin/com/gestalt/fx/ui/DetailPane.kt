@@ -91,7 +91,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         customColors += Color.web(default)
         valueProperty().addListener { _, _, c -> if (!settingPalette && c != null) onPick(Theme.hex(c)) }
     }
-    private val backgroundPicker = palettePicker(Theme.DEFAULT_BACKGROUND, "Background color") { host.setBackground(it) }
+    private val backgroundPicker = palettePicker(Theme.DEFAULT_BACKGROUND, "Background color (behind the cards)") { host.setBackground(it) }
     private val accentPicker = palettePicker(Theme.DEFAULT_ACCENT, "Launcher color") { host.setAccent(it) }
     private val header = HBox().apply { styleClass += "detail-header" }
 
@@ -153,7 +153,7 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val footer = HBox().apply { styleClass += "footer" }
 
     private val body = GridPane().apply { styleClass += "detail-body" }
-    private val scroll = ScrollPane().apply { styleClass += "detail-scroll"; isFitToWidth = true; hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER }
+    private val scroll = ScrollPane().apply { styleClass += "detail-scroll"; styleClass += "canvas"; isFitToWidth = true; hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER }
     private val empty = VBox().apply { styleClass += "detail-empty" }
     private val content = BorderPane()
 

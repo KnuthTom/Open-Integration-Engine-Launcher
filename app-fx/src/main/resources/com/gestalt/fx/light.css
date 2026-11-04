@@ -8,6 +8,8 @@
    here; base.css holds every structural rule and reads these by name. */
 .root {
     -surface: #F7F7F8;
+    -canvas: #F7F7F8;         /* behind the cards — the user's background pick replaces it */
+    -canvas-text: #1C1D20;
     -surface-raised: #FFFFFF;
     -surface-sunken: #ECEDEF;
     -surface-overlay: rgba(18, 19, 22, 0.40);

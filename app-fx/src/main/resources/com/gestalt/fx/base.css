@@ -171,7 +171,9 @@
 .detail-body { -fx-padding: 16 24 16 24; -fx-hgap: 12; -fx-vgap: 12; }
 .detail-body.narrow { -fx-padding: 16 16 16 16; }
 .detail-empty { -fx-spacing: 12; -fx-alignment: center; }
-.detail-empty .label { -fx-text-fill: -text-muted; }
+.detail-empty .label { -fx-text-fill: -canvas-text; -fx-opacity: 0.75; }
+/* The canvas the cards sit on: the user's background pick shades this and nothing else. */
+.detail-scroll.canvas, .detail-scroll.canvas > .viewport, .detail-body, .detail-empty { -fx-background-color: -canvas; }
 
 .footer { -fx-min-height: 52; -fx-padding: 10 24 10 24; -fx-spacing: 8; -fx-alignment: center-left; -fx-border-color: -border transparent transparent transparent; -fx-border-width: 1 0 0 0; }
 .footer.narrow { -fx-padding: 10 16 10 16; }

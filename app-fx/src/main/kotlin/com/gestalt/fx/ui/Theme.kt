@@ -16,13 +16,13 @@ import kotlin.math.roundToInt
 
 /**
  * Stylesheets built on looked-up colors. `base.css` is structure; `light.css` is the design's neutral
- * register and the fallback for every token. On top of it the user's **palette** — a background and an
- * accent — is written as a stylesheet of its own ([applyPalette]): the whole neutral register (raised
- * and sunken surfaces, text, muted text, borders, hover and selection tints) is derived from the
- * background, light or dark by its luminance, and the accent tones (hover, active, the text on it, the
- * soft fill, selection, focus) from the accent. A stylesheet, not an inline style, so popups — menus,
- * tooltips, the toast — follow too. Font families come from the platform: JavaFX CSS has no font
- * variables, so a tiny `fonts.css` naming the chosen families is written beside the data files.
+ * register — the window's chrome, cards, fields and text. On top of it the user's **palette** is
+ * written as a stylesheet of its own ([applyPalette]): the **background** shades only the canvas the
+ * cards sit on (`-canvas`), and the **accent** gives the Launch button, selection, switches and focus
+ * rings their colour, with its hover/active tones, the text on it, the soft fill and the selection
+ * tint derived from it. A stylesheet, not an inline style, so popups — menus, tooltips, the toast —
+ * follow too. Font families come from the platform: JavaFX CSS has no font variables, so a tiny
+ * `fonts.css` naming the chosen families is written beside the data files.
  */
 object Theme {
 
@@ -70,14 +70,14 @@ object Theme {
         literals = if (dark) DARK else LIGHT
     }
 
-    /** The register in force: dark when the background is. */
+    /** The register in force (the product uses the light one; [apply] can install the dark sheet for previews). */
     @Volatile
     var isDark: Boolean = false
         private set
 
     /** The design's graphite: the accent when the user has picked none. */
     const val DEFAULT_ACCENT = "#2E3035"
-    /** The design's light surface: the background when the user has picked none. */
+    /** The design's light surface: the canvas behind the cards when the user has picked none. */
     const val DEFAULT_BACKGROUND = "#F7F7F8"
     private val HEX = Regex("^#[0-9A-Fa-f]{6}$")
 
@@ -95,9 +95,9 @@ object Theme {
 
     /**
      * Install the user's palette: the stylesheets become base + fonts + light + a generated sheet whose
-     * `.root` redefines every colour token from [background] and [accent] (see [paletteCss]). The sheet is
-     * written under a name that carries the colours, since JavaFX caches stylesheets by URL; earlier ones
-     * are removed. [literal] follows.
+     * `.root` sets the canvas from [background] and the accent tokens from [accent] (see [paletteCss]).
+     * The sheet is written under a name that carries the colours, since JavaFX caches stylesheets by
+     * URL; earlier ones are removed. [literal] follows.
      */
     fun applyPalette(scene: Scene, accent: String, background: String) {
         val a = normalizeAccent(accent)
@@ -108,8 +108,8 @@ object Theme {
         scene.stylesheets.setAll(base, fontsCss, light, url)
         this.accent = a
         this.background = b
-        isDark = isDark(Color.web(b))
-        literals = literalsFor(a, b)
+        isDark = false
+        literals = LIGHT + ("-accent" to a)
     }
 
     private fun pruneSheets(keep: String) {
@@ -127,60 +127,29 @@ object Theme {
         return 0.2126 * lin(c.red) + 0.7152 * lin(c.green) + 0.0722 * lin(c.blue)
     }
 
-    private fun isDark(background: Color): Boolean = luminance(background) < 0.36
-
     /**
-     * The `.root` tokens for a palette. The neutral register follows the background: on a light one,
-     * ink text and surfaces that step toward white (raised) and toward the ink (sunken, borders, hover);
-     * on a dark one, light text and surfaces that step toward white by small amounts — the design's
-     * light and dark sheets, generalised to any colour. The accent tones follow the accent: hover and
-     * active darker, the text on it ink or white by luminance, the soft fill and the selection tint the
-     * accent laid over the background.
+     * The `.root` tokens for a palette. The background is the canvas behind the cards and nothing else
+     * — the chrome, the cards, fields and text keep the design's register — with the text that may sit
+     * on the canvas directly (the empty state) ink or white by its luminance. The accent tones follow
+     * the accent: hover and active darker, the text on it ink or white by luminance, the soft fill and
+     * the selection tint the accent laid over the design's surface.
      */
     internal fun paletteCss(accent: String, background: String): String {
-        val bg = Color.web(background)
+        val canvas = Color.web(background)
         val a = Color.web(accent)
-        val dark = isDark(bg)
-        val text = Color.web(if (dark) "#F2F3F5" else "#1C1D20")
-        val raised = if (dark) bg.interpolate(Color.WHITE, 0.045) else bg.interpolate(Color.WHITE, 0.75)
-        val sunken = if (dark) bg.interpolate(Color.WHITE, 0.08) else bg.interpolate(text, 0.045)
-        val hover = bg.interpolate(text, 0.06)
-        val hoverStrong = bg.interpolate(text, 0.08)
-        val border = bg.interpolate(text, 0.09)
-        val borderStrong = bg.interpolate(text, 0.50)
-        val muted = text.interpolate(bg, 0.32)
-        val secondary = sunken
-        val secondaryHover = bg.interpolate(text, 0.09)
+        val surface = Color.web(DEFAULT_BACKGROUND)
+        val canvasText = if (luminance(canvas) > 0.40) "#1C1D20" else "#FFFFFF"
         val accentHover = a.deriveColor(0.0, 1.0, 0.86, 1.0)
         val accentActive = a.deriveColor(0.0, 1.0, 0.72, 1.0)
         val accentContrast = if (luminance(a) > 0.40) "#1C1D20" else "#FFFFFF"
-        val accentSoft = bg.interpolate(a, 0.06)
-        val selected = bg.interpolate(a, 0.16)
-        val state = if (dark) mapOf("-ok" to "#6EE7A0", "-warn" to "#F0B84A", "-danger" to "#EF6B6B", "-danger-contrast" to "#160404",
-            "-lc-blue" to "#7AA9D6", "-lc-teal" to "#5CC8BE", "-lc-violet" to "#A98BEB", "-lc-rose" to "#EC8DB2", "-lc-green" to "#6EE7A0",
-            "-surface-overlay" to "rgba(0, 0, 0, 0.66)", "-shadow" to "rgba(0, 0, 0, 0.7)")
-        else mapOf("-ok" to "#237A47", "-warn" to "#9A5F00", "-danger" to "#B23B2E", "-danger-contrast" to "#FFFFFF",
-            "-lc-blue" to "#1F66B3", "-lc-teal" to "#127A72", "-lc-violet" to "#6B45B5", "-lc-rose" to "#B23A69", "-lc-green" to "#237A47",
-            "-surface-overlay" to "rgba(18, 19, 22, 0.40)", "-shadow" to "rgba(0, 0, 0, 0.35)")
+        val accentSoft = surface.interpolate(a, 0.06)
+        val selected = surface.interpolate(a, 0.16)
         val tokens = linkedMapOf(
-            "-surface" to hex(bg), "-surface-raised" to hex(raised), "-surface-sunken" to hex(sunken),
-            "-text" to hex(text), "-text-muted" to hex(muted), "-border" to hex(border), "-border-strong" to hex(borderStrong),
+            "-canvas" to hex(canvas), "-canvas-text" to canvasText,
             "-accent" to hex(a), "-accent-hover" to hex(accentHover), "-accent-active" to hex(accentActive), "-accent-contrast" to accentContrast,
-            "-accent-soft" to hex(accentSoft), "-btn-secondary" to hex(secondary), "-btn-secondary-hover" to hex(secondaryHover),
-            "-hover" to hex(hover), "-hover-strong" to hex(hoverStrong), "-selected" to hex(selected), "-focus-ring" to hex(a),
-            "-lc-ink" to hex(text),
-        ) + state
-        return ".root {\n" + tokens.entries.joinToString("\n") { (k, v) -> "    $k: $v;" } + "\n}\n"
-    }
-
-    private fun literalsFor(accent: String, background: String): Map<String, String> {
-        val bg = Color.web(background)
-        val dark = isDark(bg)
-        val text = Color.web(if (dark) "#F2F3F5" else "#1C1D20")
-        return mapOf(
-            "-text" to hex(text), "-text-muted" to hex(text.interpolate(bg, 0.32)), "-accent" to accent,
-            "-ok" to if (dark) "#6EE7A0" else "#237A47", "-danger" to if (dark) "#EF6B6B" else "#B23B2E",
+            "-accent-soft" to hex(accentSoft), "-selected" to hex(selected), "-focus-ring" to hex(a),
         )
+        return ".root {\n" + tokens.entries.joinToString("\n") { (k, v) -> "    $k: $v;" } + "\n}\n"
     }
 
     /**

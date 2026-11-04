@@ -20,30 +20,27 @@ class ThemeTest {
             .associate { line -> line.trim().removeSuffix(";").split(":", limit = 2).let { it[0].trim() to it[1].trim() } }
 
     @Test
-    @DisplayName("the defaults reproduce the design's light register: ink on near-white, graphite accent with white text")
+    @DisplayName("the defaults reproduce the design: the canvas is the light surface, graphite accent with white text, light.css's selection tint")
     fun defaultsAreTheDesign() {
         val t = tokens(Theme.DEFAULT_ACCENT, Theme.DEFAULT_BACKGROUND)
-        assertEquals("#F7F7F8", t["-surface"])
-        assertEquals("#1C1D20", t["-text"])
+        assertEquals("#F7F7F8", t["-canvas"])
+        assertEquals("#1C1D20", t["-canvas-text"])
         assertEquals("#2E3035", t["-accent"])
         assertEquals("#FFFFFF", t["-accent-contrast"]) { "white on graphite" }
-        assertEquals("#EAEAEB", t["-hover"]) { "text 6% over the surface, as light.css has it" }
         assertEquals("#D7D7D9", t["-selected"]) { "accent 16% over the surface, as light.css has it" }
-        assertEquals("#237A47", t["-ok"]) { "state colours of the light register" }
-        assertTrue(t.containsKey("-surface-raised") && t.containsKey("-border-strong") && t.containsKey("-focus-ring"))
+        assertEquals("#2E3035", t["-focus-ring"])
+        assertTrue(t.keys.none { it == "-surface" || it == "-text" || it == "-border" }) { "the chrome, cards, fields and text keep the design's register: ${t.keys}" }
     }
 
     @Test
-    @DisplayName("a dark background flips the register: light text, surfaces that step toward white, dark-register state colours; a light accent gets ink on it")
-    fun darkBackgroundFlipsTheRegister() {
+    @DisplayName("the background shades the canvas only — a dark pick gets white text for what sits on it directly, and a light accent gets ink on it")
+    fun backgroundIsTheCanvasOnly() {
         val t = tokens("#FFD60A", "#101418")
-        assertEquals("#F2F3F5", t["-text"])
+        assertEquals("#101418", t["-canvas"])
+        assertEquals("#FFFFFF", t["-canvas-text"])
         assertEquals("#1C1D20", t["-accent-contrast"]) { "ink on a bright yellow" }
-        assertEquals("#6EE7A0", t["-ok"])
-        assertEquals("#101418", t["-surface"])
-        val raised = Integer.parseInt(t["-surface-raised"]!!.drop(1), 16)
-        assertTrue(raised > 0x101418) { "raised steps toward white on a dark background: ${t["-surface-raised"]}" }
         assertEquals("#FFD60A", t["-focus-ring"])
+        assertTrue(t.keys.none { it.startsWith("-surface") || it == "-text" || it == "-ok" }) { "nothing but the canvas and the accent changes: ${t.keys}" }
     }
 
     @Test
