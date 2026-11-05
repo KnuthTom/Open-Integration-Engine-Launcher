@@ -438,6 +438,10 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
 
         init {
             styleClass += "tree-cell"
+            // A cell's preferred width would be its full name, and the list grows a horizontal scrollbar
+            // to fit the widest one. At 0 the cells take the list's own width and a long name ellipsizes
+            // in place (the tooltip carries the whole of it).
+            prefWidth = 0.0
             row.setOnMouseClicked { e ->
                 val r = current ?: return@setOnMouseClicked
                 if (e.button != MouseButton.PRIMARY) return@setOnMouseClicked
@@ -573,7 +577,7 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
                     iconSlot.styleClass.remove("row-icon-button")
                     count.text = item.count.toString()
                     count.isVisible = true; count.isManaged = true
-                    tooltip = null
+                    tooltip = Tooltip(item.name)
                 }
                 is TreeRow.ConnectionRow -> {
                     val c = item.connection
@@ -582,7 +586,7 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
                     iconSlot.children.setAll(iconFor(c.id, c.icon))
                     if ("row-icon-button" !in iconSlot.styleClass) iconSlot.styleClass += "row-icon-button"
                     count.isVisible = false; count.isManaged = false
-                    tooltip = Tooltip(c.serverUrl)
+                    tooltip = Tooltip("${c.name}\n${c.serverUrl}")
                 }
             }
             graphic = row
