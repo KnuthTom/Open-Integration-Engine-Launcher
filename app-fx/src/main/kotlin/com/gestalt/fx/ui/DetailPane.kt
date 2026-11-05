@@ -63,8 +63,9 @@ interface DetailActions {
 /**
  * The right pane: the header (icon as a launch button, the name, folder · last launched, Launch), the
  * five cards (Connection, Java runtime | Sign-in, Certificates, TLS / SSL) in two columns when there is
- * room and one column below 700 px, and the footer (close-after-launch, unsaved marker, Delete / Save as… /
- * Save). Every field edits [LauncherModel.draft]; the pane re-reads the draft after each change.
+ * room and one column below 700 px, and the bottom bar (close-after-launch, the window's [notice],
+ * unsaved marker, Delete / Save as… / Save). Every field edits [LauncherModel.draft]; the pane re-reads
+ * the draft after each change.
  */
 class DetailPane(private val model: LauncherModel, private val host: DetailActions, private val icons: CustomIconStore?) : BorderPane() {
 
@@ -129,13 +130,17 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
     private val cipherField = TextField().apply { styleClass += "mono-field" }
     private val dhSwitch = Controls.Switch { on -> update { it.copy(legacyTlsCompatibility = on) } }
 
-    // footer
+    // footer — the bottom bar: close-after-launch | the notice | unsaved marker | Delete / Save as… / Save
     private val closeAfter = Controls.CheckRow("Close this window after launching") { on -> model.closeAfterLaunch.set(on) }
-    private val unsaved = HBox(Region().apply { styleClass += "dot" }, Label("Unsaved changes")).apply { styleClass += "unsaved"; isVisible = false; isManaged = false }
-    private val deleteButton = Controls.button("Delete", Controls.ButtonKind.Ghost) { host.deleteActive() }
-    private val saveAsButton = Controls.button("Save as…") { host.saveActiveAs() }
-    private val saveButton = Controls.button("Save") { host.saveActive() }.apply { isDisable = true }
+    /** The window's notices ("Saved", "Launching …", errors) live here, left of the unsaved marker, out of the form's way. */
+    val notice = NoticeStrip()
+    private val unsaved = HBox(Region().apply { styleClass += "dot" }, Label("Unsaved changes")).apply { styleClass += "unsaved"; isVisible = false; isManaged = false; minWidth = Region.USE_PREF_SIZE }
+    private val deleteButton = Controls.button("Delete", Controls.ButtonKind.Ghost) { host.deleteActive() }.apply { minWidth = Region.USE_PREF_SIZE }
+    private val saveAsButton = Controls.button("Save as…") { host.saveActiveAs() }.apply { minWidth = Region.USE_PREF_SIZE }
+    private val saveButton = Controls.button("Save") { host.saveActive() }.apply { isDisable = true; minWidth = Region.USE_PREF_SIZE }
     private val footer = HBox().apply { styleClass += "footer" }
+    /** The footer's form controls — hidden when no connection is selected, leaving the bar to the notice. */
+    private val formControls: List<javafx.scene.Node> get() = listOf(closeAfter, unsaved, deleteButton, saveAsButton, saveButton)
 
     private val body = GridPane().apply { styleClass += "detail-body" }
     private val scroll = ScrollPane().apply { styleClass += "detail-scroll"; styleClass += "canvas"; isFitToWidth = true; hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER }
@@ -251,7 +256,9 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
         // --- footer ---
         closeAfter.on = model.closeAfterLaunch.get()
-        footer.children.addAll(closeAfter, Controls.spacer(), unsaved, deleteButton, saveAsButton, saveButton)
+        // The notice sits right of the spacer, so it hugs the unsaved marker and Delete like the design's status text.
+        footer.children.addAll(closeAfter, Controls.spacer(), notice, unsaved, deleteButton, saveAsButton, saveButton)
+        notice.visibleProperty().addListener { _, _, _ -> refreshFooter() }
 
         // --- empty state ---
         empty.children += Label("No connection selected")
@@ -259,8 +266,10 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
         content.top = header
         content.center = scroll
-        content.bottom = footer
+        // The bottom bar belongs to the pane, not to the form: a notice shows there with no connection selected too.
+        bottom = footer
         center = empty
+        refreshFooter()
 
         model.draft.addListener { _, _, d -> render(d) }
         model.dirty.addListener { _, _, dirty -> unsaved.isVisible = dirty; unsaved.isManaged = dirty; refreshSaveEnabled() }
@@ -312,12 +321,23 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
         model.updateDraft(transform)
     }
 
+    /** The bottom bar: its form controls only with a connection; the bar itself whenever there is something to show. */
+    private fun refreshFooter() {
+        val hasConnection = model.draft.get() != null
+        for (n in formControls) { n.isVisible = hasConnection; n.isManaged = hasConnection }
+        if (hasConnection && model.dirty.get()) { unsaved.isVisible = true; unsaved.isManaged = true } else { unsaved.isVisible = false; unsaved.isManaged = false }
+        val show = hasConnection || notice.isShowing
+        footer.isVisible = show; footer.isManaged = show
+    }
+
     private fun render(d: Connection?) {
         if (d == null) {
             center = empty
+            refreshFooter()
             return
         }
         center = content
+        refreshFooter()
         updating = true
         try {
             iconButton.graphic = Controls.connectionIcon(d.icon, 24.0, icons)

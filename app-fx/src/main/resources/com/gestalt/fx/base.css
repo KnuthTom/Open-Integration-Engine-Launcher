@@ -48,14 +48,27 @@
 .icon-button:hover, .icon-button:showing, .icon-button.on { -fx-background-color: -hover-strong; }
 .icon-button:focused { -fx-border-color: -focus-ring; -fx-border-width: 1; -fx-border-radius: 5; -fx-border-insets: 0; }
 
-/* The colours card's pickers (JavaFX ColorPicker) in the look of a text input: the swatch and the colour's name. */
-.palette-picker { -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 6; -fx-border-color: -border; -fx-border-radius: 6; -fx-border-width: 1; -fx-padding: 0 6 0 8; -fx-pref-height: 34; -fx-cursor: hand; }
-.palette-picker:hover { -fx-border-color: -border-strong; }
-.palette-picker:showing, .palette-picker:focused { -fx-border-color: -focus-ring; }
-.palette-picker > .label { -fx-text-fill: -text; -fx-padding: 0 0 0 4; }
-.palette-picker > .label > .picker-color > .picker-color-rect { -fx-stroke: -border-strong; -fx-stroke-width: 1; -fx-arc-width: 4; -fx-arc-height: 4; }
-.palette-picker > .arrow-button { -fx-padding: 0 2 0 6; -fx-background-color: transparent; }
-.palette-picker > .arrow-button > .arrow { -fx-background-color: -text-muted; }
+/* The colours card: a row of round swatches per colour (the lit one wears a ring with a gap), a dashed
+   "custom" swatch that opens the colour chooser (the ColorPicker under it is unseen), and section headings. */
+.palette-heading { -fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: -text-muted; }
+.swatch {
+    -fx-background-color: -surface-raised;
+    -fx-background-insets: 0;
+    -fx-background-radius: 999;
+    -fx-border-color: -border;
+    -fx-border-radius: 999;
+    -fx-border-width: 2;
+    -fx-border-insets: 0;
+    -fx-padding: 0;
+    -fx-min-width: 30; -fx-pref-width: 30; -fx-max-width: 30;
+    -fx-min-height: 30; -fx-pref-height: 30; -fx-max-height: 30;
+    -fx-cursor: hand;
+}
+.swatch:hover { -fx-border-color: -border-strong; }
+.swatch.on, .swatch.on:hover { -fx-border-color: -text; -fx-background-insets: 4; }
+.swatch.custom { -fx-border-style: dashed; }
+.swatch.custom.on { -fx-border-style: solid; }
+.swatch-picker { -fx-opacity: 0; -fx-padding: 0; -fx-background-color: transparent; }
 
 .filter-wrap { -fx-padding: 0 10 8 10; }
 .filter-wrap .text-input {
@@ -91,9 +104,14 @@
     -fx-min-height: 24; -fx-pref-height: 24; -fx-max-height: 24;
     -fx-alignment: center-left;
 }
-.tree-row.active, .list-view.tree-list .list-cell:filled:hover .tree-row.active { -fx-background-color: -selected; }
-.tree-row.drop-into, .list-view.tree-list .list-cell:filled:hover .tree-row.drop-into { -fx-background-color: -selected; -fx-border-color: -accent; }
-.list-view.tree-list:focused .list-cell:selected .tree-row { -fx-border-color: -focus-ring; }
+/* A selected row (one of several, Ctrl / Shift click) is tinted; the active connection's row is the stronger tint. */
+.list-view.tree-list .list-cell:selected .tree-row { -fx-background-color: -hover-strong; }
+.tree-row.active, .list-view.tree-list .list-cell:filled:hover .tree-row.active, .list-view.tree-list .list-cell:selected .tree-row.active { -fx-background-color: -selected; }
+.tree-row.drop-into, .list-view.tree-list .list-cell:filled:hover .tree-row.drop-into, .list-view.tree-list .list-cell:selected .tree-row.drop-into { -fx-background-color: -selected; -fx-border-color: -accent; }
+/* The keyboard cursor: a ring on the focused cell only (not on every selected row). */
+.list-view.tree-list:focused .list-cell:focused .tree-row { -fx-border-color: -focus-ring; }
+/* The badge on a drag that carries several rows ("3 rows"), beside the dragged row's name. */
+.tree-row .drag-count { -fx-background-color: -accent; -fx-text-fill: -accent-contrast; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 0 6 0 6; -fx-background-radius: 999; }
 .tree-row .row-name { -fx-text-fill: -text; }
 .tree-row.active .row-name, .tree-row.folder .row-name { -fx-font-weight: bold; }
 .tree-row .row-count { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
@@ -340,7 +358,7 @@
 .context-menu .menu-header-item:focused { -fx-background-color: transparent; }
 .context-menu .separator:horizontal .line { -fx-border-color: -border transparent transparent transparent; -fx-border-insets: 4 2 4 2; }
 
-/* ── Modal, toast, scrollbars ─────────────────────────────────────────────────────── */
+/* ── Modal, notice, scrollbars ────────────────────────────────────────────────────── */
 
 .modal-scrim { -fx-background-color: -surface-overlay; }
 .modal-card {
@@ -356,27 +374,17 @@
 .modal-body { -fx-text-fill: -text-muted; -fx-wrap-text: true; -fx-line-spacing: 2; }
 .modal-actions { -fx-spacing: 8; -fx-alignment: center-right; -fx-padding: 20 0 0 0; }
 
-.toast {
-    -fx-background-color: -surface-raised;
-    -fx-background-insets: 0;
-    -fx-background-radius: 8;
-    -fx-border-color: -border-strong;
-    -fx-border-radius: 8;
-    -fx-border-width: 1;
-    -fx-padding: 10 14 10 14;
-    -fx-spacing: 10;
-    -fx-alignment: center-left;
-    -fx-min-width: 240; -fx-max-width: 380;
-    -fx-effect: dropshadow(gaussian, -shadow, 40, 0, 0, 16);
-}
-.toast .toast-title { -fx-font-weight: bold; }
-.toast .toast-close { -fx-min-width: 22; -fx-pref-width: 22; -fx-max-width: 22; -fx-min-height: 22; -fx-pref-height: 22; -fx-max-height: 22; -fx-opacity: 0.7; }
-.toast .toast-close:hover { -fx-opacity: 1; }
-.toast .toast-sub { -fx-font-size: 12px; -fx-text-fill: -text-muted; }
-/* The launch toast's progress bar: a thin track that fills jar by jar (indeterminate until the count is known). */
-.toast .toast-bar { -fx-pref-height: 6; -fx-min-height: 6; -fx-max-height: 6; -fx-padding: 0; -fx-background-insets: 0; }
-.toast .toast-bar .track { -fx-background-color: -surface-sunken; -fx-background-radius: 3; -fx-background-insets: 0; }
-.toast .toast-bar .bar { -fx-background-color: -accent; -fx-background-radius: 3; -fx-background-insets: 0; -fx-padding: 3; }
+/* The notice strip in the detail pane's bottom bar (left of the unsaved marker): icon · title · detail · [bar] · X. */
+.notice { -fx-spacing: 8; -fx-alignment: center-left; -fx-padding: 0 10 0 0; -fx-font-size: 12px; }
+.notice .notice-title { -fx-font-weight: bold; -fx-text-fill: -text; }
+.notice.error .notice-title { -fx-text-fill: -danger; }
+.notice .notice-detail { -fx-text-fill: -text-muted; }
+.notice .notice-close { -fx-min-width: 22; -fx-pref-width: 22; -fx-max-width: 22; -fx-min-height: 22; -fx-pref-height: 22; -fx-max-height: 22; -fx-opacity: 0.7; }
+.notice .notice-close:hover { -fx-opacity: 1; }
+/* The launch notice's progress bar: a thin track that fills jar by jar (indeterminate until the count is known). */
+.notice .notice-bar { -fx-pref-height: 6; -fx-min-height: 6; -fx-max-height: 6; -fx-padding: 0; -fx-background-insets: 0; }
+.notice .notice-bar .track { -fx-background-color: -surface-sunken; -fx-background-radius: 3; -fx-background-insets: 0; }
+.notice .notice-bar .bar { -fx-background-color: -accent; -fx-background-radius: 3; -fx-background-insets: 0; -fx-padding: 3; }
 
 .scroll-bar { -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0; }
 .scroll-bar:vertical { -fx-pref-width: 10; }
@@ -410,6 +418,8 @@
 .drop-zone.over { -fx-border-color: -accent; -fx-background-color: -accent-soft; }
 .drop-zone-icon { -fx-background-color: -surface-sunken; -fx-background-radius: 6; -fx-min-width: 44; -fx-pref-width: 44; -fx-max-width: 44; -fx-min-height: 44; -fx-pref-height: 44; -fx-max-height: 44; }
 .link { -fx-text-fill: -accent; -fx-underline: true; -fx-font-weight: bold; }
+/* The chosen icon beside the connection's name, as a sidebar row shows it. */
+.icon-preview { -fx-background-color: -surface-sunken; -fx-background-radius: 6; -fx-padding: 6 10 6 10; -fx-min-height: 30; }
 .icon-tile {
     -fx-background-color: -surface;
     -fx-background-insets: 0;

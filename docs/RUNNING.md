@@ -183,27 +183,62 @@ JVM's own name.
 
 ## The launcher's colours
 
-The paintbrush in the header (left of Launch) opens the **Colors** card: **Background** and **Launcher
-color**, each JavaFX's own picker — a swatch grid and *Custom Color…* with RGB/HSB sliders, the design's
-default in the custom row — applying as you pick, with *Reset to defaults*. The background shades **the canvas behind the cards and nothing else**: the window's
-chrome, the cards, fields and text keep the design's register, so the cards read as windows on a desk
-of that colour (text that sits on the canvas directly, the empty state, goes ink or white by the
-canvas's luminance). The launcher colour is the **accent**: the Launch button, the selected row,
-switches, check rows and focus rings, with hover/active tones, the text on it (ink or white by
-luminance) and the soft fill and selection tint derived from it. `Theme.applyPalette` writes the
-palette as a stylesheet (`ui-theme-<bg>-<accent>.css` beside the data files; the previous one is
-removed) so popups — menus, tooltips, the toast — follow too. Stored as `fx.background` / `fx.accent`
-(`#RRGGBB`) in `ui-prefs.properties`; the dark theme toggle is gone.
+The paintbrush in the header (left of Launch) opens the **Colors** card: a row of round swatches for the
+**launcher color** (graphite, slate, ocean, teal, forest, plum, wine, rust) and one for the
+**background** (paper, mist, linen, sand, sage, lavender, and two dark canvases, dusk and night), each
+row ending in a dashed **custom** swatch that opens the colour chooser (a grid, and *Custom Color…* with
+RGB/HSB sliders) and a hex field for a brand colour typed in. Every pick applies at once — the window is
+the preview — and the card has the three exits a live preview needs: **Done** keeps what is showing,
+**Cancel** (the X, Esc) puts back the colours the card opened with, **Reset to defaults** the design's.
+The background shades **the canvas behind the cards and nothing else**: the window's chrome, the cards,
+fields and text keep the design's register, so the cards read as windows on a desk of that colour (text
+that sits on the canvas directly, the empty state, goes ink or white by the canvas's luminance). The
+launcher colour is the **accent**: the Launch button, the selected row, switches, check rows and focus
+rings, with hover/active tones, the text on it (ink or white by luminance) and the soft fill and
+selection tint derived from it. `Theme.applyPalette` writes the palette as a stylesheet
+(`ui-theme-<bg>-<accent>.css` beside the data files; the previous one is removed) so popups — menus,
+tooltips — follow too. Stored as `fx.background` / `fx.accent` (`#RRGGBB`) in `ui-prefs.properties`; the
+dark theme toggle is gone.
 
 The header asks to save only for a change the user made: a launch stamps "last launched" on the saved
 connection without making the open form dirty, and Save never carries a stale stamp back.
 
+## Notices: the bottom bar
+
+What the launcher has to say in passing — *Saved*, *Launching …* with its progress, *Imported 12
+connections*, *Couldn't export* — appears in the detail pane's **bottom bar**, left of the unsaved
+marker and Delete, beside the form rather than on top of it (an earlier build floated these over the
+fields). A notice clears itself after a few seconds; every notice has an **X**, and on a launch still
+being prepared the X **cancels the launch** (the forward it opened is released). With no connection
+selected the bar shows only when a notice is up.
+
+## The sidebar: selecting several rows
+
+Rows multi-select the usual way — **Ctrl+click** adds one, **Shift+click** a range, **Ctrl+A** all — and
+a **drag** or the context menu's **Move to** carries every selected row at once, folders and
+connections together, in their display order; a selected folder brings its contents with it, and a
+folder is never dropped into itself (the drop target refuses, and nothing in the set moves). The detail
+pane follows the row last clicked.
+
+## The connection icon, and what a new connection starts with
+
+The icon in the detail pane's header opens the **Connection icon** card: the built-in library in its
+four categories, **Yours** (imported images — PNG, JPG, GIF or BMP, dropped or browsed **several at a
+time**, each scaled to at most 128 px and stored as PNG through the sanitizing icon store), and a
+preview of the choice as the sidebar draws it. **Use for new connections** makes the chosen icon the
+one every new connection starts with (`fx.defaultIcon` in `ui-prefs.properties`; the library's default
+until one is chosen) — *Reset to default* on any connection goes back to that same icon. A new
+connection also starts with **Auto-approve new certificates on**: its server's certificate is trusted
+on first launch and pinned from then on, rather than prompted for. That is the launcher's own default
+for a connection made in the window; an imported connection still arrives with it off (trust never
+comes from a file — see below).
+
 ## When something goes wrong in the window
 
 An exception that escapes on the UI thread is written to `audit.log` as `launcher.error` (the class,
-the message and the top three frames) and shown as a toast; the window stays up. A launcher that cannot
-build its model at all (an unreadable or locked profile) shows a plain error dialog (`launcher.fatal`)
-and exits rather than hanging without a window.
+the message and the top three frames) and shown as a notice in the bottom bar; the window stays up. A
+launcher that cannot build its model at all (an unreadable or locked profile) shows a plain error
+dialog (`launcher.fatal`) and exits rather than hanging without a window.
 
 ## The jar cache and the shared pool
 
@@ -244,11 +279,10 @@ desktop's own text uses and keeps the weight even); and the **software pipeline*
 them; the Swing UI needs no GPU). What it cannot change: the client's fonts and look-and-feel (the
 Administrator sets them itself). The client log header records every option that was in force.
 
-A first launch pulls every jar through the connection (minutes over an SSM forward); the launch toast
-carries a progress bar that fills jar by jar, and the Launch button counts them, so a long download
-never looks like a hang. Every toast has an **X**: it closes the toast, and on a launch still being
-prepared it **cancels the launch** (the forward it opened is released); clicking the toast's body only
-hides it.
+A first launch pulls every jar through the connection (minutes over an SSM forward); the launch notice
+in the bottom bar carries a progress bar that fills jar by jar, and the Launch button counts them, so a
+long download never looks like a hang. The notice's **X** cancels a launch still being prepared (the
+forward it opened is released).
 
 ## Sign-in (auto-login)
 
@@ -393,7 +427,7 @@ What it does:
   the importing machine. Importing that file on a fresh install rebuilds the connections as they were;
   importing it where they already exist merges setting by setting and keeps what is the machine's own
   (ids, placement, pins, auto-approve, each forward's switch when its command is unchanged). A file over
-  32 MB is refused; the import runs in the background with a progress toast. On first
+  32 MB is refused; the import runs in the background with a progress notice in the bottom bar. On first
   run, if `-Dgestalt.legacy.connections=<path>` (or `GESTALT_LEGACY_CONNECTIONS`) points at a legacy
   file and the store is empty, it is imported automatically.
 - **Launch** — runs the existing Phase 1/2 pipeline unchanged (`LauncherCore.launch`): fetch/parse JNLP

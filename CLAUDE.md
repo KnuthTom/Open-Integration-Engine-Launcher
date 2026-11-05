@@ -24,7 +24,11 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
   bump `gestaltVersion` before every MSI — Windows Installer will not upgrade a product over the same version.
 - **1.1.5** (JavaFX UI): port-forward resilience (refused-port fallback, sessions that end under the
   launcher, `pause`-parked scripts), the shared jar pool, full export/import round trip (trust never
-  from a file), Windows scaling hard-wired, launcher colours, Quit, branded Windows process names, cancellable launch toast.
+  from a file), Windows scaling hard-wired, launcher colours, Quit, branded Windows process names.
+- **Next (unreleased):** notices in the detail pane's bottom bar (no floating toast; the launch
+  notice's X cancels), sidebar multi-select with drag / Move-to of the whole selection, icon card
+  imports several images and sets the default icon for new connections, new connections start with
+  auto-approve on, the Colors card as swatch rows with Cancel.
 - **330+ tests pass** (`./gradlew build`).
 
 ## Stack & modules

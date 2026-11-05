@@ -20,7 +20,7 @@ import kotlin.math.roundToInt
  * written as a stylesheet of its own ([applyPalette]): the **background** shades only the canvas the
  * cards sit on (`-canvas`), and the **accent** gives the Launch button, selection, switches and focus
  * rings their colour, with its hover/active tones, the text on it, the soft fill and the selection
- * tint derived from it. A stylesheet, not an inline style, so popups — menus, tooltips, the toast —
+ * tint derived from it. A stylesheet, not an inline style, so popups — menus, tooltips —
  * follow too. Font families come from the platform: JavaFX CSS has no font variables, so a tiny
  * `fonts.css` naming the chosen families is written beside the data files.
  */

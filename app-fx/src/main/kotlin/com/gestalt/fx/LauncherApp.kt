@@ -78,7 +78,7 @@ class LauncherApp : Application() {
     /**
      * What of an exception message may reach the audit trail: an address typed with `user:secret@` ends up
      * verbatim in a URISyntaxException, and a tunnel failure quotes the tunnel tool's output — so URL
-     * userinfo is masked and the length bounded. (The toast shows the message as it is; it is not a log.)
+     * userinfo is masked and the length bounded. (The notice in the bottom bar shows the message as it is; it is not a log.)
      */
     private fun brief(t: Throwable): String =
         (t.message?.takeIf { it.isNotBlank() } ?: "-").replace(USERINFO, "$1***@").take(240)

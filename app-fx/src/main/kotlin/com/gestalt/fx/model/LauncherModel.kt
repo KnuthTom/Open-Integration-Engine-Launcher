@@ -100,7 +100,7 @@ class LauncherModel(
     /** Set by the window: how to close it after a launch when the setting asks for that. */
     var onRequestClose: () -> Unit = {}
 
-    /** Set by the window: a one-line notice (the toast). */
+    /** Set by the window: a one-line notice (the bottom bar). */
     var onNotice: (title: String, detail: String?, kind: NoticeKind) -> Unit = { _, _, _ -> }
 
     enum class NoticeKind { Info, Success, Error, Progress }
@@ -402,7 +402,12 @@ class LauncherModel(
         return copy.id
     }
 
-    /** A new connection in [folderId] (null = top level), added at once and selected. */
+    /**
+     * A new, empty connection in [folderId] (null = top level), added at once and selected: the icon every new connection gets ([LauncherPrefs.defaultIcon],
+     * set from the icon card) and auto-approve on — an unknown certificate is trusted on first launch
+     * rather than prompted for, the launcher's default for a connection made here (an imported one
+     * still starts with it off: trust never comes from a file).
+     */
     fun newConnection(folderId: String? = null): Connection {
         val siblings = store.list().filter { it.folderId == folderId }
         val conn = Connection(
@@ -411,7 +416,8 @@ class LauncherModel(
             serverUrl = "https://",
             folderId = folderId,
             sortOrder = (siblings.maxOfOrNull { it.sortOrder } ?: -1) + 1,
-            icon = DEFAULT_ICON,
+            icon = prefs.defaultIcon,
+            autoApproveCertificates = true,
         )
         store.add(conn, persist = false)
         folderId?.let { expandAncestors(it) }
@@ -499,39 +505,74 @@ class LauncherModel(
     }
 
     /** Move the row [key] into [folderId] (null = top level), last among its new siblings. */
-    fun moveInto(key: String, folderId: String?): Boolean {
-        if (!exists(key) || wouldCycle(key, folderId)) return false
+    fun moveInto(key: String, folderId: String?): Boolean = moveInto(listOf(key), folderId)
+
+    /**
+     * Move several rows at once — a multi-selection dropped on a folder (null = top level). They land
+     * last among the folder's rows, in their display order; a row whose own folder is also being moved
+     * travels inside it. All or nothing: a folder that would move into its own subtree refuses the lot.
+     */
+    fun moveInto(keys: List<String>, folderId: String?): Boolean {
+        val moving = movable(keys)
+        if (moving.isEmpty() || moving.any { wouldCycle(it, folderId) }) return false
         if (folderId != null && store.getFolder(folderId) == null) return false
-        val siblings = TreeRows.childKeys(folderId, connections, folders, sort.get(), foldersFirst.get()).filter { it != key }
-        return reorder(siblings + key, folderId)
+        val siblings = TreeRows.childKeys(folderId, connections, folders, sort.get(), foldersFirst.get()).filter { it !in moving }
+        return reorder(siblings + moving, folderId)
     }
 
     /**
      * Put the row [key] immediately before [beforeKey], among that row's siblings. A reorder is a
      * manual-order gesture, so the sort switches to Manual when it isn't already.
      */
-    fun moveBefore(key: String, beforeKey: String): Boolean {
-        if (key == beforeKey || !exists(key) || !exists(beforeKey)) return false
-        val parent = parentOf(beforeKey)
-        if (wouldCycle(key, parent)) return false
-        val siblings = TreeRows.childKeys(parent, connections, folders, sort.get(), foldersFirst.get()).filter { it != key }.toMutableList()
-        val idx = siblings.indexOf(beforeKey).takeIf { it >= 0 } ?: siblings.size
-        siblings.add(idx, key)
+    fun moveBefore(key: String, beforeKey: String): Boolean = moveBeside(listOf(key), beforeKey, after = false)
+
+    /** Put the rows [keys], in their display order, immediately before [beforeKey] (manual order). */
+    fun moveBefore(keys: List<String>, beforeKey: String): Boolean = moveBeside(keys, beforeKey, after = false)
+
+    /** Put the row [key] immediately after [afterKey], among that row's siblings (manual order). */
+    fun moveAfter(key: String, afterKey: String): Boolean = moveBeside(listOf(key), afterKey, after = true)
+
+    /** Put the rows [keys], in their display order, immediately after [afterKey] (manual order). */
+    fun moveAfter(keys: List<String>, afterKey: String): Boolean = moveBeside(keys, afterKey, after = true)
+
+    private fun moveBeside(keys: List<String>, anchor: String, after: Boolean): Boolean {
+        val moving = movable(keys)
+        if (moving.isEmpty() || anchor in moving || !exists(anchor)) return false
+        val parent = parentOf(anchor)
+        if (moving.any { wouldCycle(it, parent) }) return false
+        val siblings = TreeRows.childKeys(parent, connections, folders, sort.get(), foldersFirst.get()).filter { it !in moving }.toMutableList()
+        val at = siblings.indexOf(anchor).let { if (it < 0) siblings.size else if (after) it + 1 else it }
+        siblings.addAll(at, moving)
         if (sort.get() != SortMode.Manual) sort.set(SortMode.Manual)
         return reorder(siblings, parent)
     }
 
-    /** Put the row [key] immediately after [afterKey], among that row's siblings (manual order). */
-    fun moveAfter(key: String, afterKey: String): Boolean {
-        if (key == afterKey || !exists(key) || !exists(afterKey)) return false
-        val parent = parentOf(afterKey)
-        if (wouldCycle(key, parent)) return false
-        val siblings = TreeRows.childKeys(parent, connections, folders, sort.get(), foldersFirst.get()).filter { it != key }.toMutableList()
-        val idx = siblings.indexOf(afterKey).let { if (it >= 0) it + 1 else siblings.size }
-        siblings.add(idx, key)
-        if (sort.get() != SortMode.Manual) sort.set(SortMode.Manual)
-        return reorder(siblings, parent)
+    /**
+     * The rows of [keys] that exist, in display order, minus any whose ancestor folder is also in
+     * [keys] — those move with their folder. Rows the tree does not show (a collapsed folder's
+     * contents, a filtered-out row) keep the order they were given, after the shown ones.
+     */
+    private fun movable(keys: List<String>): List<String> {
+        val wanted = LinkedHashSet(keys.filter { exists(it) })
+        val shown = HashMap<String, Int>()
+        rows.forEachIndexed { i, r -> shown[r.key] = i }
+        return wanted.filter { k -> ancestorFolderIds(k).none { "f:$it" in wanted } }
+            .sortedBy { shown[it] ?: Int.MAX_VALUE }
     }
+
+    /** The folder ids above [key], nearest first (bounded, in case a file carries a parent loop). */
+    private fun ancestorFolderIds(key: String): List<String> {
+        val out = ArrayList<String>()
+        var p = parentOf(key)
+        while (p != null && p !in out && out.size < 64) { out += p; p = store.getFolder(p)?.parentId }
+        return out
+    }
+
+    /**
+     * True when every row of [keys] may land under [folderId] (null = top level): no folder among them
+     * is [folderId] itself or one of its ancestors — the drag-and-drop feedback asks before a drop.
+     */
+    fun canMove(keys: List<String>, folderId: String?): Boolean = keys.none { wouldCycle(it, folderId) }
 
     /** The row's siblings in display order (folders and connections of its parent), as keys. */
     fun siblingKeys(key: String): List<String> =
@@ -724,9 +765,6 @@ class LauncherModel(
     }
 
     companion object {
-        /** The icon a new connection starts with (a Lucide glyph name — the design's `server`). */
-        const val DEFAULT_ICON = "server"
-
         /** Parse an RFC-2253-ish DN ("CN=…, O=…") into a [SignerPin] of DN-attribute requirements. */
         fun parseSignerDn(dn: String): SignerPin? {
             val rdns = dn.split(',')

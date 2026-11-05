@@ -46,4 +46,4 @@
 .text-input, .menu-button.btn, .segmented { -fx-background-radius: 3; -fx-border-radius: 3; }
 .segmented .seg-button { -fx-background-radius: 2; -fx-border-radius: 2; }
 .icon-button, .tree-row, .filter-wrap .text-input { -fx-background-radius: 3; -fx-border-radius: 3; }
-.modal-card, .toast, .context-menu { -fx-background-radius: 5; -fx-border-radius: 5; }
+.modal-card, .context-menu { -fx-background-radius: 5; -fx-border-radius: 5; }

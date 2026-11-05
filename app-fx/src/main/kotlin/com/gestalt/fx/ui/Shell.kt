@@ -38,7 +38,8 @@ import java.time.format.DateTimeFormatter
 
 /**
  * The launcher window: sidebar | handle | detail pane inside a StackPane that also hosts the modal
- * layer and the toast. Owns the prompts the design specifies (unsaved changes, delete, trust this
+ * layer; notices ("Saved", a launch's progress, errors) go to the detail pane's bottom bar. Owns the
+ * prompts the design specifies (unsaved changes, delete, trust this
  * certificate, certificate expired, publisher review) and the keyboard shortcuts (Ctrl+F filter,
  * Ctrl+S save, Ctrl+Enter launch).
  */
@@ -46,11 +47,12 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
 
     val root = StackPane()
     private val modal = ModalHost(root)
-    private val toast = ToastHost(root)
     private val sidebar = Sidebar(model, this, icons)
     private val detail = DetailPane(model, this, icons)
+    /** Notices go to the detail pane's bottom bar. */
+    private val notice: NoticeStrip get() = detail.notice
     private val certificates = CertificatesDialog(model, modal) { detail.refreshCertificates() }
-    private val iconDialog = IconDialog(modal, icons) { stage }
+    private val iconDialog = IconDialog(modal, icons, { stage }, { model.prefs.defaultIcon }, { model.prefs.defaultIcon = it })
     private val paletteDialog = PaletteDialog(modal, model)
     val scene: Scene
 
@@ -168,12 +170,12 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         startLaunch(id)
     }
 
-    private var launchToastFor: String? = null
+    private var launchNoticeFor: String? = null
 
     private fun startLaunch(id: String) {
         val conn = model.store.get(id) ?: return
-        toast.show("Launching ${conn.name}", conn.serverUrl, ToastHost.Kind.Progress, closeTip = "Cancel this launch", onClose = { model.cancelLaunch(id) })
-        launchToastFor = id
+        notice.show("Launching ${conn.name}", conn.serverUrl, NoticeStrip.Kind.Progress, closeTip = "Cancel this launch", onClose = { model.cancelLaunch(id) })
+        launchNoticeFor = id
         model.launch(id)
     }
 
@@ -245,16 +247,16 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
             extensionFilters += FileChooser.ExtensionFilter("Connection files (*.json)", "*.json")
         }
         val file = chooser.showOpenDialog(stage) ?: return
-        if (importing) { toast.show("An import is already running", file.name, ToastHost.Kind.Info); return }
+        if (importing) { notice.show("An import is already running", file.name, NoticeStrip.Kind.Info); return }
         val size = runCatching { Files.size(file.toPath()) }.getOrDefault(0L)
         if (size > MAX_IMPORT_BYTES) {
-            toast.show("Couldn’t import", "${file.name} is ${size / (1024 * 1024)} MB; a connections file is at most ${MAX_IMPORT_BYTES / (1024 * 1024)} MB", ToastHost.Kind.Error); return
+            notice.show("Couldn’t import", "${file.name} is ${size / (1024 * 1024)} MB; a connections file is at most ${MAX_IMPORT_BYTES / (1024 * 1024)} MB", NoticeStrip.Kind.Error); return
         }
         val text = runCatching { Files.readString(file.toPath()) }.getOrElse {
-            toast.show("Couldn’t import", "${file.name} couldn’t be read", ToastHost.Kind.Error); return
+            notice.show("Couldn’t import", "${file.name} couldn’t be read", NoticeStrip.Kind.Error); return
         }
         val parsed = runCatching { ConnectionImport.parseAll(text) }.getOrElse {
-            toast.show("Couldn’t import", "${file.name} isn’t a launcher export", ToastHost.Kind.Error); return
+            notice.show("Couldn’t import", "${file.name} isn’t a launcher export", NoticeStrip.Kind.Error); return
         }
         // A port-forward command is the one setting the launcher runs. Show what the file carries and let
         // the user arm them now, or import them switched off to arm one by one.
@@ -268,7 +270,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     /** The import itself — icons through the sanitizer, the store rewritten — runs off the FX thread; the window hears the outcome. */
     private fun runImport(fileName: String, text: String, tunnels: ConnectionImport.TunnelPolicy) {
         importing = true
-        toast.show("Importing…", fileName, ToastHost.Kind.Progress, 60_000)
+        notice.show("Importing…", fileName, NoticeStrip.Kind.Progress, 60_000)
         Thread({
             val result = runCatching { ConnectionImport.import(model.store, text, ConnectionImport.DedupePolicy.Merge, tunnels, icons) }
             javafx.application.Platform.runLater {
@@ -281,8 +283,8 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
                         if (s.icons > 0) "${s.icons} icon${if (s.icons == 1) "" else "s"}" else null,
                         if (s.forwards > 0 && tunnels == ConnectionImport.TunnelPolicy.Disarm) "port-forwards off until you turn them on" else null,
                     ).joinToString(" · ").ifEmpty { fileName }
-                    toast.show("Imported ${s.added} connection${if (s.added == 1) "" else "s"}", detail, ToastHost.Kind.Success, 5000)
-                }.onFailure { toast.show("Couldn’t import", it.message ?: "$fileName isn’t a launcher export", ToastHost.Kind.Error) }
+                    notice.show("Imported ${s.added} connection${if (s.added == 1) "" else "s"}", detail, NoticeStrip.Kind.Success, 5000)
+                }.onFailure { notice.show("Couldn’t import", it.message ?: "$fileName isn’t a launcher export", NoticeStrip.Kind.Error) }
             }
         }, "import").apply { isDaemon = true }.start()
     }
@@ -349,8 +351,8 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         }
         val file = chooser.showSaveDialog(stage) ?: return
         runCatching { model.store.exportTo(file.toPath(), icons = icons) }
-            .onSuccess { toast.show("Exported ${model.connections.size} connections", "Every setting, folder and custom icon — saved passwords stay in this machine’s keychain", ToastHost.Kind.Success, 5000) }
-            .onFailure { toast.show("Couldn’t export", it.message ?: it.javaClass.simpleName, ToastHost.Kind.Error) }
+            .onSuccess { notice.show("Exported ${model.connections.size} connections", "Every setting, folder and custom icon — saved passwords stay in this machine’s keychain", NoticeStrip.Kind.Success, 5000) }
+            .onFailure { notice.show("Couldn’t export", it.message ?: it.javaClass.simpleName, NoticeStrip.Kind.Error) }
     }
 
     // --- DetailActions -----------------------------------------------------------------------------
@@ -361,7 +363,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     }
 
     override fun saveActive() {
-        if (model.save()) toast.show("Saved", model.draft.get()?.name, ToastHost.Kind.Success, 1200)
+        if (model.save()) notice.show("Saved", model.draft.get()?.name, NoticeStrip.Kind.Success, 1200)
     }
 
     override fun saveActiveAs() {
@@ -395,15 +397,15 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         if (id == null) { password.fill('\u0000'); return }
         val user = model.draft.get()?.username?.trim().orEmpty()
         val error = model.savePassword(id, user, password) // zeroes the array
-        if (error == null) toast.show("Password saved", "Filled in at the Administrator’s login screen", ToastHost.Kind.Success)
-        else toast.show("Couldn’t save the password", error, ToastHost.Kind.Error, 6000)
+        if (error == null) notice.show("Password saved", "Filled in at the Administrator’s login screen", NoticeStrip.Kind.Success)
+        else notice.show("Couldn’t save the password", error, NoticeStrip.Kind.Error, 6000)
         detail.refreshSignIn()
     }
 
     override fun removePassword() {
         val id = model.activeId.get() ?: return
         model.clearPassword(id)
-        toast.show("Password removed", "The Administrator will ask for it at its login screen", ToastHost.Kind.Success, 2400)
+        notice.show("Password removed", "The Administrator will ask for it at its login screen", NoticeStrip.Kind.Success, 2400)
         detail.refreshSignIn()
     }
 
@@ -413,19 +415,19 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
 
     private val launchPrompts: LaunchEvents = object : LaunchEvents {
         override fun onPhase(id: String, phase: LaunchPhase) {
-            if (id != launchToastFor) return
+            if (id != launchNoticeFor) return
             when (phase) {
-                LaunchPhase.Tunneling -> toast.progress(0, 0, "Opening the tunnel…")
-                LaunchPhase.Downloading -> toast.progress(0, 0, "Reading the server's launch descriptors…")
-                LaunchPhase.Launching -> toast.progress(1, 1, "Starting the Administrator…")
+                LaunchPhase.Tunneling -> notice.progress(0, 0, "Opening the tunnel…")
+                LaunchPhase.Downloading -> notice.progress(0, 0, "Reading the server's launch descriptors…")
+                LaunchPhase.Launching -> notice.progress(1, 1, "Starting the Administrator…")
                 else -> Unit
             }
         }
 
-        /** The long part of a first launch, made visible: the bar fills jar by jar, so nobody takes two minutes of download for a hang. */
+        /** The long part of a first launch, made visible: the notice's bar fills jar by jar, so nobody takes two minutes of download for a hang. */
         override fun onProgress(id: String, done: Int, total: Int) {
-            if (id != launchToastFor) return
-            toast.progress(done, total, if (total > 0) "$done of $total jars fetched and verified" else "")
+            if (id != launchNoticeFor) return
+            notice.progress(done, total, if (total > 0) "$done of $total jars fetched and verified" else "")
         }
 
         override fun onRunning(id: String, instances: Int) {
@@ -435,17 +437,17 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
                 com.gestalt.launcher.model.JavaHomeMode.Custom -> "Custom Java"
                 com.gestalt.launcher.model.JavaHomeMode.Default -> "Automatic Java"
             }
-            toast.show("Administrator started", listOfNotNull(java, conn.heapSize?.let { "$it heap" }).joinToString(" · "), ToastHost.Kind.Success)
+            notice.show("Administrator started", listOfNotNull(java, conn.heapSize?.let { "$it heap" }).joinToString(" · "), NoticeStrip.Kind.Success)
         }
 
         override fun onExited(id: String, instances: Int) = Unit
 
         override fun onCancelled(id: String) {
-            toast.dismiss()
+            notice.dismiss()
         }
 
         override fun onNeedsServerTrust(id: String, leaf: X509Certificate, hostPort: String?) {
-            toast.dismiss()
+            notice.dismiss()
             val d = CertDetails.from(leaf)
             val short = d.fingerprintDisplay.split(":").take(6).joinToString(":") + "…"
             modal.confirm(
@@ -460,7 +462,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         }
 
         override fun onServerRejected(id: String, leaf: X509Certificate) {
-            toast.dismiss()
+            notice.dismiss()
             modal.confirm(
                 "Certificate rejected",
                 "This server’s certificate was rejected earlier, so the launcher won’t connect to it. Review it under Certificates if that decision should change.",
@@ -472,7 +474,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         }
 
         override fun onNeedsPublisherTrust(id: String, signer: X509Certificate, artifactName: String, reason: String) {
-            toast.dismiss()
+            notice.dismiss()
             val d = CertDetails.from(signer)
             val short = d.fingerprintDisplay.split(":").take(6).joinToString(":") + "…"
             modal.confirm(
@@ -487,7 +489,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         }
 
         override fun onFailed(id: String, error: Throwable, diagnosis: Diagnosis) {
-            toast.show(diagnosis.title, diagnosis.explanation, ToastHost.Kind.Error, 6000)
+            notice.show(diagnosis.title, diagnosis.explanation, NoticeStrip.Kind.Error, 6000)
             modal.confirm(
                 diagnosis.title,
                 diagnosis.explanation + "\n\n" + diagnosis.nextStep,
@@ -565,9 +567,9 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         stage.requestFocus()
     }
 
-    /** Surface an error that escaped on the FX thread (see LauncherApp.onUncaught): a toast, nothing modal. */
+    /** Surface an error that escaped on the FX thread (see LauncherApp.onUncaught): a notice in the bottom bar, nothing modal. */
     fun reportError(t: Throwable) {
-        toast.show("Something went wrong", t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName, ToastHost.Kind.Error, 6000)
+        notice.show("Something went wrong", t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName, NoticeStrip.Kind.Error, 6000)
     }
 
     private fun exitNow() {

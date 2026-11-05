@@ -27,7 +27,7 @@ data class ModalAction(val label: String, val kind: Controls.ButtonKind = Contro
 /**
  * The window's modal layer: a scrim over the whole window with one card in the middle, like the
  * design's dialogs. Only one modal shows at a time; Esc closes it, Enter runs the default action.
- * Lives in the root StackPane so it covers the sidebar, the detail pane and the toast.
+ * Lives in the root StackPane so it covers the sidebar and the detail pane, bottom bar included.
  */
 class ModalHost(private val root: StackPane) {
 
@@ -112,77 +112,88 @@ class ModalHost(private val root: StackPane) {
     }
 }
 
-/** A transient notice in the window's bottom-right corner. */
-class ToastHost(private val root: StackPane) {
+/**
+ * The window's one-line notice — "Saved", "Launching …", "Couldn't import" — as a strip in the detail
+ * pane's bottom bar, left of the unsaved marker and Delete, where it never covers the form. An icon (a
+ * spinner while something runs), the title, a muted detail that ellipsizes when the bar is narrow, a
+ * thin progress bar for a launch, and an X: it clears the notice, and when [show] is given [onClose]
+ * it runs that first — a launch notice's X cancels the launch (tooltip [closeTip]).
+ */
+class NoticeStrip : HBox() {
 
     enum class Kind { Info, Success, Error, Progress }
 
-    private var current: HBox? = null
+    private val iconSlot = StackPane().apply { minWidth = 16.0; prefWidth = 16.0; maxWidth = 16.0 }
+    private val titleLabel = Label().apply { styleClass += "notice-title"; minWidth = 0.0 }
+    private val detailLabel = Label().apply { styleClass += "notice-detail"; minWidth = 0.0; maxWidth = 440.0 }
+    private val bar = ProgressBar(ProgressBar.INDETERMINATE_PROGRESS).apply { styleClass += "notice-bar"; minWidth = 96.0; prefWidth = 96.0; maxWidth = 96.0 }
+    private val close = Controls.iconButton("x", "Close", 13.0) { val run = onClose; dismiss(); run?.invoke() }.apply { styleClass += "notice-close" }
+    private var onClose: (() -> Unit)? = null
     private var hide: PauseTransition? = null
-    private var bar: ProgressBar? = null
-    private var sub: Label? = null
+    private var spin: RotateTransition? = null
+    private var serial = 0
+
+    /** True while a notice is up (the bar shows itself for one even when no connection is selected). */
+    val isShowing: Boolean get() = isVisible
+
+    init {
+        styleClass += "notice"
+        alignment = Pos.CENTER_LEFT
+        minWidth = 0.0
+        children.addAll(iconSlot, titleLabel, detailLabel, bar, close)
+        isVisible = false; isManaged = false
+    }
 
     /**
-     * Show a toast. Every toast carries an X: it closes the toast, and when [onClose] is given it runs
-     * that first — a launch toast's X cancels the launch (tooltip [closeTip]). Clicking the body only hides.
+     * Show a notice; a non-progress one clears itself after [millis]. A new notice replaces the one up,
+     * and the replaced one's [onClose] does not run — only the X runs it.
      */
     fun show(title: String, detail: String?, kind: Kind, millis: Long = 3400, closeTip: String = "Close", onClose: (() -> Unit)? = null) {
         dismiss()
+        val mine = ++serial
         val icon: Node = when (kind) {
-            Kind.Progress -> Icons.glyph("loader-circle", 16.0, "-text-muted").also { spin(it) }
-            Kind.Error -> Icons.glyph("circle-alert", 16.0, "-danger")
-            Kind.Success -> Icons.glyph("circle-check", 16.0, "-ok")
-            Kind.Info -> Icons.glyph("circle-check", 16.0, "-text-muted")
+            Kind.Progress -> Icons.glyph("loader-circle", 15.0, "-text-muted").also { spin(it) }
+            Kind.Error -> Icons.glyph("circle-alert", 15.0, "-danger")
+            Kind.Success -> Icons.glyph("circle-check", 15.0, "-ok")
+            Kind.Info -> Icons.glyph("circle-check", 15.0, "-text-muted")
         }
-        val subLabel = Label(detail.orEmpty()).apply { styleClass += "toast-sub"; isVisible = !detail.isNullOrBlank(); isManaged = isVisible }
-        val progressBar = if (kind == Kind.Progress) ProgressBar(ProgressBar.INDETERMINATE_PROGRESS).apply { styleClass += "toast-bar"; maxWidth = Double.MAX_VALUE } else null
-        val text = VBox(3.0).apply {
-            children += Label(title).apply { styleClass += "toast-title" }
-            children += subLabel
-            progressBar?.let { children += it }
-            minWidth = 0.0
-            prefWidth = if (progressBar != null) 260.0 else javafx.scene.layout.Region.USE_COMPUTED_SIZE
-        }
-        bar = progressBar
-        sub = subLabel
-        HBox.setHgrow(text, javafx.scene.layout.Priority.ALWAYS)
-        val close = Controls.iconButton("x", closeTip, 13.0) { onClose?.invoke(); dismiss() }.apply {
-            styleClass += "toast-close"
-            setOnMouseClicked { it.consume() } // the body's click-to-hide must not double up on the X
-        }
-        val toast = HBox(icon, text, close).apply {
-            styleClass += "toast"
-            isPickOnBounds = false
-            maxWidth = 380.0
-            maxHeight = HBox.USE_PREF_SIZE
-            setOnMouseClicked { dismiss() }
-        }
-        StackPane.setAlignment(toast, Pos.BOTTOM_RIGHT)
-        StackPane.setMargin(toast, Insets(0.0, 24.0, 64.0, 0.0))
-        current = toast
-        root.children += toast
+        iconSlot.children.setAll(icon)
+        titleLabel.text = title
+        setDetail(detail)
+        bar.progress = ProgressBar.INDETERMINATE_PROGRESS
+        bar.isVisible = kind == Kind.Progress; bar.isManaged = bar.isVisible
+        close.tooltip.text = closeTip
+        this.onClose = onClose
+        styleClass.removeAll("info", "success", "error", "progress")
+        styleClass += kind.name.lowercase()
+        isVisible = true; isManaged = true
         if (kind != Kind.Progress) {
-            hide = PauseTransition(Duration.millis(millis.toDouble())).apply { setOnFinished { if (current === toast) dismiss() }; play() }
+            hide = PauseTransition(Duration.millis(millis.toDouble())).apply { setOnFinished { if (serial == mine) dismiss() }; play() }
         }
     }
 
-    /** Move the progress toast's bar to [done]/[total] and say so beneath the title; no-op unless a progress toast is up. */
+    /** Move the progress bar to [done]/[total] and say so beside the title; no-op unless a progress notice is up. */
     fun progress(done: Int, total: Int, detail: String) {
-        val b = bar ?: return
-        b.progress = if (total > 0) (done.toDouble() / total).coerceIn(0.0, 1.0) else ProgressBar.INDETERMINATE_PROGRESS
-        sub?.let { it.text = detail; it.isVisible = detail.isNotBlank(); it.isManaged = it.isVisible }
+        if (!isVisible || !bar.isVisible) return
+        bar.progress = if (total > 0) (done.toDouble() / total).coerceIn(0.0, 1.0) else ProgressBar.INDETERMINATE_PROGRESS
+        setDetail(detail)
     }
 
     fun dismiss() {
         hide?.stop(); hide = null
-        current?.let { root.children.remove(it) }
-        current = null
-        bar = null
-        sub = null
+        spin?.stop(); spin = null
+        onClose = null
+        iconSlot.children.clear()
+        isVisible = false; isManaged = false
+    }
+
+    private fun setDetail(detail: String?) {
+        detailLabel.text = detail.orEmpty()
+        detailLabel.isVisible = !detail.isNullOrBlank(); detailLabel.isManaged = detailLabel.isVisible
     }
 
     private fun spin(node: Node) {
-        RotateTransition(Duration.millis(900.0), node).apply {
+        spin = RotateTransition(Duration.millis(900.0), node).apply {
             byAngle = 360.0
             cycleCount = Animation.INDEFINITE
             interpolator = javafx.animation.Interpolator.LINEAR

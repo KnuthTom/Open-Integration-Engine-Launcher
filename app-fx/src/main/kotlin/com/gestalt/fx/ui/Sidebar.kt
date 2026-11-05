@@ -21,6 +21,7 @@ import javafx.scene.control.ListCell
 import javafx.scene.control.ListView
 import javafx.scene.control.Menu
 import javafx.scene.control.MenuItem
+import javafx.scene.control.SelectionMode
 import javafx.scene.control.TextField
 import javafx.scene.control.Tooltip
 import javafx.scene.input.ClipboardContent
@@ -56,7 +57,9 @@ interface ShellActions {
  * The left pane: header with the toolbar, the filter field, and the tree — a ListView over
  * [LauncherModel.rows] with fixed 24 px cells (recycled, so scrolling stays flat), 16 px indent per
  * level, a chevron and a count on folders, the connection's icon as a launch button, and the keyboard
- * map from the design (↑↓ move, ←→ collapse/expand, Enter launch, F2 rename, Del delete).
+ * map from the design (↑↓ move, ←→ collapse/expand, Enter launch, F2 rename, Del delete). Rows
+ * multi-select (Ctrl / Shift click, Ctrl+A); a drag or "Move to" carries every selected row at once,
+ * folders included. The detail pane follows the row last clicked.
  */
 class Sidebar(private val model: LauncherModel, private val host: ShellActions, private val icons: CustomIconStore?) : VBox() {
 
@@ -125,13 +128,16 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         list.fixedCellSize = 24.0
         list.setCellFactory { RowCell() }
         list.placeholder = Region()
+        list.selectionModel.selectionMode = SelectionMode.MULTIPLE
         VBox.setVgrow(list, Priority.ALWAYS)
+        // The lead of the selection (the row last clicked) is the cursor; a connection there becomes the active one.
         list.selectionModel.selectedItemProperty().addListener { _, _, row ->
             if (row == null || restoring) return@addListener
             focusKey = row.key
             if (row is TreeRow.ConnectionRow && row.connection.id != model.activeId.get()) host.requestSelect(row.connection.id)
         }
-        model.rows.addListener(ListChangeListener { restoreCursor(); updateEmptyState() })
+        // Rebuilt rows keep only the cursor: a multi-selection's other rows would be at other indices now.
+        model.rows.addListener(ListChangeListener { restoreCursor(collapse = true); updateEmptyState() })
         model.connections.addListener(ListChangeListener { countLabel.text = model.connections.size.toString() })
         model.launches.addListener(javafx.collections.MapChangeListener { list.refresh() })
         model.activeId.addListener { _, _, _ -> list.refresh() }
@@ -148,8 +154,9 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         }
         list.setOnDragExited { list.styleClass.remove("drop-root") }
         list.setOnDragDropped { e ->
-            val key = e.dragboard.getContent(ROW_FORMAT) as? String
-            val ok = key != null && model.moveInto(key, null)
+            val keys = draggedKeys(e.dragboard)
+            val ok = keys.isNotEmpty() && model.moveInto(keys, null)
+            if (ok) selectRows(keys)
             list.styleClass.remove("drop-root")
             e.isDropCompleted = ok
             e.consume()
@@ -172,6 +179,37 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         focusKey = key
         restoreCursor()
     }
+
+    /**
+     * Select every row of [keys] that is shown — the rows just moved together. The cursor stays on the
+     * row it was on when that row moved too (so the active connection and the cursor agree), else the last.
+     */
+    private fun selectRows(keys: List<String>) {
+        val indices = keys.mapNotNull { k -> model.rows.indexOfFirst { it.key == k }.takeIf { it >= 0 } }
+        if (indices.isEmpty()) return
+        val cursor = focusKey?.takeIf { it in keys }?.let { k -> model.rows.indexOfFirst { it.key == k } }?.takeIf { it >= 0 } ?: indices.last()
+        focusKey = model.rows[cursor].key
+        restoring = true
+        try {
+            list.selectionModel.clearSelection()
+            // The last index given becomes the selection's lead (selectedItem), so the cursor goes last.
+            val others = indices.filter { it != cursor }
+            if (others.isEmpty()) list.selectionModel.select(cursor)
+            else list.selectionModel.selectIndices(others.first(), *(others.drop(1) + cursor).toIntArray())
+            list.focusModel.focus(cursor)
+        } finally {
+            restoring = false
+        }
+    }
+
+    /** The keys selected, in display order — what a drag or "Move to" carries when [key] is one of them. */
+    private fun selectionWith(key: String): List<String> {
+        val selected = list.selectionModel.selectedItems.filterNotNull().map { it.key }
+        return if (key in selected && selected.size > 1) model.rows.map { it.key }.filter { it in selected } else listOf(key)
+    }
+
+    private fun draggedKeys(db: javafx.scene.input.Dragboard): List<String> =
+        (db.getContent(ROW_FORMAT) as? String)?.split('\n')?.filter { it.isNotEmpty() }.orEmpty()
 
     fun focusTree() = list.requestFocus()
 
@@ -199,13 +237,14 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         list.requestFocus()
     }
 
-    private fun restoreCursor() {
+    /** Put the selection's cursor on [focusKey]; with [collapse], drop any other selected rows too. */
+    private fun restoreCursor(collapse: Boolean = false) {
         val key = focusKey ?: return
         val idx = model.rows.indexOfFirst { it.key == key }
         restoring = true
         try {
             if (idx >= 0) {
-                if (list.selectionModel.selectedIndex != idx) list.selectionModel.clearAndSelect(idx)
+                if (list.selectionModel.selectedIndex != idx || (collapse && list.selectionModel.selectedIndices.size > 1)) list.selectionModel.clearAndSelect(idx)
                 list.focusModel.focus(idx)
             } else {
                 list.selectionModel.clearSelection()
@@ -362,15 +401,20 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
         return listOf(up, down)
     }
 
-    /** "Move to ▸": the top level and every folder (indented), except the moved folder's own subtree. */
+    /**
+     * "Move to ▸": the top level and every folder (indented), except any moved folder's own subtree.
+     * When [key] is one of several selected rows, the whole selection moves ("Move 3 rows to").
+     */
     private fun moveToMenu(key: String, currentParent: String?): Menu {
-        val menu = Menu("Move to")
-        val self = if (key.startsWith("f:")) key.substring(2) else null
-        val excluded: Set<String> = self?.let { model.store.descendantFolderIds(it) + it } ?: emptySet()
-        menu.items += Controls.menuItem("Top level", checked = currentParent == null) { model.moveInto(key, null) }
+        val keys = selectionWith(key)
+        val menu = Menu(if (keys.size > 1) "Move ${keys.size} rows to" else "Move to")
+        val excluded = HashSet<String>()
+        for (k in keys) if (k.startsWith("f:")) { val id = k.substring(2); excluded += id; excluded += model.store.descendantFolderIds(id) }
+        fun move(folderId: String?) { if (model.moveInto(keys, folderId)) selectRows(keys) }
+        menu.items += Controls.menuItem("Top level", checked = keys.size == 1 && currentParent == null) { move(null) }
         fun walk(parentId: String?, depth: Int) {
             model.folders.filter { it.parentId == parentId && it.id !in excluded }.sortedBy { it.name.lowercase() }.forEach { f ->
-                menu.items += Controls.menuItem(f.name, checked = currentParent == f.id, indent = depth + 1) { model.moveInto(key, f.id) }
+                menu.items += Controls.menuItem(f.name, checked = keys.size == 1 && currentParent == f.id, indent = depth + 1) { move(f.id) }
                 walk(f.id, depth + 1)
             }
         }
@@ -397,9 +441,10 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
             row.setOnMouseClicked { e ->
                 val r = current ?: return@setOnMouseClicked
                 if (e.button != MouseButton.PRIMARY) return@setOnMouseClicked
+                val extending = e.isShortcutDown || e.isControlDown || e.isShiftDown // a selection gesture, not a click on the folder
                 when (r) {
-                    is TreeRow.FolderRow -> if (e.clickCount == 1) model.toggleFolder(r.folder.id)
-                    is TreeRow.ConnectionRow -> if (e.clickCount == 2) host.requestSelect(r.connection.id) { host.launch(r.connection.id) }
+                    is TreeRow.FolderRow -> if (e.clickCount == 1 && !extending) model.toggleFolder(r.folder.id)
+                    is TreeRow.ConnectionRow -> if (e.clickCount == 2 && !extending) host.requestSelect(r.connection.id) { host.launch(r.connection.id) }
                 }
             }
             iconSlot.setOnMouseClicked { e ->
@@ -416,21 +461,22 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
             renameField.focusedProperty().addListener { _, _, focused -> if (!focused) current?.let { r -> if (renamingKey == r.key) commitRename(r.key, renameField.text) } }
             renameField.setOnMouseClicked { it.consume() }
 
-            // Drag a row to reorder it (manual order) or to move it into a folder; the list's empty area
-            // means the top level.
+            // Drag a row — or the whole selection, when the row is part of one — to reorder (manual
+            // order) or to move into a folder; the list's empty area means the top level.
             setOnDragDetected { e ->
                 val r = current ?: return@setOnDragDetected
                 if (renamingKey != null || e.button != MouseButton.PRIMARY) return@setOnDragDetected
+                val keys = selectionWith(r.key)
                 val db = startDragAndDrop(TransferMode.MOVE)
-                db.setContent(ClipboardContent().apply { put(ROW_FORMAT, r.key) })
-                db.dragView = row.snapshot(null, null)
+                db.setContent(ClipboardContent().apply { put(ROW_FORMAT, keys.joinToString("\n")) })
+                db.dragView = dragImage(keys.size)
                 e.consume()
             }
             setOnDragOver { e ->
                 val r = current
-                val src = e.dragboard.getContent(ROW_FORMAT) as? String
-                if (r != null && src != null) {
-                    val mode = dropMode(src, r, e.y)
+                val keys = draggedKeys(e.dragboard)
+                if (r != null && keys.isNotEmpty()) {
+                    val mode = dropMode(keys, r, e.y)
                     if (mode != null) { e.acceptTransferModes(TransferMode.MOVE); showDrop(mode) } else clearDrop()
                 }
                 e.consume()
@@ -438,15 +484,16 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
             setOnDragExited { clearDrop() }
             setOnDragDropped { e ->
                 val r = current
-                val src = e.dragboard.getContent(ROW_FORMAT) as? String
+                val keys = draggedKeys(e.dragboard)
                 var ok = false
-                if (r != null && src != null) {
-                    ok = when (dropMode(src, r, e.y)) {
-                        DropMode.Into -> model.moveInto(src, (r as TreeRow.FolderRow).folder.id)
-                        DropMode.Before -> model.moveBefore(src, r.key)
-                        DropMode.After -> model.moveAfter(src, r.key)
+                if (r != null && keys.isNotEmpty()) {
+                    ok = when (dropMode(keys, r, e.y)) {
+                        DropMode.Into -> model.moveInto(keys, (r as TreeRow.FolderRow).folder.id)
+                        DropMode.Before -> model.moveBefore(keys, r.key)
+                        DropMode.After -> model.moveAfter(keys, r.key)
                         null -> false
                     }
+                    if (ok) selectRows(keys)
                 }
                 clearDrop()
                 e.isDropCompleted = ok
@@ -454,14 +501,35 @@ class Sidebar(private val model: LauncherModel, private val host: ShellActions, 
             }
         }
 
-        /** Where a drop on this row would land: into a folder (its lower three quarters), before / after (connections, or a folder's top quarter). */
-        private fun dropMode(src: String, target: TreeRow, y: Double): DropMode? {
-            if (src == target.key) return null
+        /** The drag's picture: this row, with a count badge beside its name when it drags a selection. */
+        private fun dragImage(n: Int): javafx.scene.image.Image {
+            if (n <= 1) return row.snapshot(null, null)
+            val badge = Label("$n rows").apply { styleClass += "drag-count" }
+            row.children += badge // in the scene, so the badge is styled; gone again before the next layout pass
+            try {
+                return row.snapshot(null, null)
+            } finally {
+                row.children.remove(badge)
+            }
+        }
+
+        /**
+         * Where a drop on this row would land: into a folder (its lower three quarters), before / after
+         * (connections, or a folder's top quarter) — or nowhere, when the row is among the dragged ones
+         * or a dragged folder would land inside itself.
+         */
+        private fun dropMode(keys: List<String>, target: TreeRow, y: Double): DropMode? {
+            if (target.key in keys) return null
             val h = height.takeIf { it > 0 } ?: 24.0
-            return when (target) {
+            val mode = when (target) {
                 is TreeRow.FolderRow -> if (y < h * 0.25) DropMode.Before else DropMode.Into
                 is TreeRow.ConnectionRow -> if (y < h * 0.5) DropMode.Before else DropMode.After
             }
+            val landsIn = if (mode == DropMode.Into) (target as TreeRow.FolderRow).folder.id else when (target) {
+                is TreeRow.FolderRow -> target.folder.parentId
+                is TreeRow.ConnectionRow -> target.connection.folderId
+            }
+            return if (model.canMove(keys, landsIn)) mode else null
         }
 
         private fun showDrop(mode: DropMode) {

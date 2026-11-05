@@ -7,6 +7,7 @@
 package com.gestalt.fx.model
 
 import com.gestalt.launcher.AppPaths
+import com.gestalt.launcher.model.Connection
 import com.gestalt.trust.TrustMode
 import java.nio.file.Files
 import java.nio.file.Path
@@ -48,6 +49,14 @@ class LauncherPrefs(private val file: Path = AppPaths.dataDir.resolve("ui-prefs.
     var closeAfterLaunch: Boolean
         get() = props.getProperty("closeAfterLaunch", "false").toBoolean()
         set(value) = put("closeAfterLaunch", value.toString())
+
+    /**
+     * The icon every new connection starts with — a library glyph name or a `custom:<id>` key, chosen on
+     * the icon card ("Use for new connections"); the model's default when none is set.
+     */
+    var defaultIcon: String
+        get() = props.getProperty("fx.defaultIcon")?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_ICON_KEY } ?: Connection.DEFAULT_ICON_KEY
+        set(value) = put("fx.defaultIcon", value.trim().takeIf { it.isNotEmpty() && it.length <= MAX_ICON_KEY })
 
     var sort: SortMode
         get() = runCatching { SortMode.valueOf(props.getProperty("fx.sort", SortMode.Manual.name)) }.getOrDefault(SortMode.Manual)
@@ -127,5 +136,7 @@ class LauncherPrefs(private val file: Path = AppPaths.dataDir.resolve("ui-prefs.
         const val DEFAULT_ACCENT = "#2E3035"
         const val DEFAULT_BACKGROUND = "#F7F7F8"
         private val COLOR = Regex("^#[0-9A-F]{6}$")
+        /** Longer than any glyph name or `custom:<uuid>` key — a corrupt value is ignored, never carried into every new connection. */
+        private const val MAX_ICON_KEY = 128
     }
 }

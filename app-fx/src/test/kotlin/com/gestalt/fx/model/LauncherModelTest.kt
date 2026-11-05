@@ -216,6 +216,63 @@ class LauncherModelTest {
     }
 
     @Test
+    @DisplayName("a multi-selection moves as one: into a folder in display order, before / after a row, a selected folder carrying its own selected rows; a cycle refuses the lot")
+    fun multiMove(@TempDir dir: Path) {
+        val m = model(dir)
+        val clients = m.newFolder(null, "Clients")
+        val labs = m.newFolder(null, "Labs")
+        val inLabs = m.newConnection(labs.id); m.rename(inLabs.id, "In Labs")
+        val a = m.newConnection(null); m.rename(a.id, "A")
+        val b = m.newConnection(null); m.rename(b.id, "B")
+        val c = m.newConnection(null); m.rename(c.id, "C")
+        fun keys() = m.rows.map { it.key }
+        val fClients = "f:${clients.id}"; val fLabs = "f:${labs.id}"
+        val ca = "c:${a.id}"; val cb = "c:${b.id}"; val cc = "c:${c.id}"; val cl = "c:${inLabs.id}"
+
+        // Manual order sorts by position then name, so the tree starts A, Clients, B, Labs (In Labs), C.
+        assertEquals(listOf(ca, fClients, cb, fLabs, cl, cc), keys())
+
+        // Given out of display order, with the folder's own child among them: C, A and Labs (In Labs travels inside Labs).
+        assertTrue(m.moveInto(listOf(cc, ca, fLabs, cl), clients.id))
+        assertEquals(listOf(fClients, ca, fLabs, cl, cc, cb), keys()) { "A, Labs, C land under Clients in their display order; B stays" }
+        assertEquals(labs.id, m.store.get(inLabs.id)!!.folderId) { "In Labs stayed inside Labs" }
+        assertEquals(clients.id, m.store.getFolder(labs.id)!!.parentId)
+
+        assertTrue(m.moveBefore(listOf(cc, cb), ca))
+        assertEquals(SortMode.Manual, m.sort.get())
+        assertEquals(listOf(fClients, cc, cb, ca, fLabs, cl), keys()) { "C and B, in that order, now sit before A under Clients" }
+        assertEquals(clients.id, m.store.get(b.id)!!.folderId) { "B came in from the top level" }
+
+        assertTrue(m.moveAfter(listOf(fLabs, ca), fClients))
+        assertEquals(listOf(fClients, cc, cb, ca, fLabs, cl), keys()) { "A and Labs now sit at the top level, after Clients" }
+        assertNull(m.store.get(a.id)!!.folderId)
+        assertNull(m.store.getFolder(labs.id)!!.parentId)
+
+        assertFalse(m.moveInto(listOf(ca, fClients), clients.id)) { "Clients can't move into itself, so nothing moves" }
+        assertNull(m.store.get(a.id)!!.folderId) { "A stayed put too — all or nothing" }
+        assertFalse(m.canMove(listOf(ca, fClients), clients.id))
+        assertTrue(m.canMove(listOf(ca, fLabs), clients.id))
+        assertFalse(m.moveInto(emptyList(), null))
+        assertFalse(m.moveBefore(listOf(ca, cb), ca)) { "a row can't move before itself" }
+    }
+
+    @Test
+    @DisplayName("a new connection starts with the preferred icon (the library default until one is chosen) and auto-approve on")
+    fun newConnectionDefaults(@TempDir dir: Path) {
+        val m = model(dir)
+        val first = m.newConnection(null)
+        assertEquals(Connection.DEFAULT_ICON_KEY, first.icon)
+        assertTrue(first.autoApproveCertificates)
+
+        m.prefs.defaultIcon = "flask-conical"
+        assertEquals("flask-conical", m.newConnection(null).icon)
+        assertEquals("flask-conical", LauncherPrefs(dir.resolve("ui-prefs.properties")).defaultIcon) { "the choice is on disk" }
+
+        m.prefs.defaultIcon = " "
+        assertEquals(Connection.DEFAULT_ICON_KEY, m.newConnection(null).icon) { "a blank choice means the default" }
+    }
+
+    @Test
     @DisplayName("move up / move down step a row among its siblings, stop at the ends, and switch to manual order")
     fun moveUpDown(@TempDir dir: Path) {
         val m = model(dir)
@@ -247,12 +304,13 @@ class LauncherModelTest {
         m.updateDraft { it.copy(heapSize = "2g") } // an unsaved edit
         assertTrue(m.dirty.get())
 
-        m.setAutoApprove(c.id, true)
+        assertTrue(c.autoApproveCertificates) { "a new connection starts with auto-approve on" }
+        m.setAutoApprove(c.id, false)
         m.setIcon(c.id, "flask-conical")
 
-        assertTrue(m.store.get(c.id)!!.autoApproveCertificates) { "saved without a Save" }
+        assertFalse(m.store.get(c.id)!!.autoApproveCertificates) { "saved without a Save" }
         assertEquals("flask-conical", m.store.get(c.id)!!.icon)
-        assertTrue(m.draft.get()!!.autoApproveCertificates) { "the draft got the same change" }
+        assertFalse(m.draft.get()!!.autoApproveCertificates) { "the draft got the same change" }
         assertEquals("flask-conical", m.draft.get()!!.icon)
         assertEquals("2g", m.draft.get()!!.heapSize) { "the unsaved edit survived" }
         assertTrue(m.dirty.get()) { "still dirty for the unsaved edit only" }

@@ -42,7 +42,8 @@ The trust-critical surface is the most valuable to scrutinize:
   shows every command it carries and brings them in switched off unless the user chooses otherwise;
   a way to get one to run without that review would be in scope), the trust decisions (an imported
   file's certificate pin and auto-approve switch are dropped — a way to plant trust through an import
-  would be in scope), the
+  would be in scope; a connection made in the window starts with auto-approve on, which is the
+  user's own trust-on-first-use of a server they just typed in, pinned from then on), the
   single-instance lock and its loopback hand-over (`instance.lock`: a per-run secret, loopback only,
   the only action is "show your window").
 
