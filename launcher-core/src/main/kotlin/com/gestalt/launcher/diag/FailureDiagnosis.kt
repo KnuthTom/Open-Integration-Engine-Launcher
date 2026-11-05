@@ -240,11 +240,11 @@ object FailureDiagnosis {
         kind = FailureKind.TunnelFailed,
         title = "The tunnel is up, but the server didn't answer",
         explanation = "The port-forward opened and accepted the launcher's connection, but on the server side nothing answered " +
-            (Regex("on (the forwarded port|ports? [0-9, ]*[0-9])").find(text)?.value ?: "on the forwarded port") +
+            (Regex("on (the forwarded port|port [0-9]+)").find(text)?.value ?: "on the forwarded port") +
             " — the session reported \"Connection to destination port failed\".",
-        nextStep = "Check that Mirth / OIE is running on that server. When the command's own port is refused the launcher " +
-            "also tries the engine's usual ports (8443, 8000); if the engine listens elsewhere, put that port in the tunnel " +
-            "command (the port in the address is only the local end of the forward).",
+        nextStep = "Check that Mirth / OIE is running on that server and listening on the port the tunnel command names " +
+            "(portNumber= in an SSM forward; the engine usually listens on 8443 or 8000). The launcher runs the command as " +
+            "written and never tries another port — change it in the batch file. The port in the address is only the local end of the forward.",
         actions = listOf(FixAction.EditConnection, FixAction.ViewLogs),
     ) else Diagnosis(
         kind = FailureKind.TunnelFailed,

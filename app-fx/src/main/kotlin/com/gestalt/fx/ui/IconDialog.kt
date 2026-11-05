@@ -30,9 +30,11 @@ import javax.imageio.ImageIO
 /**
  * "Connection icon": drop or browse for images (PNG, JPG, GIF or BMP, several at once — each scaled to
  * at most 128 px and stored as PNG through the sanitizing icon store), a preview of the choice as the
- * sidebar shows it, the built-in library in its four categories plus "Yours" (imported images), Reset
- * to default, "Use for new connections" (the chosen icon becomes every new connection's), Cancel,
- * Apply. Apply hands the chosen key back; the window applies it to the saved connection at once.
+ * sidebar shows it, the built-in library in its four categories plus "Yours" (imported images, each
+ * removable: "Remove image" takes the chosen one out of the library and the connections that used it
+ * get the default icon), Reset to default, "Use for new connections" (the chosen icon becomes every
+ * new connection's), Cancel, Apply. Apply hands the chosen key back; the window applies it to the saved
+ * connection at once.
  */
 class IconDialog(
     private val modal: ModalHost,
@@ -41,17 +43,26 @@ class IconDialog(
     /** The icon new connections start with, and how to change it (the launcher's preference). */
     private val defaultIcon: () -> String,
     private val setDefaultIcon: (String) -> Unit,
+    /** Remove an imported icon (its `custom:` key) from the library and from every connection; returns how many connections used it. */
+    private val removeIcon: (String) -> Int,
 ) {
 
     private var pending: String = IconLibrary.DEFAULT
     private var tab: String = "Healthcare"
     private var name: String = ""
+    /** The connection's icon when the card opened — where the choice returns to when the chosen image is removed. */
+    private var current: String? = null
     private var onApply: (String) -> Unit = {}
 
     private val preview = HBox(8.0).apply { styleClass += "icon-preview"; alignment = Pos.CENTER_LEFT }
     private val tabsHolder = HBox()
     private val tiles = FlowPane(6.0, 6.0)
     private val error = Label().apply { styleClass += "field-error"; isWrapText = true; isVisible = false; isManaged = false }
+    private val note = Label().apply { styleClass += "field-note"; isWrapText = true; isVisible = false; isManaged = false }
+    private val removeButton = Controls.button("Remove image", Controls.ButtonKind.Ghost) { removePending() }.apply {
+        styleClass += "danger-text"
+        tooltip = Tooltip("Take this image out of the library; connections using it get the default icon")
+    }
     private val defaultButton = Controls.button("Use for new connections", Controls.ButtonKind.Ghost) { setDefaultIcon(pending); render() }
     private val defaultMark = HBox(6.0, Icons.glyph("check", 13.0, "-ok", 2.5), Label("Default for new connections").apply { styleClass += "field-note" }).apply { alignment = Pos.CENTER_LEFT; padding = Insets(0.0, 0.0, 0.0, 4.0) }
     /** Holds [defaultButton], or [defaultMark] when the choice already is the default. */
@@ -60,9 +71,11 @@ class IconDialog(
     fun show(connectionName: String, currentKey: String?, onApply: (String) -> Unit) {
         this.name = connectionName
         this.onApply = onApply
-        pending = currentKey?.takeIf { it.isNotBlank() } ?: defaultIcon()
+        current = currentKey?.takeIf { it.isNotBlank() }
+        pending = current ?: defaultIcon()
         tab = tabFor(pending)
         error.isVisible = false; error.isManaged = false
+        note.isVisible = false; note.isManaged = false
 
         val zone = VBox().apply {
             styleClass += "drop-zone"
@@ -75,6 +88,7 @@ class IconDialog(
                     children += HBox(4.0, Label("Drop images or").apply { styleClass += "strong" }, Label("browse…").apply { styleClass += "link" })
                     children += Label("PNG, JPG, GIF or BMP, one or several. Square images work best — scaled to 16 and 32 px.").apply { styleClass += "field-note"; isWrapText = true }
                     children += error
+                    children += note
                 }
             }
             children += row
@@ -117,6 +131,7 @@ class IconDialog(
                 padding = Insets(20.0, 0.0, 0.0, 0.0)
                 children += Controls.button("Reset to default", Controls.ButtonKind.Ghost) { pending = defaultIcon(); tab = tabFor(pending); render() }
                 children += defaultHolder
+                children += removeButton
                 children += Controls.spacer()
                 children += Controls.button("Cancel", Controls.ButtonKind.Secondary) { modal.close() }
                 children += Controls.button("Apply", Controls.ButtonKind.Primary) { val k = pending; modal.close(); this@IconDialog.onApply(k) }
@@ -137,6 +152,9 @@ class IconDialog(
         preview.children.setAll(Controls.connectionIcon(pending, 16.0, icons), Label(name).apply { styleClass += "strong"; minWidth = 0.0 })
         // "Use for new connections" — or, when the choice already is the default, just the fact
         defaultHolder.children.setAll(if (pending == defaultIcon()) defaultMark else defaultButton)
+        // "Remove image" only for an imported image that is still in the library
+        val removable = IconLibrary.isCustom(pending) && CustomIconStore.idFromKey(pending)?.let { icons?.get(it) } != null
+        removeButton.isVisible = removable; removeButton.isManaged = removable
         // tabs
         val tabNames = listOf("Yours") + IconLibrary.categories.map { it.first }
         val seg = Controls.Segmented(tabNames.map { it to it }) { t -> tab = t; render() }
@@ -199,6 +217,7 @@ class IconDialog(
         if (last != null) { pending = last; tab = "Yours" }
         if (failed.isEmpty()) {
             error.isVisible = false; error.isManaged = false
+            note.isVisible = false; note.isManaged = false
         } else {
             val names = failed.take(3).joinToString(", ") + if (failed.size > 3) " and ${failed.size - 3} more" else ""
             showError(if (failed.size == 1) "$names couldn’t be imported${reason?.let { ": $it" } ?: "."}" else "${failed.size} of ${files.size} couldn’t be imported: $names.")
@@ -207,9 +226,28 @@ class IconDialog(
         render()
     }
 
+    /** Take the chosen image out of the library; the choice returns to the connection's own icon (or the default when that was it). */
+    private fun removePending() {
+        val key = pending
+        if (!IconLibrary.isCustom(key)) return
+        val used = removeIcon(key)
+        pending = current?.takeIf { it != key } ?: defaultIcon()
+        if (current == key) current = null
+        tab = "Yours"
+        error.isVisible = false; error.isManaged = false
+        note.text = when (used) {
+            0 -> "Image removed."
+            1 -> "Image removed; the connection that used it now has the default icon."
+            else -> "Image removed; the $used connections that used it now have the default icon."
+        }
+        note.isVisible = true; note.isManaged = true
+        render()
+    }
+
     private fun showError(text: String) {
         error.text = text
         error.isVisible = true; error.isManaged = true
+        note.isVisible = false; note.isManaged = false
     }
 
     companion object {

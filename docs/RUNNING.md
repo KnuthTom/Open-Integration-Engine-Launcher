@@ -127,19 +127,15 @@ backlog, so the launcher fetches one thing at a time through such a forward. Rig
 Administrator is started the launcher **re-checks** the port and reopens a forward of its own that has
 stopped listening. A forward that opens and accepts the launcher's connection but whose session then
 reports `Connection to destination port failed` (the SSM agent on the instance could not reach the
-forwarded port) is **re-pointed at the engine's usual ports** — 8443, then 8000 — when the command
-names its remote port in either form the AWS CLI takes: `portNumber=<n>` or JSON `"portNumber":["<n>"]`
-(an SSM command line, or inside the batch file it runs: the launcher runs a copy from its cache dir with
-only that number changed — `%~dp0` / `%~f0` spelled out as the original's folder and path — started in
-the original's folder; the user's file is never edited; `audit.log`: `tunnel.retryPort`). The plugin
-writes that line around the moment it drops the connection — and in basic mode may end the session on
-it, which the launcher answers by reopening the forward — so the launcher gives it a moment (1.5 s) and
-reads every log the forward has had before deciding. A forward another Administrator is still using is
-not re-pointed under it. The port that answers is remembered per connection
-(`cache/tunnel/remote-ports.json`, `tunnel.remotePort`) and used first next time; the command's own
-port answering again forgets it. With every port refused the launch fails as *"The tunnel is up, but
-the server didn't answer"*, naming the ports tried, rather than as a reset connection; a forward that dies *while* the Administrator uses it (a session timing out, a
-dropped network) is reopened on its own, a bounded number of times, so the client can reconnect
+forwarded port) fails as *"The tunnel is up, but the server didn't answer"*, naming the port, rather
+than as a reset connection — after one knock, not five. The plugin writes that line around the moment
+it drops the connection, so the launcher gives it a moment (1.5 s) and reads every log the forward has
+had before deciding. **The port is the batch file's to set**: the launcher runs the tunnel command
+exactly as written and never tries another port (1.1.x re-pointed the command at 8443 / 8000 and
+remembered what answered; that is gone — the remote port a command names, `portNumber=<n>` or JSON
+`"portNumber":["<n>"]`, in the command or the batch file it runs, is now only read, for the tunnel log
+and the failure message). A forward that dies *while* the Administrator uses it (a session timing out,
+a dropped network) is reopened on its own, a bounded number of times, so the client can reconnect
 (`audit.log`: `tunnel.reopen`, `tunnel.exited`).
 
 A session can also end **the moment the launcher connects** — the plugin prints `Exiting session with
@@ -224,8 +220,9 @@ pane follows the row last clicked.
 
 The icon in the detail pane's header opens the **Connection icon** card: the built-in library in its
 four categories, **Yours** (imported images — PNG, JPG, GIF or BMP, dropped or browsed **several at a
-time**, each scaled to at most 128 px and stored as PNG through the sanitizing icon store), and a
-preview of the choice as the sidebar draws it. **Use for new connections** makes the chosen icon the
+time**, each scaled to at most 128 px and stored as PNG through the sanitizing icon store; **Remove
+image** takes the chosen one out of the library again, and every connection that showed it goes back
+to the default icon), and a preview of the choice as the sidebar draws it. **Use for new connections** makes the chosen icon the
 one every new connection starts with (`fx.defaultIcon` in `ui-prefs.properties`; the library's default
 until one is chosen) — *Reset to default* on any connection goes back to that same icon. A new
 connection also starts with **Auto-approve new certificates on**: its server's certificate is trusted

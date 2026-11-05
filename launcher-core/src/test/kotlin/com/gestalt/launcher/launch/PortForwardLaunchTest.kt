@@ -345,52 +345,6 @@ class PortForwardLaunchTest {
         }
     }
 
-    @Test
-    @DisplayName("the server side refuses the command's port: the engine's usual ports are tried, the one that answers is remembered and used first next time")
-    fun fallsBackToTheEnginesUsualPorts(@TempDir dir: Path) {
-        val base = "https://localhost:31065/"
-        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
-        val jarBytes = signedCoreJar(dir, ca)
-        val forward = PortAwareForward(answering = setOf(8443))
-        val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
-            logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
-            cacheDir = dir.resolve("tunnel-cache"),
-        )
-        val core = LauncherCore(
-            trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = TrustMode.PIN_KNOWN_SIGNERS,
-            cacheDir = dir.resolve("cache"), tunnels = tunnels, fetcherFactory = { forward.fetcher(responses(base, jarBytes)) },
-            serverLeafProbe = { error("not an https trust failure") }, sleeper = {},
-        )
-        val command = "aws ssm start-session --target mi-0123456789abcdef0 --document-name AWS-StartPortForwardingSession --parameters \"localPortNumber=31065,portNumber=8000\""
-        val conn = Connection(id = "t", name = "Forwarded", serverUrl = base, tunnelCommand = command)
-
-        val process = core.launch(conn)
-        try {
-            assertEquals(2, forward.started.size) { forward.started.toString() }
-            assertTrue(forward.started[0].contains("portNumber=8000")) { "the command's own port first" }
-            assertTrue(forward.started[1].contains("portNumber=8443")) { "then the engine's usual https port" }
-            assertFalse(forward.processes[0].isAlive) { "the refused forward was torn down before the next was opened" }
-            // (processes[1] is held for the Administrator — and released the moment the child JVM exits, which the
-            // stand-in client does within milliseconds, so its liveness is not asserted here.)
-            assertEquals(8443, tunnels.rememberedRemotePort("t"))
-            assertTrue(Files.readString(dir.resolve("tunnel-cache").resolve(com.gestalt.launcher.tunnel.TunnelManager.REMOTE_PORTS_FILE)).contains("8443"))
-        } finally {
-            process.destroyForcibly()
-            process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
-        }
-        await("the forward is released with the Administrator") { !forward.processes[1].isAlive }
-
-        // Next time: straight to 8443, no detour through the refused port.
-        val again = core.launch(conn)
-        try {
-            assertEquals(3, forward.started.size)
-            assertTrue(forward.started[2].contains("portNumber=8443"))
-        } finally {
-            again.destroyForcibly()
-            again.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
-        }
-    }
-
     /** A forward whose first [dying] sessions end the moment the launcher connects (the plugin's `Exiting session`), leaving the process alive on `pause`; later ones serve. */
     private class DyingForward(private val dying: Int, outdated: Boolean = true) {
         val processes = ArrayList<FakeTunnelProcess>()
@@ -424,7 +378,6 @@ class PortForwardLaunchTest {
         val forward = DyingForward(dying = 1)
         val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
             logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
-            cacheDir = dir.resolve("tunnel-cache"),
         )
         val core = LauncherCore(
             trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = TrustMode.PIN_KNOWN_SIGNERS,
@@ -449,7 +402,6 @@ class PortForwardLaunchTest {
         val forward = DyingForward(dying = Int.MAX_VALUE)
         val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
             logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
-            cacheDir = dir.resolve("tunnel-cache"),
         )
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val core = LauncherCore(trustStore = TrustStore.of(ca.cert), cacheDir = dir.resolve("cache"), tunnels = tunnels, fetcherFactory = { forward.fetcher(emptyMap()) }, sleeper = {})
@@ -465,42 +417,11 @@ class PortForwardLaunchTest {
     }
 
     @Test
-    @DisplayName("the refusal surfacing as a connect failure (as it does through an SSM forward) still falls back — and after one knock, not five")
-    fun refusalAsConnectFailureStillFallsBack(@TempDir dir: Path) {
-        val base = "https://localhost:31065/"
-        val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
-        val jarBytes = signedCoreJar(dir, ca)
-        val forward = PortAwareForward(answering = setOf(8443)) { ConnectException("Connection refused: connect") }
+    @DisplayName("the server side refuses the command's port: the launch fails naming that port after one knock, not five — no other port is tried, nothing is remembered")
+    fun refusedPortFailsAsThatAfterOneKnock(@TempDir dir: Path) {
+        val forward = PortAwareForward(answering = emptySet()) { ConnectException("Connection refused: connect") }
         val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
             logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
-            cacheDir = dir.resolve("tunnel-cache"),
-        )
-        val core = LauncherCore(
-            trustStore = TrustStore.of(ca.cert), signerPins = GestaltTrust.OFFICIAL_SIGNER_PINS, gateMode = TrustMode.PIN_KNOWN_SIGNERS,
-            cacheDir = dir.resolve("cache"), tunnels = tunnels, fetcherFactory = { forward.fetcher(responses(base, jarBytes)) },
-            serverLeafProbe = { error("not an https trust failure") }, sleeper = {},
-        )
-        val command = "aws ssm start-session --target mi-0123456789abcdef0 --document-name AWS-StartPortForwardingSession --parameters \"localPortNumber=31065,portNumber=8000\""
-        val conn = Connection(id = "t", name = "Forwarded", serverUrl = base, tunnelCommand = command)
-
-        val process = core.launch(conn)
-        try {
-            assertEquals(listOf(8000, 8443), forward.started.map { Regex("portNumber=(\\d+)").find(it)!!.groupValues[1].toInt() }) { "8000 refused → 8443" }
-            assertEquals(1, forward.fetches[8000]) { "the refusal is read after the first failed fetch; no further knocks: ${forward.fetches}" }
-            assertEquals(8443, tunnels.rememberedRemotePort("t"))
-        } finally {
-            process.destroyForcibly()
-            process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
-        }
-    }
-
-    @Test
-    @DisplayName("every usual port refused: the failure names the ports tried")
-    fun allPortsRefused(@TempDir dir: Path) {
-        val forward = PortAwareForward(answering = emptySet())
-        val tunnels = com.gestalt.launcher.tunnel.TunnelManager(
-            logDir = dir.resolve("logs"), starter = forward.starter, probe = forward.probe, sleeper = {}, timeoutMs = 5_000, clock = { 0L },
-            cacheDir = dir.resolve("tunnel-cache"),
         )
         val ca = TestArtifacts.selfSignedCa("CN=Pretend Root,O=Pretend CA,C=GB")
         val core = LauncherCore(trustStore = TrustStore.of(ca.cert), cacheDir = dir.resolve("cache"), tunnels = tunnels, fetcherFactory = { forward.fetcher(emptyMap()) }, sleeper = {})
@@ -509,15 +430,12 @@ class PortForwardLaunchTest {
 
         val ex = assertThrows(com.gestalt.launcher.tunnel.TunnelFailedException::class.java) { core.launch(conn) }
 
-        assertEquals(listOf(8000, 8443), forward.started.map { Regex("portNumber=(\\d+)").find(it)!!.groupValues[1].toInt() }) { "its own port, then the fallbacks not already tried" }
-        assertTrue(ex.message!!.contains("8000, 8443")) { ex.message }
+        assertEquals(listOf(8000), forward.started.map { Regex("portNumber=(\\d+)").find(it)!!.groupValues[1].toInt() }) { "the command's port, once; the batch file decides the port" }
+        assertEquals(1, forward.fetches[8000]) { "the refusal is read after the first failed fetch; no further knocks: ${forward.fetches}" }
+        assertTrue(ex.message!!.contains("on port 8000")) { ex.message }
+        assertTrue(ex.message!!.contains("Connection to destination port failed")) { ex.message }
         assertTrue(forward.processes.none { it.isAlive })
-        assertEquals(null, tunnels.rememberedRemotePort("t"))
-    }
-
-    private fun await(what: String, timeoutMs: Long = 10_000, cond: () -> Boolean) {
-        var waited = 0L
-        while (!cond() && waited < timeoutMs) { Thread.sleep(20); waited += 20 }
-        assertTrue(cond()) { "timed out waiting for: $what" }
+        assertFalse(tunnels.hasLiveTunnels())
+        assertTrue(Files.notExists(dir.resolve("tunnel-cache"))) { "no remembered port, no script copy" }
     }
 }

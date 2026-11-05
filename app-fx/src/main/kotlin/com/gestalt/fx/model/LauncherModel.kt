@@ -441,7 +441,6 @@ class LauncherModel(
         store.delete(id, persist = false)
         conn.username?.trim()?.takeIf { it.isNotEmpty() }?.let { user -> forgetPassword(id, user) }
         trustedCerts.forgetConnection(id)
-        runCatching { com.gestalt.launcher.tunnel.TunnelManager.shared.forgetConnection(id) } // the remembered remote port and any re-pointed script copies
         launches.remove(id)
         if (activeId.get() == id) select(null)
         schedulePersist()
@@ -463,6 +462,20 @@ class LauncherModel(
     fun setAutoApprove(id: String, on: Boolean) = applyToSaved(id) { it.copy(autoApproveCertificates = on) }
 
     fun setIcon(id: String, key: String) = applyToSaved(id) { it.copy(icon = key) }
+
+    /**
+     * An imported icon is gone from the library: every connection that showed it (and the draft, when
+     * it did) goes back to the default icon, as does the new-connection default when it was this one.
+     * Returns how many saved connections changed.
+     */
+    fun forgetIcon(key: String): Int {
+        val affected = store.list().filter { it.icon == key }
+        for (c in affected) store.update(c.copy(icon = Connection.DEFAULT_ICON_KEY), persist = false)
+        draft.get()?.let { d -> if (d.icon == key) draft.set(d.copy(icon = Connection.DEFAULT_ICON_KEY)) }
+        if (prefs.defaultIcon == key) prefs.defaultIcon = Connection.DEFAULT_ICON_KEY
+        if (affected.isNotEmpty()) { schedulePersist(); refresh() }
+        return affected.size
+    }
 
     fun rename(id: String, name: String) {
         val conn = store.get(id) ?: return

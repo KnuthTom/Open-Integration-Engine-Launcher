@@ -52,7 +52,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     /** Notices go to the detail pane's bottom bar. */
     private val notice: NoticeStrip get() = detail.notice
     private val certificates = CertificatesDialog(model, modal) { detail.refreshCertificates() }
-    private val iconDialog = IconDialog(modal, icons, { stage }, { model.prefs.defaultIcon }, { model.prefs.defaultIcon = it })
+    private val iconDialog = IconDialog(modal, icons, { stage }, { model.prefs.defaultIcon }, { model.prefs.defaultIcon = it }, { key -> removeCustomIcon(key) })
     private val paletteDialog = PaletteDialog(modal, model)
     val scene: Scene
 
@@ -384,6 +384,13 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
         val id = model.activeId.get() ?: return
         val conn = model.store.get(id) ?: return
         iconDialog.show(model.draft.get()?.name ?: conn.name, conn.icon) { key -> model.setIcon(id, key) }
+    }
+
+    /** Delete an imported icon's file and row, then point every connection that used it at the default icon. */
+    private fun removeCustomIcon(key: String): Int {
+        val id = CustomIconStore.idFromKey(key) ?: return 0
+        runCatching { icons?.delete(id) }
+        return model.forgetIcon(key) // the draft and the rows follow, so the header and the sidebar redraw
     }
 
     override fun setAutoApprove(on: Boolean) {

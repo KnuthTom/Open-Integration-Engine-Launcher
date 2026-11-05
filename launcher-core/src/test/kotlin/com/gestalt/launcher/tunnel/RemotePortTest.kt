@@ -9,7 +9,6 @@ package com.gestalt.launcher.tunnel
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -31,62 +30,29 @@ class RemotePortTest {
     }
 
     @Test
-    @DisplayName("the JSON form of --parameters is read and re-pointed too — quotes escaped as a batch file has them, or bare, spaces allowed; localPortNumber never matches")
-    fun readsTheJsonForm(@TempDir dir: Path) {
+    @DisplayName("the JSON form of --parameters is read too — quotes escaped as a batch file has them, or bare, spaces allowed; localPortNumber never matches")
+    fun readsTheJsonForm() {
         val escaped = """aws ssm start-session --target mi-0123456789abcdef0 --document-name AWS-StartPortForwardingSession --parameters "{\"portNumber\":[\"8000\"],\"localPortNumber\":[\"31074\"]}""""
         assertEquals(8000, RemotePort.of(escaped))
         val bare = """aws ssm start-session --parameters '{"localPortNumber":["31074"],"portNumber":["8443"]}'"""
         assertEquals(8443, RemotePort.of(bare))
         assertEquals(8000, RemotePort.of("""--parameters '{ "localPortNumber" : [ "31074" ], "portNumber" : [ "8000" ] }'"""))
         assertNull(RemotePort.of("""--parameters '{"localPortNumber":["31074"]}'""")) { "no remote port named" }
-
-        val r = RemotePort.repointed(escaped, 8443, "c1", dir.resolve("cache"))!!
-        assertEquals(8000, r.original)
-        assertTrue(r.command.contains("""\"portNumber\":[\"8443\"]""")) { r.command }
-        assertTrue(r.command.contains("31074")) { "the local port is untouched: ${r.command}" }
-        assertNull(RemotePort.repointed(bare, 8443, "c1", dir.resolve("cache"))) { "already that port" }
     }
 
     @Test
-    @DisplayName("an inline command is re-pointed in place; the same port is no change")
-    fun repointsAnInlineCommand(@TempDir dir: Path) {
-        val r = RemotePort.repointed(inline, 8443, "c1", dir.resolve("cache"))!!
-        assertEquals(inline.replace("portNumber=8000", "portNumber=8443"), r.command)
-        assertEquals(8000, r.original)
-        assertNull(r.workingDir)
-        assertNull(RemotePort.repointed(inline, 8000, "c1", dir.resolve("cache"))) { "already that port" }
-        assertNull(RemotePort.repointed("forward.bat", 8443, "c1", dir.resolve("cache"))) { "nothing to change" }
-    }
-
-    @Test
-    @DisplayName("a batch file is re-pointed as a copy in the cache dir, run in the ORIGINAL file's folder; the user's file is untouched")
-    fun repointsAScriptAsACopy(@TempDir dir: Path) {
+    @DisplayName("a batch file's port is read from the file (quotes around the path allowed); the file is only ever read")
+    fun readsFromAScript(@TempDir dir: Path) {
         val scripts = Files.createDirectories(dir.resolve("scripts"))
         val bat = scripts.resolve("forward.bat")
         val content = "@echo off\r\ncd /d %~dp0\r\n$inline\r\n"
         Files.writeString(bat, content)
         assertEquals(8000, RemotePort.of(bat.toString()))
         assertEquals(8000, RemotePort.of("\"$bat\"")) { "quotes allowed" }
-
-        val cache = dir.resolve("cache").resolve("tunnel")
-        val r = RemotePort.repointed(bat.toString(), 8443, "c1", cache)!!
-        val copy = Path.of(r.command)
-        assertEquals(cache, copy.parent)
-        assertEquals("c1-8443.bat", copy.fileName.toString())
-        val folder = scripts.toString() + java.io.File.separator
-        assertEquals(content.replace("portNumber=8000", "portNumber=8443").replace("%~dp0", folder), Files.readString(copy)) { "the number changed, and %~dp0 spelled out as the original's folder" }
-        val stamp = Files.getLastModifiedTime(copy)
-        Thread.sleep(20)
-        RemotePort.repointed(bat.toString(), 8443, "c1", cache)
-        assertEquals(stamp, Files.getLastModifiedTime(copy)) { "an identical copy is left alone (the forward may be running it)" }
-        RemotePort.forget("c1", cache)
-        assertTrue(Files.notExists(copy)) { "forgotten with the connection" }
-        assertEquals(scripts, r.workingDir) { "runs where the original lives, so its relative paths work" }
-        assertEquals(8000, r.original)
         assertEquals(content, Files.readString(bat)) { "the user's file is never modified" }
         assertNotNull(RemotePort.scriptOf(bat.toString()))
         assertNull(RemotePort.scriptOf(scripts.resolve("missing.bat").toString()))
-        assertNull(RemotePort.scriptOf("forward.bat")) { "relative: not a script the launcher would copy" }
-        assertTrue(RemotePort.FALLBACKS == listOf(8443, 8000))
+        assertNull(RemotePort.scriptOf("forward.bat")) { "relative: not a script the launcher would read" }
+        assertNull(RemotePort.of(scripts.resolve("missing.bat").toString())) { "a path to nothing names no port" }
     }
 }

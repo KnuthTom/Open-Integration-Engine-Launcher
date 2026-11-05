@@ -317,13 +317,10 @@ open class LauncherCore(
      */
     open fun launch(connection: Connection, onPhase: (LaunchPhase) -> Unit = {}, autoLogin: AutoLogin? = null): Process {
         try {
-            // The forward's remote port: the one that answered last time (if it was not the command's own),
-            // else as the command says. When the server side refuses it, the engine's usual ports are tried.
-            var remotePort: Int? = tunnels.rememberedRemotePort(connection.id)
-            val refusedPorts = LinkedHashSet<Int>()
-        var sessionReopens = 0
+            var sessionReopens = 0
             while (true) {
-                val lease = tunnels.acquire(connection, remotePort) { onPhase(LaunchPhase.Tunneling) }
+                // The forward runs the tunnel command exactly as written: the port it names is the user's to set.
+                val lease = tunnels.acquire(connection) { onPhase(LaunchPhase.Tunneling) }
                 try {
                     val plan = prepareLaunch(connection, onPhase)
                     checkNotCancelled()
@@ -352,23 +349,18 @@ open class LauncherCore(
                     // process the launcher started exits within a second and a child JVM is the real client. Track
                     // the tree, so Running, close-after-launch and the port-forward follow the client, not the stub.
                     val process = ProcessTree.track(builder.start(), fingerprint = listOf(plan.mainClass) + plan.appArgs.take(1))
-                    if (lease != null) {
-                        process.onExit().thenRun { runCatching { lease.close() } }
-                        // Remember the remote port that answered when it is not the command's own (and drop a
-                        // stale override when the command's own port is what answered).
-                        val answered = lease.remotePort
-                        if (lease.managed && answered != null) tunnels.rememberRemotePort(connection.id, answered.takeIf { it != tunnels.commandRemotePort(connection) })
-                    }
+                    if (lease != null) process.onExit().thenRun { runCatching { lease.close() } }
                     onPhase(LaunchPhase.Running)
                     return process
                 } catch (t: Throwable) {
                     // A fetch that died through a forward the launcher opened: if the forward's own log says the
-                    // server side refused the destination port, that — not "connection reset" — is the failure,
-                    // and the engine's usual ports are worth a try. Asked before the lease goes, since releasing
-                    // the last lease tears the forward (and its log) down; and given a moment, since the plugin
-                    // writes the line around the time it drops the connection, not strictly before. Asked whatever
-                    // the exception looks like: through a forward the server side's refusal surfaces as a connect
-                    // failure too (1.1.3 skipped the question for those and lost the fallback).
+                    // server side refused the destination port, that — not "connection reset" — is the failure.
+                    // Asked before the lease goes, since releasing the last lease tears the forward (and its log)
+                    // down; and given a moment, since the plugin writes the line around the time it drops the
+                    // connection, not strictly before. Asked whatever the exception looks like: through a forward
+                    // the server side's refusal surfaces as a connect failure too. The launcher does not try other
+                    // ports: the port the tunnel command names is the user's to set (an earlier build re-pointed
+                    // the command at 8443 / 8000; that is gone).
                     // The forward's session ended under the launcher (the plugin's `Exiting session`), so every
                     // connect was refused — nothing the server did. Reopen once and prepare again; a session that
                     // ends again the moment the launcher connects is reported as that, with the plugin's own
@@ -404,22 +396,12 @@ open class LauncherCore(
                         )
                     }
                     if (!refusedBeyondTheForward) throw t
-                    // Another Administrator still holds this forward: it cannot be re-pointed under them.
-                    val heldByOthers = tunnels.holders(connection.id) > 0
-                    // Progress gate: a port counts once; re-acquiring a shared forward that keeps refusing must not loop.
-                    val newlyRefused = forwardedTo != null && refusedPorts.add(forwardedTo)
-                    val next = tunnels.nextRemotePort(connection, refusedPorts)
-                    if (newlyRefused && next != null && !heldByOthers) {
-                        AuditLog.event("tunnel.retryPort", "connection" to connection.id, "refused" to forwardedTo, "next" to next)
-                        tunnels.awaitPortFree(connection)
-                        remotePort = next
-                        continue
-                    }
-                    val ports = if (refusedPorts.isEmpty()) "the forwarded port" else "port${if (refusedPorts.size > 1) "s" else ""} ${refusedPorts.joinToString(", ")}"
+                    AuditLog.event("tunnel.destinationRefused", "connection" to connection.id, "remotePort" to forwardedTo)
+                    val where = if (forwardedTo != null) "port $forwardedTo" else "the forwarded port"
                     throw TunnelFailedException(
-                        "the port-forward opened and accepted the connection, but nothing answered on the server side on $ports " +
+                        "the port-forward opened and accepted the connection, but nothing answered on the server side on $where " +
                             "(the session reported \"Connection to destination port failed\"): the engine is not running there, " +
-                            "or it listens on a port the launcher did not try",
+                            "or it listens on another port — the tunnel command names the port, so change it there",
                         t,
                     )
                 }
@@ -486,7 +468,7 @@ open class LauncherCore(
             } catch (e: Exception) {
                 if (attempt >= maxAttempts || !isTransientConnect(e)) throw e
                 // No point knocking again on a forward whose session has ended, or whose server side has
-                // already refused the port: the launch loop reopens or re-points it now, not after every attempt
+                // already refused the port: the launch loop reopens it or reports the refusal now, not after every attempt
                 // and its backoff.
                 if (tunnels.sessionEnded(connection.id) || tunnels.destinationRefused(connection.id)) throw e
                 sleeper((250L * attempt).coerceAtMost(2_000L))

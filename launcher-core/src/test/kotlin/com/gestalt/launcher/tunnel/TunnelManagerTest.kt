@@ -87,7 +87,7 @@ class TunnelManagerTest {
         clock: () -> Long = { 0L },
         timeoutMs: Long = 60_000,
         sessionPollMs: Long = 50,
-    ) = TunnelManager(logDir = dir, starter = starter, probe = probe, sleeper = {}, timeoutMs = timeoutMs, clock = clock, cacheDir = dir.resolve("tunnel-cache"), sessionPollMs = sessionPollMs)
+    ) = TunnelManager(logDir = dir, starter = starter, probe = probe, sleeper = {}, timeoutMs = timeoutMs, clock = clock, sessionPollMs = sessionPollMs)
 
     @Test
     @DisplayName("no tunnel command, or the port-forward switched off: nothing to acquire, nothing started")
@@ -323,7 +323,7 @@ class TunnelManagerTest {
             now += ms; polls++
             if (polls == 3) starter.logs.first()!!.let { Files.writeString(it, Files.readString(it) + "\nConnection to destination port failed, check SSM Agent logs.\n") }
         }
-        val m = TunnelManager(logDir = dir, starter = starter, probe = { _, _ -> starter.processes.any { it.isAlive } }, sleeper = sleeper, timeoutMs = 60_000, clock = { now }, cacheDir = dir.resolve("tunnel-cache"))
+        val m = TunnelManager(logDir = dir, starter = starter, probe = { _, _ -> starter.processes.any { it.isAlive } }, sleeper = sleeper, timeoutMs = 60_000, clock = { now })
         val lease = m.acquire(connection())!!
         assertFalse(m.destinationRefused("c1")) { "nothing written yet, and no wait asked for" }
         polls = 0
@@ -344,57 +344,27 @@ class TunnelManagerTest {
     }
 
     @Test
-    @DisplayName("a forward opened at another remote port runs the command re-pointed at it — a batch file as a copy, run in its own folder — and the lease and log say so")
-    fun remotePortRepointing(@TempDir dir: Path) {
-        val starter = Scripted()
-        val m = manager(dir, starter, probeAfter(refusals = 1))
+    @DisplayName("the forward runs the command exactly as written — a batch file in its own folder — and the lease reports the remote port the command names, read only")
+    fun commandRunsAsWritten(@TempDir dir: Path) {
         val inline = "aws ssm start-session --target mi-0123456789abcdef0 --document-name AWS-StartPortForwardingSession --parameters \"localPortNumber=31065,portNumber=8000\""
-        assertEquals(8000, m.commandRemotePort(connection(command = inline)))
-        assertNull(m.commandRemotePort(connection(command = "forward.bat")))
-        assertEquals(8443, m.nextRemotePort(connection(command = inline), setOf(8000)))
-        assertEquals(8000, m.nextRemotePort(connection(command = inline), emptySet()))
-        assertNull(m.nextRemotePort(connection(command = inline), setOf(8000, 8443)))
-        assertNull(m.nextRemotePort(connection(command = "forward.bat"), emptySet())) { "no port the launcher could change" }
-
-        val lease = m.acquire(connection(command = inline), remotePort = 8443)!!
-        assertEquals(8443, lease.remotePort)
-        assertTrue(starter.started.single().last().contains("portNumber=8443")) { starter.started.toString() }
-        assertTrue(Files.readString(starter.logs.single()!!).contains("remote port 8443 instead of 8000"))
+        val starter = Scripted()
+        val lease = manager(dir, starter, probeAfter(refusals = 1)).acquire(connection(command = inline))!!
+        assertEquals(8000, lease.remotePort)
+        assertTrue(starter.started.single().last().contains("portNumber=8000")) { starter.started.toString() }
         lease.close()
 
         val scripts = Files.createDirectories(dir.resolve("scripts"))
         val bat = scripts.resolve("forward.bat")
-        Files.writeString(bat, "@echo off\r\n$inline\r\n")
+        val content = "@echo off\r\n$inline\r\n"
+        Files.writeString(bat, content)
         val starter2 = Scripted()
-        val m2 = manager(dir, starter2, probeAfter(refusals = 1))
-        val lease2 = m2.acquire(connection(command = bat.toString()), remotePort = 8443)!!
-        val ran = starter2.started.single().last()
-        assertEquals(dir.resolve("tunnel-cache").resolve("c1-8443.bat").toString(), ran)
-        assertTrue(Files.readString(Path.of(ran)).contains("portNumber=8443"))
-        assertEquals(scripts, starter2.dirs.single()) { "the copy runs in the original's folder" }
-        assertEquals(8443, lease2.remotePort)
-        lease2.close()
-
-        val starter3 = Scripted()
-        val plain = manager(dir, starter3, probeAfter(refusals = 1)).acquire(connection(command = bat.toString()))!!
-        assertEquals(8000, plain.remotePort) { "no override: the command's own port, run as it is" }
-        assertEquals(bat.toString(), starter3.started.single().last())
-        plain.close()
-    }
-
-    @Test
-    @DisplayName("the remote port that answered is remembered per connection in the cache dir, survives a new manager, and is forgotten on request")
-    fun remotePortMemory(@TempDir dir: Path) {
-        val m = manager(dir, Scripted(), { _, _ -> false })
-        assertNull(m.rememberedRemotePort("c1"))
-        m.rememberRemotePort("c1", 8443)
-        assertEquals(8443, m.rememberedRemotePort("c1"))
-        assertEquals(8443, manager(dir, Scripted(), { _, _ -> false }).rememberedRemotePort("c1")) { "persisted" }
-        m.rememberRemotePort("c1", null)
-        assertNull(m.rememberedRemotePort("c1"))
-        assertNull(manager(dir, Scripted(), { _, _ -> false }).rememberedRemotePort("c1"))
-        Files.writeString(dir.resolve("tunnel-cache").resolve(TunnelManager.REMOTE_PORTS_FILE), "{ not json")
-        assertNull(manager(dir, Scripted(), { _, _ -> false }).rememberedRemotePort("c1")) { "a corrupt file is ignored" }
+        val fromScript = manager(dir, starter2, probeAfter(refusals = 1)).acquire(connection(command = bat.toString()))!!
+        assertEquals(bat.toString(), starter2.started.single().last()) { "the user's file itself, no copy" }
+        assertEquals(scripts, starter2.dirs.single()) { "run in its own folder" }
+        assertEquals(8000, fromScript.remotePort) { "the port the file names, read from it" }
+        assertEquals(content, Files.readString(bat)) { "never edited" }
+        assertTrue(Files.notExists(dir.resolve("tunnel-cache"))) { "nothing is written beside the forward" }
+        fromScript.close()
     }
 
     @Test

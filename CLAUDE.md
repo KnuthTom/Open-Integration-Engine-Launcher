@@ -28,7 +28,9 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
 - **Next (unreleased):** notices in the detail pane's bottom bar (no floating toast; the launch
   notice's X cancels), sidebar multi-select with drag / Move-to of the whole selection, icon card
   imports several images and sets the default icon for new connections, new connections start with
-  auto-approve on, the Colors card as swatch rows with Cancel.
+  auto-approve on, the Colors card as swatch rows with Cancel; the 8443/8000 remote-port fallback is
+  **removed** (the tunnel command runs as written; a refused port fails naming it); custom icons can be
+  removed from the icon card.
 - **330+ tests pass** (`./gradlew build`).
 
 ## Stack & modules

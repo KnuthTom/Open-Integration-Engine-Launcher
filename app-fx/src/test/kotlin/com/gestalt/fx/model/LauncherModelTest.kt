@@ -273,6 +273,28 @@ class LauncherModelTest {
     }
 
     @Test
+    @DisplayName("an imported icon taken out of the library: the connections that showed it, the draft and the new-connection default go back to the default icon")
+    fun forgetIcon(@TempDir dir: Path) {
+        val m = model(dir)
+        val a = m.newConnection(null); m.setIcon(a.id, "custom:abc")
+        val b = m.newConnection(null); m.setIcon(b.id, "custom:abc")
+        val c = m.newConnection(null); m.setIcon(c.id, "flask-conical")
+        m.prefs.defaultIcon = "custom:abc"
+        m.select(a.id)
+        m.updateDraft { it.copy(heapSize = "2g") } // an unsaved edit that must survive
+
+        assertEquals(2, m.forgetIcon("custom:abc"))
+
+        assertEquals(Connection.DEFAULT_ICON_KEY, m.store.get(a.id)!!.icon)
+        assertEquals(Connection.DEFAULT_ICON_KEY, m.store.get(b.id)!!.icon)
+        assertEquals("flask-conical", m.store.get(c.id)!!.icon) { "other icons untouched" }
+        assertEquals(Connection.DEFAULT_ICON_KEY, m.draft.get()!!.icon) { "the open form follows" }
+        assertEquals("2g", m.draft.get()!!.heapSize)
+        assertEquals(Connection.DEFAULT_ICON_KEY, m.prefs.defaultIcon) { "new connections no longer start with a missing image" }
+        assertEquals(0, m.forgetIcon("custom:abc")) { "nothing left to change" }
+    }
+
+    @Test
     @DisplayName("move up / move down step a row among its siblings, stop at the ends, and switch to manual order")
     fun moveUpDown(@TempDir dir: Path) {
         val m = model(dir)
