@@ -126,19 +126,26 @@ class IconDialog(
             children += preview.apply { VBox.setMargin(this, Insets(14.0, 0.0, 0.0, 0.0)) }
             children += tabsHolder.apply { VBox.setMargin(this, Insets(16.0, 0.0, 0.0, 0.0)) }
             children += tilesScroll.apply { VBox.setMargin(this, Insets(10.0, 0.0, 0.0, 0.0)) }
-            children += HBox(8.0).apply {
+            // The library actions wrap onto a second line when the card is narrow; no button ever gives up
+            // letters to fit (a squeezed JavaFX button shows "…" for its label).
+            val libraryActions = FlowPane(8.0, 6.0).apply {
                 alignment = Pos.CENTER_LEFT
-                padding = Insets(20.0, 0.0, 0.0, 0.0)
+                minWidth = 0.0
+                HBox.setHgrow(this, Priority.ALWAYS)
                 children += Controls.button("Reset to default", Controls.ButtonKind.Ghost) { pending = defaultIcon(); tab = tabFor(pending); render() }
                 children += defaultHolder
                 children += removeButton
-                children += Controls.spacer()
+            }
+            children += HBox(8.0).apply {
+                alignment = Pos.BOTTOM_LEFT
+                padding = Insets(20.0, 0.0, 0.0, 0.0)
+                children += libraryActions
                 children += Controls.button("Cancel", Controls.ButtonKind.Secondary) { modal.close() }
                 children += Controls.button("Apply", Controls.ButtonKind.Primary) { val k = pending; modal.close(); this@IconDialog.onApply(k) }
             }
         }
         render()
-        modal.show(card, 480.0, escape = { modal.close() }, enter = { val k = pending; modal.close(); this.onApply(k) })
+        modal.show(card, 560.0, escape = { modal.close() }, enter = { val k = pending; modal.close(); this.onApply(k) })
     }
 
     /** The tab that holds [key]: "Yours" for an imported image, else its library category (Healthcare when unknown). */

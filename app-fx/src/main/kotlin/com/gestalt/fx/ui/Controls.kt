@@ -37,6 +37,8 @@ object Controls {
             styleClass.addAll("btn", kind.styleClass)
             if (small) styleClass += "sm"
             graphic = icon
+            // Never squeezed to "…": a button's label is its meaning. A row short of room wraps or overflows instead.
+            minWidth = Region.USE_PREF_SIZE
             setOnAction { onAction() }
         }
 
