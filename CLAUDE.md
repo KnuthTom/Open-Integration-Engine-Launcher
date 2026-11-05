@@ -13,7 +13,7 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
 > Not affiliated with / endorsed by the OIE project, NextGen Healthcare, or Mirth Connect. Those names
 > are used descriptively. Originally built by **Gestalt Diagnostics**, released to the community.
 
-## Status (2026-11-04)
+## Status (2026-11-05)
 - **Repo (source of truth):** `github.com/KnuthTom/Open-Integration-Engine-Launcher`, branch `main` —
   currently **PRIVATE** (flip to public when ready).
 - Default branding is **vendor-neutral** (`Branding.Default`); the original Gestalt identity is an
@@ -22,15 +22,15 @@ publishes. **Clean-room**: no Mirth/NextGen source, no bundled proprietary clien
 - Release binaries are **UNSIGNED** (community). A **v1.0.1** Windows MSI (the Compose UI) exists;
   **v1.1.x** are the first releases of the JavaFX UI (`:app-fx`), built with `./gradlew :app-fx:packageMsi`;
   bump `gestaltVersion` before every MSI — Windows Installer will not upgrade a product over the same version.
-- **1.1.5** (JavaFX UI): port-forward resilience (refused-port fallback, sessions that end under the
-  launcher, `pause`-parked scripts), the shared jar pool, full export/import round trip (trust never
-  from a file), Windows scaling hard-wired, launcher colours, Quit, branded Windows process names.
-- **Next (unreleased):** notices in the detail pane's bottom bar (no floating toast; the launch
-  notice's X cancels), sidebar multi-select with drag / Move-to of the whole selection, icon card
-  imports several images and sets the default icon for new connections, new connections start with
-  auto-approve on, the Colors card as swatch rows with Cancel; the 8443/8000 remote-port fallback is
-  **removed** (the tunnel command runs as written; a refused port fails naming it); custom icons can be
-  removed from the icon card.
+- **1.1.5** (JavaFX UI): port-forward resilience (sessions that end under the launcher, `pause`-parked
+  scripts), the shared jar pool, full export/import round trip (trust never from a file), Windows
+  scaling hard-wired, launcher colours, Quit, branded Windows process names.
+- **1.1.6**: notices in the detail pane's bottom bar (no floating toast; the launch notice's X
+  cancels), sidebar multi-select with drag / Move-to of the whole selection and no sideways scrolling,
+  icon card imports several images, sets the default icon for new connections and removes images, new
+  connections start with auto-approve on, the Colors card as swatch rows with Cancel, buttons never
+  squeezed to "…"; the 8443/8000 remote-port fallback is **removed** (the tunnel command runs as
+  written; a refused port fails naming it).
 - **330+ tests pass** (`./gradlew build`).
 
 ## Stack & modules
