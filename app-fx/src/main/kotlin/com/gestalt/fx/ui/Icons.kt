@@ -14,7 +14,6 @@ import javafx.scene.shape.Rectangle
 import javafx.scene.shape.SVGPath
 import javafx.scene.shape.StrokeLineCap
 import javafx.scene.shape.StrokeLineJoin
-import javafx.scene.shape.StrokeType
 import javafx.scene.transform.Scale
 
 /**
@@ -40,46 +39,6 @@ object Icons {
                 strokeLineJoin = StrokeLineJoin.ROUND
                 styleClass += "glyph"
                 style = "-fx-stroke: $color;"
-            }
-        }
-        return boxed(group, size)
-    }
-
-    /**
-     * The "change icon" badge: a SOLID pencil. The Lucide outline pencil is two thin strokes that turn
-     * into a smudge inside a 20 px badge; two filled shapes (body with its point, separate cap) read as
-     * a pencil down to 12 px. Own geometry on the same 24-unit grid.
-     */
-    fun pencilBadge(size: Double = 14.0, color: String = "-text", halo: String? = null): Node = filled(size, color, halo, PENCIL_BODY, PENCIL_CAP)
-
-    /** A diagonal band whose square bottom-left corner is the point. */
-    private const val PENCIL_BODY = "M3 21 L3 16.6 L15.6 4 L20 8.4 L7.4 21 Z"
-    /** The cap, a gap away from the body along the same diagonal. */
-    private const val PENCIL_CAP = "M16.6 3 L21 7.4 L22.4 6 L18 1.6 Z"
-
-    /** Filled shapes; with [halo], each is first drawn ~1 px wider in that colour so the glyph stays legible over whatever sits beneath it. */
-    private fun filled(size: Double, color: String, halo: String?, vararg paths: String): Node {
-        val group = Group()
-        group.children += Rectangle(0.0, 0.0, 24.0, 24.0).apply { fill = Color.TRANSPARENT; stroke = null; isMouseTransparent = true }
-        if (halo != null) {
-            for (d in paths) {
-                group.children += SVGPath().apply {
-                    content = d
-                    strokeType = StrokeType.OUTSIDE
-                    strokeWidth = 2.4
-                    strokeLineJoin = StrokeLineJoin.ROUND
-                    isMouseTransparent = true
-                    styleClass += "glyph-halo"
-                    style = "-fx-fill: $halo; -fx-stroke: $halo;"
-                }
-            }
-        }
-        for (d in paths) {
-            group.children += SVGPath().apply {
-                content = d
-                stroke = null
-                styleClass += "glyph-filled"
-                style = "-fx-fill: $color;"
             }
         }
         return boxed(group, size)

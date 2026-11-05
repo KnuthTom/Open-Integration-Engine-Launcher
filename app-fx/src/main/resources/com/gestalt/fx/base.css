@@ -120,34 +120,21 @@
 .detail-header { -fx-padding: 12 24 12 24; -fx-spacing: 14; -fx-border-color: transparent transparent -border transparent; -fx-border-width: 0 0 1 0; -fx-alignment: center-left; }
 .detail-header.narrow { -fx-padding: 12 16 12 16; }
 
+/* The connection's icon in the header, alone: no tile, no border, no pencil — it opens the icon library;
+   a soft plate under it on hover says so. */
 .header-icon-button {
-    -fx-background-color: -surface-raised;
+    -fx-background-color: transparent;
     -fx-background-insets: 0;
-    -fx-background-radius: 6;
-    -fx-border-color: -border;
-    -fx-border-radius: 6;
-    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
     -fx-padding: 0;
     -fx-min-width: 40; -fx-pref-width: 40; -fx-max-width: 40;
     -fx-min-height: 40; -fx-pref-height: 40; -fx-max-height: 40;
     -fx-cursor: hand;
 }
-.header-icon-button:hover { -fx-border-color: -accent; -fx-border-width: 2; -fx-border-insets: -1; }
-/* The change-icon pencil: a bare glyph in the tile's bottom-right corner — no disc, no border of its own
-   (a 1 px circle over the tile's border was two curves fighting at fractional DPI). A soft rounded
-   plate appears under it on hover only. */
-.header-pencil {
-    -fx-background-color: transparent;
-    -fx-background-insets: 0;
-    -fx-background-radius: 5;
-    -fx-border-color: transparent;
-    -fx-border-width: 0;
-    -fx-padding: 0;
-    -fx-min-width: 16; -fx-pref-width: 16; -fx-max-width: 16;
-    -fx-min-height: 16; -fx-pref-height: 16; -fx-max-height: 16;
-    -fx-cursor: hand;
-}
-.header-pencil:hover { -fx-background-color: -hover; }
+.header-icon-button:hover { -fx-background-color: -hover-strong; }
+.header-icon-button:focused { -fx-border-color: -focus-ring; -fx-border-width: 1; -fx-border-radius: 8; -fx-border-insets: 0; }
 
 .name-field {
     -fx-font-size: 22px;
@@ -383,6 +370,8 @@
     -fx-effect: dropshadow(gaussian, -shadow, 40, 0, 0, 16);
 }
 .toast .toast-title { -fx-font-weight: bold; }
+.toast .toast-close { -fx-min-width: 22; -fx-pref-width: 22; -fx-max-width: 22; -fx-min-height: 22; -fx-pref-height: 22; -fx-max-height: 22; -fx-opacity: 0.7; }
+.toast .toast-close:hover { -fx-opacity: 1; }
 .toast .toast-sub { -fx-font-size: 12px; -fx-text-fill: -text-muted; }
 /* The launch toast's progress bar: a thin track that fills jar by jar (indeterminate until the count is known). */
 .toast .toast-bar { -fx-pref-height: 6; -fx-min-height: 6; -fx-max-height: 6; -fx-padding: 0; -fx-background-insets: 0; }

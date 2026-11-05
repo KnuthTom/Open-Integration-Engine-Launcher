@@ -246,7 +246,9 @@ Administrator sets them itself). The client log header records every option that
 
 A first launch pulls every jar through the connection (minutes over an SSM forward); the launch toast
 carries a progress bar that fills jar by jar, and the Launch button counts them, so a long download
-never looks like a hang.
+never looks like a hang. Every toast has an **X**: it closes the toast, and on a launch still being
+prepared it **cancels the launch** (the forward it opened is released); clicking the toast's body only
+hides it.
 
 ## Sign-in (auto-login)
 

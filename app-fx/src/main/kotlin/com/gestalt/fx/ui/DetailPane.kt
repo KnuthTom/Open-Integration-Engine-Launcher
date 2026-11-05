@@ -151,17 +151,11 @@ class DetailPane(private val model: LauncherModel, private val host: DetailActio
 
     init {
         // --- header ---
-        val iconHolder = StackPane().apply {
-            children += iconButton
-            // The change-icon pencil: a bare glyph tucked into the tile's bottom-right corner — no disc,
-            // no border of its own — haloed in the tile colour so it stays legible over the icon's ink.
-            val pencil = Button().apply { styleClass += "header-pencil"; graphic = Icons.pencilBadge(11.0, "-text", halo = "-surface-raised"); tooltip = javafx.scene.control.Tooltip("Change icon"); setOnAction { host.changeIcon() } }
-            children += pencil
-            StackPane.setAlignment(pencil, Pos.BOTTOM_RIGHT)
-            StackPane.setMargin(pencil, Insets(0.0, -1.0, -1.0, 0.0))
+        // The connection's icon, alone — no tile border, no pencil: clicking it opens the icon library.
+        val iconHolder = StackPane(iconButton).apply {
             minWidth = 40.0; prefWidth = 40.0; maxWidth = 40.0; minHeight = 40.0; prefHeight = 40.0; maxHeight = 40.0
         }
-        iconButton.setOnAction { host.changeIcon() } // the tile is the connection's icon, not a second Launch: clicking it changes the icon, like the pencil
+        iconButton.setOnAction { host.changeIcon() }
         iconButton.tooltip = javafx.scene.control.Tooltip("Change icon")
         val sub = HBox(Icons.glyph("folder", 12.0), pathLabel, Label("·"), lastLabel).apply { styleClass += "header-sub" }
         val titles = VBox(4.0, nameField, sub).apply { minWidth = 0.0; HBox.setHgrow(this, Priority.ALWAYS) }

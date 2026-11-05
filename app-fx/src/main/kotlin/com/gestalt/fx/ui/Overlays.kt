@@ -122,7 +122,11 @@ class ToastHost(private val root: StackPane) {
     private var bar: ProgressBar? = null
     private var sub: Label? = null
 
-    fun show(title: String, detail: String?, kind: Kind, millis: Long = 3400) {
+    /**
+     * Show a toast. Every toast carries an X: it closes the toast, and when [onClose] is given it runs
+     * that first — a launch toast's X cancels the launch (tooltip [closeTip]). Clicking the body only hides.
+     */
+    fun show(title: String, detail: String?, kind: Kind, millis: Long = 3400, closeTip: String = "Close", onClose: (() -> Unit)? = null) {
         dismiss()
         val icon: Node = when (kind) {
             Kind.Progress -> Icons.glyph("loader-circle", 16.0, "-text-muted").also { spin(it) }
@@ -141,7 +145,12 @@ class ToastHost(private val root: StackPane) {
         }
         bar = progressBar
         sub = subLabel
-        val toast = HBox(icon, text).apply {
+        HBox.setHgrow(text, javafx.scene.layout.Priority.ALWAYS)
+        val close = Controls.iconButton("x", closeTip, 13.0) { onClose?.invoke(); dismiss() }.apply {
+            styleClass += "toast-close"
+            setOnMouseClicked { it.consume() } // the body's click-to-hide must not double up on the X
+        }
+        val toast = HBox(icon, text, close).apply {
             styleClass += "toast"
             isPickOnBounds = false
             maxWidth = 380.0

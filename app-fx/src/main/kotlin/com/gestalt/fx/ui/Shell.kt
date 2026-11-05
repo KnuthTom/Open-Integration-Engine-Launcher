@@ -172,7 +172,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
 
     private fun startLaunch(id: String) {
         val conn = model.store.get(id) ?: return
-        toast.show("Launching ${conn.name}", conn.serverUrl, ToastHost.Kind.Progress)
+        toast.show("Launching ${conn.name}", conn.serverUrl, ToastHost.Kind.Progress, closeTip = "Cancel this launch", onClose = { model.cancelLaunch(id) })
         launchToastFor = id
         model.launch(id)
     }
@@ -361,7 +361,7 @@ class Shell(private val model: LauncherModel, private val stage: Stage, private 
     }
 
     override fun saveActive() {
-        if (model.save()) toast.show("Saved", model.draft.get()?.name, ToastHost.Kind.Success, 1800)
+        if (model.save()) toast.show("Saved", model.draft.get()?.name, ToastHost.Kind.Success, 1200)
     }
 
     override fun saveActiveAs() {
